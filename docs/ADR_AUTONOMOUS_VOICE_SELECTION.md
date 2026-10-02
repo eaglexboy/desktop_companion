@@ -20,10 +20,6 @@ The Deskmate companion features a procedurally evolving visual appearance govern
 
 3. **Four Non-Breaking V1 Accommodations:** Apply lightweight accommodations to the V1 `SPEC_BRAIN.md` contracts so V2 requires zero breaking rewrites: per-call voice overrides, SQLite `agent_state` with `staged_voice_id`, state inspection in `GET /health`, and configuration catalog stubs.
 
-## 1a. V1 Slice: Seed-Based Voice Selection
-
-A narrow part of this ADR ships in V1 because seedable engines (VoxCPM via `tts-serve`) otherwise produce a different voice on every request. The user curates seed pools by body type under `[voice.tts.remote.<name>.seed_voices]`; at each utterance boundary the companion keeps the persisted `agent_state.current_voice_id` (`remote:<instance>:seed:<n>`) while it remains valid for the current look, and re-picks **at random** from the matching pool when a redesign changes the body type. The `AffinityBonus` for robotic voices on mechanical templates (section 3) is realized as the `*_robot` pools. Trait-affinity scoring, coupled appearance+voice evolution, staging, pinning, and the full catalog remain V2+; see `docs/SPEC_BRAIN.md` (Seed-Based Voice Selection).
-
 ## 2. Decoupling Configuration from Runtime Agent State
 
 In V1, `config.toml` is user-authored and dynamically watched via filesystem notifications (`watchdog`). The daemon must **never overwrite or modify `config.toml`** at runtime.
@@ -132,7 +128,7 @@ When reflection evaluates an autonomous evolution pass:
 
 4. **Degradation, Timeouts & Fallback Logging:**
 
-   * Remote TTS calls enforce timeout `[voice.tts.remote.<name>].timeout_s` (default $10.0\,\text{s}$).
+   * Remote TTS calls enforce timeout `[voice.tts.remote.timeout_s]` (default $10.0\,\text{s}$).
 
    * If a selected remote voice server times out or returns a 5xx response, synthesis falls back immediately for that turn to the previous active voice, and ultimately to local Piper `default.onnx`.
 

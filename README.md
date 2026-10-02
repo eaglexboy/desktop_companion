@@ -9,7 +9,6 @@ The system is designed to be reusable, modular, and **OS/desktop-environment agn
 * [What it does](#what-it-does)
 * [Architecture](#architecture)
 * [Requirements](#requirements)
-  * [All platforms (Python)](#all-platforms-python)
 * [Repository layout (target)](#repository-layout-target)
 * [Documentation](#documentation)
 * [License](#license)
@@ -23,8 +22,6 @@ The system is designed to be reusable, modular, and **OS/desktop-environment agn
 * **Talks to you.** Push-to-talk or typed input is transcribed (local or remote speech-to-text), routed to a local or cloud LLM depending on task complexity, and spoken back with synthesized speech (local or remote text-to-speech).
 * **Lip-syncs and gestures in real time.** Speech audio is analyzed into a viseme timeline and played back against the local audio clock, driving facial morph targets and body gestures with no network jitter.
 * **Has a procedurally generated body.** A headless Blender pipeline compiles a declarative `LookSpec` into a fully rigged, animated `.glb` 3D character — base idles, mood idles, talking gestures, and movement/thinking loops included.
-* **Does things, not just talks.** Replies are structured: only the dialogue is spoken, and a separate list of actions (gestures, remembering a fact, changing its look) runs through an allowlisted skill registry that validates every call.
-* **Shows its work.** A standalone status page (`http://127.0.0.1:8780/`) shows service health, the live decision pipeline (routing, model reasoning, skills), a mood/trait timeline, chat and logs.
 * **Develops a personality.** A reflection loop maintains traits, mood, and long-term memories in local SQLite state, decaying moods and proposing small, gated changes over time.
 * **Is configuration-driven.** All runtime behavior — LLM endpoints and routing, voice backends, presence margins, shortcuts, personality traits — lives in a single hot-reloaded `config.toml`.
 * **Is platform-agnostic by contract.** The Brain daemon talks to presentation clients over a local WebSocket protocol and to desktop environments over an abstracted telemetry bridge. Any renderer that can consume the protocol (glTF 2.0 assets, named morph targets, audio, WebSockets) or any desktop environment that can emit window/monitor geometry can serve as a frontend or sensing backend — without changes to the core daemon.
@@ -66,84 +63,19 @@ Full component specs live in `docs/SPEC_BRAIN.md`, `docs/SPEC_BLENDER.md`, and `
 
 ## Requirements
 
-The Brain daemon and asset pipeline are platform-independent in design, but
-every concrete implementation that currently exists in this repo (the
-reference overlay client, the KWin sensing adapter, the deploy scripts)
-targets Linux. The breakdown below is **per-OS**: what you need to install
-to build and deploy this repo on each platform, not an abstract dependency
-list. Package names are for Debian/Ubuntu (`apt`); other distros will have
-differently-named equivalents of the same packages.
+The Brain daemon and asset pipeline are platform-independent; the rows marked *reference stack* apply only to the V1 Linux/KDE implementation and are swappable when another adapter or client is substituted (see [Versions](#versions)).
 
-Local inference (e.g. an OpenAI-compatible endpoint via Ollama/vLLM/llama.cpp)
-and/or cloud LLM API credentials are required for conversation; the daemon
-supports either or both, with routing between them configured in
-`config.toml`.
+| Dependency | Minimum | Recommended / Target | Used for |
+|---|---|---|---|
+| Python | 3.11+ | — | Brain daemon runtime |
+| Blender | 4.5 LTS+ | 5.0.1 | Headless parametric `.glb` avatar generation |
+| Piper TTS | 1.2.0+ | — | Local offline text-to-speech |
+| Rhubarb Lip Sync | 1.13.0+ | — | Audio-to-viseme phoneme analysis |
+| Bubblewrap (`bwrap`) | 0.8.0+ | — | Sandboxed script/skill execution (V2+) |
+| Qt *(reference stack)* | 6.8+ LTS | — | Reference overlay client (`QtQuick3D`, `LayerShellQt`, C++20) |
+| KDE Plasma *(reference stack)* | 6, Wayland | — | Reference desktop sensing adapter (`adapters/kwin/`) |
 
-### All platforms (Python)
-
-The Brain daemon's Python requirements are the same on every OS:
-
-* Python 3.11+
-* Python packages, declared in `pyproject.toml` and mirrored in `requirements.txt`. Install them into a project-local venv (not system pip) — on Linux via `deploy/sync_pip.sh`, elsewhere with `pip install -r requirements.txt` inside your own venv:
-  * core: `fastapi`, `uvicorn[standard]`, `websockets`, `pydantic`, `watchdog`, `httpx`, `jeepney`, `faster-whisper`, `soundfile`, `numpy`
-  * `voice` extra: `piper-tts` (installs the local TTS engine itself — no separate binary/apt package)
-  * `cloud` extra: `anthropic` (only needed for an `anthropic` LLM provider)
-  * `dev` extra: `pytest`, `pytest-asyncio`, `ruff`, `mypy`
-  * Everything runtime-related in one go: `deploy/sync_pip.sh -r requirements.txt`; or via extras: `deploy/sync_pip.sh -e '.[dev,voice,cloud]'`
-
-### Linux (reference platform)
-
-**To run the Brain daemon** (`brain/`, `blender/`), in addition to the
-[Python requirements above](#all-platforms-python) — only implemented/tested
-on Linux:
-
-* [Blender](https://www.blender.org/) 4.5 LTS+ (5.0.1 is the development target) — for headless `.glb` avatar generation
-* `ffmpeg` — audio decoding for `faster-whisper` (local STT)
-* [Rhubarb Lip Sync](https://github.com/DanielSWolf/rhubarb-lip-sync/releases) 1.13.0+ — no apt/pip package exists; download a release binary and point `voice.rhubarb_bin` at it in `config.toml`
-* `bubblewrap` (`bwrap`) — sandboxed script/skill execution (reserved for V2+, not yet used by any V1 code path)
-
-  ```
-  sudo apt install ffmpeg bubblewrap
-  ```
-
-**To additionally build the reference overlay client** (`overlay/`, C++20/Qt):
-
-* `cmake` 3.21+ and a C++20 compiler (`build-essential`)
-* Qt 6.8+ LTS, specifically the `Core`, `Gui`, `Widgets`, `Qml`, `Quick`, `Quick3D`, `Quick3DAssetUtils`, `QuickControls2`, `WebSockets`, `Multimedia`, and `Test` modules
-* `LayerShellQt` (the layer-shell Wayland window-positioning library)
-* `KF6GlobalAccel` — global-shortcut registration (`org.kde.kglobalaccel`)
-* `qml6-module-qt-labs-platform` — runtime QML module for the system-tray icon (`Qt.labs.platform`); `Widgets` is needed because its menu is widget-based
-
-  ```
-  sudo apt install cmake build-essential \
-      qt6-base-dev qt6-declarative-dev qt6-quick3d-dev qt6-quick3d-dev-tools \
-      qt6-quicktimeline-dev qt6-websockets-dev qt6-multimedia-dev \
-      liblayershellqtinterface-dev libkf6globalaccel-dev \
-      qml6-module-qt-labs-platform
-  ```
-
-**To additionally run the reference desktop integration** (KDE Plasma):
-
-* KDE Plasma 6 on Wayland — `kpackagetool6` (installs the KWin script adapter, `adapters/kwin/`) and `kwriteconfig6`/`busctl` (enabling it) ship with Plasma itself, nothing extra to install
-
-**To deploy** (`deploy/install.sh`, `deploy/sync_pip.sh`, systemd units):
-
-* `systemd` (user units) — standard on most Linux distros
-* `rsync` — used by `deploy/sync_pip.sh`'s optional venv mirroring and `deploy/backup_state.sh`'s state backups
-
-`deploy/install.sh` checks for the runtime binaries above (Blender, Piper,
-Rhubarb, Bubblewrap) itself and prints the exact fix if one's missing.
-
-### macOS
-
-None — no code in this repo targets macOS yet. Nothing to install. See
-[V2+](#v2) for the roadmap (an engine-agnostic sensing adapter and overlay
-client could in principle be built for it, but none exists today).
-
-### Windows
-
-None — no code in this repo targets Windows yet. Nothing to install. See
-[V2+](#v2) for the roadmap.
+Local inference (e.g. an OpenAI-compatible endpoint via Ollama/vLLM/llama.cpp) and/or cloud LLM API credentials are required for conversation; the daemon supports either or both, with routing between them configured in `config.toml`.
 
 ## Repository layout (target)
 
@@ -152,15 +84,13 @@ deskmate/
 ├── brain/          # Python core daemon (routing, personality, voice, appearance, presence, IPC)
 ├── blender/        # Headless parametric 3D asset generator
 ├── overlay/        # Rendering client (reference frontend implementation)
-├── status_page/    # Standalone read-only status dashboard
 ├── adapters/       # Desktop sensing adapters, one per platform
 │   └── kwin/       # V1 reference adapter (KDE Plasma 6 / KWin)
 ├── deploy/         # Service supervision and install/sync scripts
 ├── docs/           # Architecture specs and decision records
 ├── examples/       # Reference LookSpec and other sample definitions
 ├── config.example.toml
-├── pyproject.toml
-└── requirements.txt
+└── pyproject.toml
 ```
 
 See [`docs/SPEC_OVERVIEW.md`](docs/SPEC_OVERVIEW.md) for the full target layout, dependency manifest, configuration schema, and system verification strategy.
@@ -170,7 +100,6 @@ See [`docs/SPEC_OVERVIEW.md`](docs/SPEC_OVERVIEW.md) for the full target layout,
 * [`docs/SPEC_OVERVIEW.md`](docs/SPEC_OVERVIEW.md) — project summary, architecture, repository layout, dependencies, and verification strategy.
 * [`docs/SPEC_BRAIN.md`](docs/SPEC_BRAIN.md) — Brain daemon: routing, personality, voice, presence, IPC.
 * [`docs/SPEC_BLENDER.md`](docs/SPEC_BLENDER.md) — parametric asset generator: template resolution, wardrobe, animation, budgets.
-* [`docs/SPEC_STATUS_PAGE.md`](docs/SPEC_STATUS_PAGE.md) — the standalone status dashboard.
 * [`docs/SPEC_OVERLAY.md`](docs/SPEC_OVERLAY.md) — overlay client and desktop sensing adapter.
 * [`docs/DESIGN_AVATAR_EVOLUTION_FLOW.md`](docs/DESIGN_AVATAR_EVOLUTION_FLOW.md) — how and when the avatar's appearance changes.
 * [`docs/ADR_NETWORK_AND_MOBILE_STRATEGY.md`](docs/ADR_NETWORK_AND_MOBILE_STRATEGY.md) — multi-client network and mobile roadmap.
