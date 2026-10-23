@@ -1,0 +1,32 @@
+{
+  "base_template": "primitive_blob",
+  "has_face": true,
+  "seed": 42,
+  "proportions": {
+    "muscularity": 0.5,
+    "femininity": 0.5,
+    "height": 1.0,
+    "build": 1.0
+  },
+  "palette": {
+    "primary": "#4A90D9",
+    "secondary": "#FFFFFF",
+    "accent": "#F5A623",
+    "emissive": "#7FD1FF"
+  },
+  "surface_material": "matte",
+  "wardrobe": {
+    "outfit": "none",
+    "footwear": "none"
+  },
+  "accessories": {
+    "socket_head_top": null,
+    "socket_eyes": null,
+    "socket_neck": null,
+    "socket_chest": null,
+    "socket_waist": null,
+    "socket_hand_R": null,
+    "socket_hand_L": null,
+    "socket_orbit": null
+  }
+}

@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily Deskmate state.db/assets backup to NAS
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+# Random spread so this doesn't always land at exactly midnight if the
+# machine is asleep/off then — catches up via Persistent=true instead.
+RandomizedDelaySec=1800
+
+[Install]
+WantedBy=timers.target

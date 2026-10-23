@@ -1,0 +1,108 @@
+/* Page skeleton: reset, header and tab nav, buttons and inputs, tab panels, section cards. */
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font:
+    0.875rem/1.45 system-ui,
+    sans-serif;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 1rem;
+  border-bottom: 0.0625rem solid var(--line);
+  background: var(--panel);
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  flex-wrap: wrap;
+}
+header h1 {
+  font-size: 1rem;
+  margin: 0;
+}
+nav {
+  display: flex;
+  gap: 0.25rem;
+  flex: 1;
+  flex-wrap: wrap;
+}
+nav button {
+  border-color: transparent;
+  background: transparent;
+  padding: 0.3125rem 0.75rem;
+}
+nav button[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+  color: var(--accent);
+  font-weight: 600;
+}
+.updated {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+button,
+select,
+input {
+  font: inherit;
+  color: var(--ink);
+  background: var(--panel);
+  border: 0.0625rem solid var(--line);
+  border-radius: 0.375rem;
+  padding: 0.25rem 0.625rem;
+}
+button {
+  cursor: pointer;
+}
+button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+main {
+  padding: 1rem;
+  max-width: 93.75rem;
+  margin: 0 auto;
+}
+.tab {
+  display: none;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+}
+.tab.on {
+  display: grid;
+}
+section {
+  background: var(--panel);
+  border: 0.0625rem solid var(--line);
+  border-radius: 0.625rem;
+  padding: 0.75rem 0.875rem;
+  min-width: 0;
+}
+section.wide {
+  grid-column: 1 / -1;
+}
+h2 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+h2 .sp {
+  flex: 1;
+}

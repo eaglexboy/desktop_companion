@@ -1,0 +1,13 @@
+[Unit]
+Description=Deskmate state.db/assets backup to the configured backup target
+# Oneshot job triggered by deskmate-backup.timer; not part of the
+# always-running brain/overlay services.
+
+[Service]
+Type=oneshot
+# @REPO_ROOT@ is a placeholder substituted by deploy/install.sh at install
+# time -- this unit points directly at the git working tree, matching this
+# project's "build once, run in place" convention (deploy/sync_pip.sh works
+# the same way) rather than a separate FHS-style install step. No
+# machine-specific path is hardcoded here.
+ExecStart=@REPO_ROOT@/deploy/backup_state.sh

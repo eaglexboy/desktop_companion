@@ -1,0 +1,83 @@
+/* Mood timeline chart, hover tooltip and legend. */
+/* timeline chart */
+.chart-wrap {
+  position: relative;
+}
+svg.chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+svg.chart text {
+  fill: var(--muted);
+  font-size: 0.6875rem;
+}
+svg.chart .grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+svg.chart .axis {
+  stroke: var(--line);
+}
+svg.chart path.ln {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.tip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--panel);
+  border: 0.0625rem solid var(--line);
+  border-radius: 0.5rem;
+  padding: 0.375rem 0.5625rem;
+  font-size: 0.75rem;
+  box-shadow: 0 0.25rem 0.875rem rgba(0, 0, 0, 0.18);
+  display: none;
+  z-index: 2;
+  white-space: nowrap;
+  /* The script only reports where the cursor is (--tip-x/--tip-y, measured px);
+     the gap from the cursor and which side it sits on are decided here. */
+  left: var(--tip-x, 0);
+  top: var(--tip-y, 0);
+  transform: translate(0.875rem, calc(-100% - 0.625rem));
+}
+.tip.flip-x {
+  transform: translate(calc(-100% - 0.875rem), calc(-100% - 0.625rem));
+}
+.tip.flip-y {
+  transform: translate(0.875rem, 0.625rem);
+}
+.tip.flip-x.flip-y {
+  transform: translate(calc(-100% - 0.875rem), 0.625rem);
+}
+.tip b {
+  color: var(--ink);
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.875rem;
+  align-items: center;
+  margin: 0.375rem 0;
+  font-size: 0.75rem;
+}
+.sw {
+  display: inline-block;
+  width: 0.875rem;
+  height: 0.1875rem;
+  border-radius: 0.125rem;
+  margin-right: 0.3125rem;
+  vertical-align: middle;
+}
+/* Swatch shapes besides the default line: a round one for "feeling now", a small square for the feeling legend. */
+.sw.dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+}
+.sw.box {
+  width: 0.625rem;
+  height: 0.625rem;
+}
