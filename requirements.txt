@@ -1,0 +1,22 @@
+# Runtime dependencies for the Brain daemon. Mirrors pyproject.toml, which
+# remains the source of truth -- keep the two in sync.
+# Install into the project venv with: deploy/sync_pip.sh -r requirements.txt
+# (or `pip install -e '.[dev,voice,cloud]'` to also get the extras via pyproject).
+
+fastapi>=0.115
+uvicorn[standard]>=0.30
+websockets>=12
+pydantic>=2.8
+watchdog>=4.0
+httpx>=0.27
+jeepney>=0.8
+faster-whisper>=1.0
+soundfile>=0.12
+numpy>=1.26
+
+# `voice` extra: local TTS engine (installs piper itself)
+piper-tts>=1.8
+
+# `cloud` extra: Anthropic provider in brain/llm_pool.py (lazy-imported;
+# only needed if a provider_type = "anthropic" is configured)
+anthropic>=0.40

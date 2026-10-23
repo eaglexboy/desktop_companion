@@ -1,0 +1,25 @@
+[Unit]
+Description=Deskmate desktop overlay (Qt presentation client)
+# The overlay is useless without the brain daemon it connects to, and
+# starting before it just means an immediate reconnect-backoff cycle.
+After=deskmate-brain.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# @REPO_ROOT@ substituted by deploy/install.sh (same convention as
+# deskmate-brain.service/deskmate-backup.service). The binary path assumes
+# the standard out-of-source CMake build layout:
+#   cmake -B overlay/build overlay && cmake --build overlay/build
+WorkingDirectory=@REPO_ROOT@
+ExecStart=@REPO_ROOT@/overlay/build/deskmate_overlay
+# Restart on ANY exit: a clean exit is not necessarily intentional (the overlay
+# used to quit cleanly when the displays vanished on screen lock and then
+# stayed dead). The tray icon's Quit exits with status 3, which is excluded
+# here so a deliberate quit sticks.
+Restart=always
+RestartSec=2
+RestartPreventExitStatus=3
+
+[Install]
+WantedBy=graphical-session.target

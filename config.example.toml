@@ -1,0 +1,250 @@
+# Deskmate configuration template.
+#
+# Copy this file to $XDG_CONFIG_HOME/deskmate/config.toml (typically
+# ~/.config/deskmate/config.toml) and fill in real values there. This
+# example file must never contain real paths, hosts, or secrets — only
+# placeholders.
+
+[general]
+log_level = "INFO"
+log_to_stdout = true
+
+[server]
+host = "127.0.0.1"                        # Interface binding for HTTP and WebSocket IPC
+port = 8765                               # Port for daemon services (ws://<host>:<port>/ws/overlay)
+allowed_origins = []                      # Whitelist for Origin header ([] = reject browser origins, accept native clients)
+
+# Reserved for a future network/remote-access feature — not consumed yet:
+auth_token_file = ""                      # Path to token file (required if host != 127.0.0.1)
+tls_cert = ""
+tls_key = ""
+
+[storage]
+# Fast local scratch tier (ephemeral audio chunk caching, headless Blender build scratch):
+workspace_dir = "/path/to/fast/local/scratch/agent"
+
+# Long-term persistent deployment storage tier (SQLite state.db, manifests, active .glb assets):
+deploy_dir = "/path/to/deploy/storage/agent"
+
+# Where deploy/backup_state.sh (deskmate-backup.timer, daily) mirrors deploy_dir. Put it on a different
+# machine/drive (another disk in this machine, or a network mount such as NFS/SMB/SSHFS), so it survives losing
+# the deploy_dir drive. The parent must already exist; the script warns if the target is on the same physical disk.
+backup_dir = "/path/to/another/disk/agent_state_backup"
+
+[llm.local]
+base_url = "http://127.0.0.1:11434/v1"   # OpenAI-compatible local endpoint (vLLM, Ollama, etc.)
+model = "local-default-model"
+timeout_s = 30.0
+max_parallel_slots = 1                    # Total concurrent sequence slots (Slot 0 reserved for companion VIP; reserved for V2+ ICG)
+extra_body = {}                           # Arbitrary engine flags passed into request bodies (e.g. { chat_template_kwargs = { enable_thinking = false } })
+
+# Example cloud provider — repeat [llm.cloud.<name>] for more. Delete if unused.
+[llm.cloud.example_cloud]
+provider_type = "generic_openai"          # "anthropic", "generic_openai", etc.
+base_url = "https://api.example.com/v1"
+model = "cloud-reasoning-model"
+api_key = "env:DESKMATE_CLOUD_API_KEY"    # Direct string or "env:VAR_NAME"
+timeout_s = 60.0
+max_concurrency = 4                       # Max parallel calls allowed to this provider (reserved for V2+ ICG)
+capabilities = ["code", "complex_reasoning", "large_context"]
+priority = 10                             # Higher = prioritized for matching capabilities
+enabled = false
+
+[llm.routing]
+escalation_threshold = "auto"             # "auto", "always_local", "always_cloud"
+classification_timeout_s = 3.0            # Timeout budget for local intent classifier
+
+[llm.routing.classifier]
+base_url = ""                             # Defaults to llm.local.base_url if blank
+model = ""                                # Defaults to llm.local.model if blank
+timeout_s = 5.0                           # Defaults to classification_timeout_s / llm.local.timeout_s if blank
+extra_body = {}                           # Defaults to llm.local.extra_body if blank
+
+# Reserved for a future skills/agent-orchestration feature — not consumed yet:
+# [skills]
+# max_script_workers = 4                   # Process pool limit for Track 1 script tasks
+
+[voice]
+# No apt/pip package exists for Rhubarb Lip Sync -- it's always a manual
+# GitHub-release binary download (https://github.com/DanielSWolf/rhubarb-lip-sync/releases).
+# Point this at wherever you extracted it; "rhubarb" alone only works if
+# you've put it on PATH yourself.
+rhubarb_bin = "rhubarb"
+# Lip-sync recognizer: "phonetic" (fast, ~1s per sentence) or "pocketSphinx"
+# (English-tuned, but ~real time: ~6s per sentence, which delays speech and
+# adds a gap between sentences).
+lipsync_recognizer = "phonetic"
+
+[voice.stt]
+active_backend = "local"                  # "local" or "remote"
+silence_threshold_ms = 800                # Trailing silence required to trigger transcription (toggle mode only)
+
+[voice.stt.local]
+engine = "faster-whisper"
+model_size = "base.en"                    # tiny, base, small
+device = "auto"                           # "cpu", "cuda", "auto"
+compute_type = "int8"
+
+[voice.stt.remote]
+base_url = "http://127.0.0.1:8000"
+endpoint = "/v1/audio/transcriptions"
+model = "whisper-1"
+timeout_s = 10.0
+api_key = ""                              # Direct string or "env:VAR_NAME"
+params = {}
+
+[voice.tts]
+active_backend = "local"                  # "local" or "remote"
+voices_dir = "/path/to/deploy/storage/agent/assets/voices"
+volume = 1.0                              # Companion voice level, 0.0-1.0 (linear). Applied live on save; stacks with the system mixer's volume for the overlay
+rate = 1.0
+
+[voice.tts.local]
+engine = "piper"
+# `pip install piper-tts` puts `piper` on the *venv's* bin/ PATH only in an
+# activated shell -- a systemd unit running the venv's python directly
+# won't have it on PATH. Point this at an absolute path if so; "piper"
+# alone only works if you've arranged for it to be on PATH yourself.
+piper_bin = "piper"
+# Relative to voices_dir above, not a standalone path -- e.g. download with
+# `python -m piper.download_voices --download-dir <voices_dir> <voice-name>`
+# and point these at the resulting filenames.
+voice_model_path = "default.onnx"
+voice_config_path = "default.onnx.json"
+
+# [voice.tts.remote.<name>] is a keyed table — one or more remote TTS
+# instances, brought online opportunistically across hosts, tried in
+# priority order before falling back to local Piper. provider_type names
+# the wire contract each instance speaks (not every deployment uses
+# tts-serve, so this is configurable per instance):
+#   - "tts_serve" (https://github.com/scorbo2/tts-serve): POST <endpoint>
+#     {text, audio_base64?, reference_text?, language?, seed?, **params} ->
+#     {audio_base64, sample_rate, seed, time_used, rtf} JSON. capabilities_endpoint
+#     is meaningful (GET /capabilities discovery).
+#   - "generic_openai": the OpenAI /v1/audio/speech contract -- POST <endpoint>
+#     {model, input, voice, response_format, **params} -> raw audio bytes
+#     directly (no JSON wrapper, no discovery endpoint -- set
+#     capabilities_endpoint to an empty string). Needs api_key (direct string
+#     or "env:VAR_NAME") since this contract is typically a hosted/cloud API.
+# Voice precedence per request, limited to what the engine supports:
+#   1. voice_sample (reference WAV path; + voice_sample_text for tts_serve)
+#   2. seed (only from this entry's seed_voices; tts_serve only)
+#   3. the engine's own default voice
+[voice.tts.remote.voxcpm_localairig]
+provider_type = "tts_serve"
+base_url = "http://127.0.0.1:7500"        # VoxCPM tts-serve instance, local to this machine
+endpoint = "/synthesize"
+capabilities_endpoint = "/capabilities"
+priority = 20                             # Higher = prioritized, same convention as [llm.cloud.<provider_name>]
+enabled = true
+timeout_s = 10.0
+params = {}                               # e.g. { normalize = true }
+
+# Seed pools for this engine/model (VoxCPM1.5 -- seeds sound different on other
+# models, so these belong to this entry). With no reference voice, each seed
+# gives a distinct, repeatable voice (valid range for tts-serve: 1-1000). The
+# companion picks one at random from the group matching its look and keeps it
+# until a redesign moves it to another group. Groups: male, female, male_robot,
+# female_robot; a robot with no matching robot pool falls back to male/female by
+# the look's femininity. Empty/omitted groups are skipped.
+[voice.tts.remote.voxcpm_localairig.seed_voices]
+male = [7, 88, 200, 314, 420, 777, 999, 1000]
+female = [5, 33, 42, 64, 123, 256]
+male_robot = [500]
+# Used instead of a random pick while the look still has the default femininity (0.5),
+# so a fresh install starts on a known voice. Must be in the matching pool to apply.
+default_seed = 5
+
+# Example second instance — copy/paste/tweak this block as you bring new
+# tts-serve instances online.
+# Lower priority than voxcpm_localairig above, so it's only tried as a fallback
+# once it's enabled.
+# [voice.tts.remote.indextts_remoteairig]
+# provider_type = "tts_serve"
+# base_url = "http://192.168.0.21:7500"
+# endpoint = "/synthesize"
+# capabilities_endpoint = "/capabilities"
+# priority = 10
+# enabled = false
+# timeout_s = 10.0
+# params = {}
+
+# Example non-tts-serve instance — a hosted OpenAI-compatible TTS API.
+# [voice.tts.remote.openai_cloud]
+# provider_type = "generic_openai"
+# base_url = "https://api.openai.com"
+# endpoint = "/v1/audio/speech"
+# capabilities_endpoint = ""
+# priority = 1                              # Lowest priority: last resort, costs money
+# enabled = false
+# timeout_s = 15.0
+# api_key = "env:DESKMATE_OPENAI_TTS_KEY"
+# params = { model = "tts-1", voice = "alloy" }
+
+# Example CPU-only Pocket TTS instance: tts-serve's Pocket TTS engine
+# (impl/server_pocketTTS.py). Same contract as any tts_serve instance; the
+# preset voice is just an engine param. No seed_voices (Pocket has no seed-
+# derived voices), so seed selection skips it.
+# [voice.tts.remote.pocket_cpu]
+# provider_type = "tts_serve"
+# base_url = "http://127.0.0.1:7501"
+# endpoint = "/synthesize"
+# capabilities_endpoint = "/capabilities"
+# priority = 10
+# enabled = false
+# timeout_s = 10.0
+# voice_sample = "~/voices/companion.wav"   # optional clone; do NOT combine with `voice` (server 422s)
+# params = { voice = "alba" }               # preset; omit for the language default (and when using voice_sample)
+
+# Reserved voice catalog stubs for a future autonomous voice-selection feature — not consumed yet:
+# [voice.voice_catalog.<id>]
+# backend = "local_piper"
+# model_path = "voices/en_US-lessac-medium.onnx"
+# display_name = "Lessac"
+# traits = { formality = 75, extraversion = 50 }
+
+[presence]
+dbus_service_name = "org.deskmate.Presence"
+dbus_object_path = "/org/deskmate/Presence"
+# Companion size in pixels. Drives both the daemon's corner placement and the
+# overlay's window/avatar/input-bar size (the overlay reads it at connect time,
+# so restart the daemon AND the overlay after changing it). Allowed: 96-1024.
+avatar_width_px = 240
+avatar_height_px = 240
+# Show the sentence being spoken in a bubble next to the avatar (helpful when
+# the start of a sentence is missed or there is a pause between sentences).
+show_speech_bubble = true
+margin_px = 24
+display_affinity = "secondary"            # "primary", "secondary", "auto"
+idle_after_s = 600                        # Inactivity seconds to trigger User_Idle state
+
+[shortcuts]
+toggle_interaction = "Meta+Alt+D"         # Opens / dismisses the floating input bar
+push_to_talk       = "Meta+Alt+M"         # Microphone capture shortcut
+push_to_talk_mode  = "hold"               # "hold" or "toggle"
+
+[personality]
+identity_name = "Deskmate"
+# Trait/mood names are NOT configurable here -- brain/config.py's
+# TRAIT_NAMES/MOOD_NAMES are internal constants, since brain/personality/
+# hand-pairs each exact name with its own prompt phrasing and SQLite seed
+# row (see brain/config.py's comment for the full reasoning).
+reflection_interval_s = 3600              # Frequency of background memory passes
+mood_decay_interval_s = 60                # Frequency of mood relaxation passes
+mood_half_life_s = 1800                   # Half-life for mood axes to decay toward baseline
+
+[appearance]
+blender_bin = "blender"                   # Path to Blender executable (Target: 5.0.1, Floor: 4.5 LTS+)
+default_look_spec = "examples/sample_look.json"  # Initial bootstrap LookSpec template
+keep_recent_versions = 3                  # Number of recent .glb build revisions to retain in storage
+redesign_cooldown_hours_min = 12          # Minimum cooldown between autonomous redesigns
+redesign_cooldown_hours_max = 24          # Maximum cooldown between autonomous redesigns
+autonomous_redesign_probability = 0.5     # Chance of triggering redesign on eligible reflection cycle
+
+# Standalone status page (separate process; see status_page/). Open
+# http://<host>:<port>/ in a browser. Keep host on 127.0.0.1: it shows chat history and logs.
+[status]
+host = "127.0.0.1"
+port = 8780
+units = ["deskmate-brain", "deskmate-overlay"]      # journalctl --user units shown as log panes
+# extra_logs = { pocket_tts = "/path/to/tts-serve/pocket/server.log" }

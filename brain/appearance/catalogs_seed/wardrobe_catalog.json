@@ -1,0 +1,14 @@
+{
+  "outfits": ["none", "hoodie", "wizard_robe", "tshirt_jeans", "lab_coat", "vest", "armor_light"],
+  "footwear": ["none", "sneakers", "boots", "sandals"],
+  "accessories": {
+    "socket_head_top": ["pointy_hat", "crown", "horns", "antenna"],
+    "socket_eyes": ["glasses", "sunglasses", "goggles", "visor"],
+    "socket_neck": ["scarf", "tie", "collar"],
+    "socket_chest": ["badge", "backpack"],
+    "socket_waist": ["belt", "pouch"],
+    "socket_hand_R": ["wand", "tool"],
+    "socket_hand_L": ["shield", "orb"],
+    "socket_orbit": ["crystal_ring", "floating_cube"]
+  }
+}

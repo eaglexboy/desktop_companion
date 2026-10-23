@@ -1,0 +1,15 @@
+[Unit]
+Description=Deskmate status page (read-only, separate from the brain)
+# Deliberately NOT PartOf/After the brain: it has to stay up, and be restartable,
+# independently of the thing it reports on.
+
+[Service]
+Type=simple
+# Same placeholders as deskmate-brain.service (substituted by deploy/install.sh).
+WorkingDirectory=@REPO_ROOT@
+ExecStart=@VENV_PYTHON@ -m status_page.app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,126 @@
+{
+  "glb_filename": "look.glb",
+  "sha256": "d0ed96c1c5cb11ef17282975b9a565e2a57bb96215a3a615a2dea19ca8f24c1e",
+  "created_at": 1791825813.8681903,
+  "status": "ok",
+  "seed": 42,
+  "evaluated_triangles": 3904,
+  "size_bytes": 358556,
+  "has_face": true,
+  "speech_indicator_mode": "viseme_shapekeys",
+  "capabilities": {
+    "has_head": true,
+    "has_arms": false,
+    "has_legs": false,
+    "has_face": true
+  },
+  "viseme_shape_keys": [
+    "viseme_A",
+    "viseme_B",
+    "viseme_C",
+    "viseme_D",
+    "viseme_E",
+    "viseme_F",
+    "viseme_G",
+    "viseme_H",
+    "viseme_X"
+  ],
+  "animation_clips": [
+    {
+      "name": "idle_lookaround",
+      "loop": true,
+      "duration_s": 4.0
+    },
+    {
+      "name": "idle_stretch",
+      "loop": true,
+      "duration_s": 3.0
+    },
+    {
+      "name": "idle_peek",
+      "loop": false,
+      "duration_s": 2.5
+    },
+    {
+      "name": "idle_blink",
+      "loop": true,
+      "duration_s": 3.5
+    },
+    {
+      "name": "move",
+      "loop": true,
+      "duration_s": 1.0
+    },
+    {
+      "name": "think",
+      "loop": true,
+      "duration_s": 3.0
+    },
+    {
+      "name": "idle_bored",
+      "loop": true,
+      "duration_s": 5.0
+    },
+    {
+      "name": "idle_curious",
+      "loop": true,
+      "duration_s": 4.0
+    },
+    {
+      "name": "idle_sleepy",
+      "loop": true,
+      "duration_s": 6.0
+    },
+    {
+      "name": "idle_fidget",
+      "loop": true,
+      "duration_s": 3.0
+    },
+    {
+      "name": "idle_focused",
+      "loop": true,
+      "duration_s": 4.0
+    },
+    {
+      "name": "talk_subdued",
+      "loop": true,
+      "duration_s": 2.0
+    },
+    {
+      "name": "talk_animated",
+      "loop": true,
+      "duration_s": 2.0
+    },
+    {
+      "name": "talk_explanatory",
+      "loop": true,
+      "duration_s": 2.5
+    },
+    {
+      "name": "talk_deadpan",
+      "loop": true,
+      "duration_s": 2.0
+    },
+    {
+      "name": "celebrate",
+      "loop": false,
+      "duration_s": 2.2
+    },
+    {
+      "name": "agree",
+      "loop": false,
+      "duration_s": 1.2
+    },
+    {
+      "name": "disagree",
+      "loop": false,
+      "duration_s": 1.2
+    }
+  ],
+  "bounds": {
+    "height_m": 2.45,
+    "width_m": 2.0,
+    "depth_m": 2.31
+  },
+  "warnings": []
+}

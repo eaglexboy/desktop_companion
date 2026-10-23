@@ -1,0 +1,28 @@
+[Unit]
+Description=Deskmate brain daemon
+# Starts alongside the graphical session (so D-Bus session bus access and
+# Wayland env vars are available for desktop_bridge.py's presence watchers)
+# but is independent of any particular desktop shell beyond that.
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+# Two placeholders, both substituted by deploy/install.sh at install time:
+#   @REPO_ROOT@    -- the git working tree.
+#   @VENV_PYTHON@  -- the venv's python3, resolved from the real
+#                      config.toml's storage.workspace_dir. Deliberately
+#                      NOT "@REPO_ROOT@/.venv/bin/python3": deploy/sync_pip.sh's
+#                      whole point is that the venv lives at workspace_dir,
+#                      which is commonly a *different* path from the repo
+#                      checkout. `brain` is importable from that venv
+#                      regardless of invocation CWD because sync_pip.sh
+#                      installs it editable (`pip install -e .[dev]`) from
+#                      the repo.
+WorkingDirectory=@REPO_ROOT@
+ExecStart=@VENV_PYTHON@ -m brain.main
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
