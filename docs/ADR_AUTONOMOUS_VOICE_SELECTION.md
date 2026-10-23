@@ -94,13 +94,12 @@ When reflection evaluates an autonomous evolution pass:
 2. **Coupled Choice Roll:** The agent evaluates `autonomous_redesign_probability`. If triggered, it rolls whether to evolve appearance only ($50\%$) or coupled appearance + voice ($50\%$).
 
 3. **Trait Affinity Scoring:** For each candidate $V$ in `[voice.voice_catalog]`:
-   
 
-   $$
-   \text{Score}(V) = -\sum_{t \in \text{traits}} w_t \cdot \left\vert{} T_{\text{agent}}(t) - T_V(t) \right\vert{} + \text{AffinityBonus}(V, \text{LookSpec})
-   $$
+   ```math
+   \text{Score}(V) = -\sum_{t \in \text{traits}} w_t \cdot \left| T_{\text{agent}}(t) - T_V(t) \right| + \text{AffinityBonus}(V, \text{LookSpec})
+   ```
 
-   * $T_{\text{agent}}(t)$ is the agent's current stable trait value ($0\text{–}100$).
+   * $T_{\text{agent}}(t)$ is the agent's current stable trait value (0–100).
 
    * $T_V(t)$ is the catalog entry's designated baseline trait score.
 
