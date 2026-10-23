@@ -95,9 +95,7 @@ When reflection evaluates an autonomous evolution pass:
 
 3. **Trait Affinity Scoring:** For each candidate $V$ in `[voice.voice_catalog]`:
 
-   ```math
-   \text{Score}(V) = -\sum_{t \in \text{traits}} w_t \cdot \left| T_{\text{agent}}(t) - T_V(t) \right| + \text{AffinityBonus}(V, \text{LookSpec})
-   ```
+   $$\text{Score}(V) = -\sum_{t \in \text{traits}} w_t \cdot \left| T_{\text{agent}}(t) - T_V(t) \right| + \text{AffinityBonus}(V, \text{LookSpec})$$
 
    * $T_{\text{agent}}(t)$ is the agent's current stable trait value (0–100).
 
