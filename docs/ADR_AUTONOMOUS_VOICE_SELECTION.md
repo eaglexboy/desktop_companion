@@ -24,9 +24,9 @@ The Deskmate companion features a procedurally evolving visual appearance govern
 
 In V1, `config.toml` is user-authored and dynamically watched via filesystem notifications (`watchdog`). The daemon must **never overwrite or modify `config.toml`** at runtime.
 
-* **`config.toml` Ownership:** Defines the default bootstrap voice paths, fallback engines, and the catalog of available preset voices (`[voice.voice_catalog.<id>]`).
+* **`config.toml` Ownership:** Defines the default bootstrap voice paths and fallback engines (V1). It will also own the catalog of available preset voices (`[voice.voice_catalog.<id>]`) in V2+; in V1 the catalog exists only as commented-out stubs in `config.example.toml` and is **not read by the daemon**.
 
-* **Catalog Schema Specification (`config.toml`):**
+* **Catalog Schema Specification (`config.toml`) — V2+, not consumed in V1:**
 
   ```
   [voice.voice_catalog.piper_en_lessac]
