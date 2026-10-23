@@ -502,7 +502,7 @@ To ensure V1 code seamlessly accommodates V2 skills, DAG work plans, and sub-age
 2. **Subprocess Execution Utility in `brain/`:**
    Standardize background subprocess execution on `asyncio.create_subprocess_exec` with environment sanitization (already implemented for `blender_gen.py`), making it reusable for Track 1 script skills.
 3. **Reserved Concurrency Configuration Keys:**
-   Reserve `max_parallel_slots = 1` under `[llm.local]`, `max_concurrency = 4` under `[llm.cloud.<provider>]`, and `max_script_workers = 4` under `[skills]` in `config.example.toml` and `SPEC_BRAIN.md`.
+   Reserve `max_parallel_slots = 1` under `[llm.local]`, `max_concurrency = 4` under `[llm.cloud.<provider>]`, and `max_script_workers = 4` under `[skills]` in `config.example.toml` and [SPEC_BRAIN.md](SPEC_BRAIN.md).
 4. **Task State & Permission Event Skeletons:**
    Reserve `agent_task_progress` (including `plan_id`), `agent_task_complete` (including `plan_id`), `agent_permission_request`, and `agent_permission_response` in the WebSocket IPC protocol taxonomy as recognized but unhandled V1 event types.
 

@@ -12,11 +12,11 @@ The project is built as a reusable, modular system where all machine-specific pa
 
 * **Frontend Presentation Layer:** The presentation client is decoupled via local WebSocket IPC. In V1, the reference client is implemented in **C++20 and Qt 6.8+ LTS** (`QtQuick3D`, `LayerShellQt`). Alternate renderers (Godot, Tauri) can connect using the same protocol.
 
-* **Network & Mobile Multi-Client Access (V2+ Roadmap):** V1 binds strictly to the local loopback interface (`127.0.0.1:8765`), secured against browser-origin hijacking. The protocol is designed to be "Network-Ready" (supporting dual local paths and HTTP URLs). Private mesh networking (Tailscale) and mobile PWA clients are detailed in `docs/ADR_NETWORK_AND_MOBILE_STRATEGY.md`.
+* **Network & Mobile Multi-Client Access (V2+ Roadmap):** V1 binds strictly to the local loopback interface (`127.0.0.1:8765`), secured against browser-origin hijacking. The protocol is designed to be "Network-Ready" (supporting dual local paths and HTTP URLs). Private mesh networking (Tailscale) and mobile PWA clients are detailed in [ADR_NETWORK_AND_MOBILE_STRATEGY.md](ADR_NETWORK_AND_MOBILE_STRATEGY.md).
 
-* **Autonomous Voice Selection & Cloning (V2+ Roadmap):** In V1, the user configures the voice model, while the daemon supports per-call voice overrides. Autonomous acoustic evolution (allowing the companion to evolve its voice alongside its appearance) and voice cloning safeguards are detailed in `docs/ADR_AUTONOMOUS_VOICE_SELECTION.md`.
+* **Autonomous Voice Selection & Cloning (V2+ Roadmap):** In V1, the user configures the voice model, while the daemon supports per-call voice overrides. Autonomous acoustic evolution (allowing the companion to evolve its voice alongside its appearance) and voice cloning safeguards are detailed in [ADR_AUTONOMOUS_VOICE_SELECTION.md](ADR_AUTONOMOUS_VOICE_SELECTION.md).
 
-* **Skills & Sub-Agent Orchestration (V2+ Roadmap):** Deterministic script DAG execution and cognitive multi-turn sub-agents governed by the Inference Capacity Governor (ICG) are detailed in `docs/ADR_SKILLS_AND_AGENT_ORCHESTRATION.md`.
+* **Skills & Sub-Agent Orchestration (V2+ Roadmap):** Deterministic script DAG execution and cognitive multi-turn sub-agents governed by the Inference Capacity Governor (ICG) are detailed in [ADR_SKILLS_AND_AGENT_ORCHESTRATION.md](ADR_SKILLS_AND_AGENT_ORCHESTRATION.md).
 
 * **Configuration Interface:** V1 relies on direct editing of `$XDG_CONFIG_HOME/deskmate/config.toml` with live zero-downtime hot-reloading. Dedicated graphical settings interfaces are deferred to V2+.
 
@@ -24,9 +24,9 @@ The project is built as a reusable, modular system where all machine-specific pa
 
 | Component | Target Role | Implementation Path | 
 | ----- | ----- | ----- | 
-| **Brain Daemon (Python)** | Core orchestration: configuration watcher, dual-tier LLM routing, personality evolution & reflection, pluggable STT/TTS, Blender asset orchestration, window presence algorithms, and WebSocket IPC hub. | `brain/` (Details: `docs/SPEC_BRAIN.md`) | 
-| **Parametric Asset Generator (Blender)** | Headless procedural asset pipeline: compiles declarative `LookSpec` definitions into fully rigged, viseme-capable, and animated `.glb` 3D character models for bootstrap and runtime redesigns. Targets **Blender 5.0.1** (verified host target; **4.5 LTS+ compatibility floor**). | `blender/` (Details: `docs/SPEC_BLENDER.md`, `docs/DESIGN_AVATAR_EVOLUTION_FLOW.md`) | 
-| **Desktop Overlay Application (Qt 6 / C++20)** | Transparent Wayland rendering client (`LayerShellQt`, `QtQuick3D`): handles interactive text/mic input, `.glb` hot-reloading, local audio clock lip-sync, and non-blocking evasion. | `overlay/` (Details: `docs/SPEC_OVERLAY.md`) | 
+| **Brain Daemon (Python)** | Core orchestration: configuration watcher, dual-tier LLM routing, personality evolution & reflection, pluggable STT/TTS, Blender asset orchestration, window presence algorithms, and WebSocket IPC hub. | `brain/` (Details: [SPEC_BRAIN.md](SPEC_BRAIN.md)) | 
+| **Parametric Asset Generator (Blender)** | Headless procedural asset pipeline: compiles declarative `LookSpec` definitions into fully rigged, viseme-capable, and animated `.glb` 3D character models for bootstrap and runtime redesigns. Targets **Blender 5.0.1** (verified host target; **4.5 LTS+ compatibility floor**). | `blender/` (Details: [SPEC_BLENDER.md](SPEC_BLENDER.md), [DESIGN_AVATAR_EVOLUTION_FLOW.md](DESIGN_AVATAR_EVOLUTION_FLOW.md)) | 
+| **Desktop Overlay Application (Qt 6 / C++20)** | Transparent Wayland rendering client (`LayerShellQt`, `QtQuick3D`): handles interactive text/mic input, `.glb` hot-reloading, local audio clock lip-sync, and non-blocking evasion. | `overlay/` (Details: [SPEC_OVERLAY.md](SPEC_OVERLAY.md)) | 
 | **Desktop Sensing Adapters (per-platform)** | Platform-specific adapters registering workspace and window geometry callbacks, debouncing updates, filtering out the overlay's own window, and dispatching telemetry over D-Bus. V1 ships the KWin (KDE Plasma 6) adapter; future adapters for other desktop environments/OSes live alongside it. | `adapters/` (V1: `adapters/kwin/`) | 
 | **Systemd Units & Deployment Scripts** | User-level process supervision, environment bootstrapping, dependency synchronization, and automated background service management. | `deploy/` | 
 

@@ -2,7 +2,7 @@
 
 ## Component Role & Purpose
 
-The Parametric Asset Generator is the headless 3D character pipeline for Deskmate. Executed as an isolated subprocess by `brain/appearance/blender_gen.py` as the asset compilation phase of the redesign flow defined in `docs/DESIGN_AVATAR_EVOLUTION_FLOW.md`, it consumes a declarative `LookSpec` JSON definition and generates a fully rigged, skinned, animated, and viseme-capable 3D character exported in binary glTF format (`.glb`).
+The Parametric Asset Generator is the headless 3D character pipeline for Deskmate. Executed as an isolated subprocess by `brain/appearance/blender_gen.py` as the asset compilation phase of the redesign flow defined in [DESIGN_AVATAR_EVOLUTION_FLOW.md](DESIGN_AVATAR_EVOLUTION_FLOW.md), it consumes a declarative `LookSpec` JSON definition and generates a fully rigged, skinned, animated, and viseme-capable 3D character exported in binary glTF format (`.glb`).
 
 Key capabilities include:
 
