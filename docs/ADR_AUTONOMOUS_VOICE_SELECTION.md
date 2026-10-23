@@ -10,7 +10,7 @@
 
 ## 1. Context & Executive Recommendation
 
-The Deskmate companion features a procedurally evolving visual appearance governed by `docs/DESIGN_AVATAR_EVOLUTION_FLOW.md`. Users desire acoustic counterpart capabilities: allowing the agent to dynamically adopt preset voice personas (e.g., warmer, more formal, eccentric) or clone voices from clean reference samples.
+The Deskmate companion features a procedurally evolving visual appearance governed by [DESIGN_AVATAR_EVOLUTION_FLOW.md](DESIGN_AVATAR_EVOLUTION_FLOW.md). Users desire acoustic counterpart capabilities: allowing the agent to dynamically adopt preset voice personas (e.g., warmer, more formal, eccentric) or clone voices from clean reference samples.
 
 ### Key Decisions:
 
@@ -18,7 +18,7 @@ The Deskmate companion features a procedurally evolving visual appearance govern
 
 2. **Coupled Evolution (User-Configured Default, Agent-Chosen Evolution):** The user configures the baseline default voice. When the companion triggers an autonomous redesign during its reflection loop, it evaluates whether to evolve **only its visual look** or **both its visual look and voice together**.
 
-3. **Four Non-Breaking V1 Accommodations:** Apply lightweight accommodations to the V1 `SPEC_BRAIN.md` contracts so V2 requires zero breaking rewrites: per-call voice overrides, SQLite `agent_state` with `staged_voice_id`, state inspection in `GET /health`, and configuration catalog stubs.
+3. **Four Non-Breaking V1 Accommodations:** Apply lightweight accommodations to the V1 [SPEC_BRAIN.md](SPEC_BRAIN.md) contracts so V2 requires zero breaking rewrites: per-call voice overrides, SQLite `agent_state` with `staged_voice_id`, state inspection in `GET /health`, and configuration catalog stubs.
 
 ## 2. Decoupling Configuration from Runtime Agent State
 
@@ -115,7 +115,7 @@ When reflection evaluates an autonomous evolution pass:
 
    * If evaluated while the user is away (`User_Away`), the chosen voice ID is written to `agent_state.staged_voice_id`. **The live active voice is not modified.**
 
-   * At the moment the user returns (`User_Active`), `staged_voice_id` is atomically committed into `current_voice_id` at the exact same commit point as the appearance reveal in `docs/DESIGN_AVATAR_EVOLUTION_FLOW.md`.
+   * At the moment the user returns (`User_Active`), `staged_voice_id` is atomically committed into `current_voice_id` at the exact same commit point as the appearance reveal in [DESIGN_AVATAR_EVOLUTION_FLOW.md](DESIGN_AVATAR_EVOLUTION_FLOW.md).
 
    * The companion greets the user in its new voice and explicitly mentions both changes (e.g., *"Welcome back! I decided to try out a new look and voice. What do you think?"*).
 
@@ -192,7 +192,7 @@ Zero-shot neural cloning (XTTS-v2, F5-TTS, CosyVoice) introduces privacy and imp
 
 ## 6. The Four V1 Micro-Accommodations
 
-To eliminate future refactoring friction without adding V2 scope to V1, the following lightweight adjustments are approved for `SPEC_BRAIN.md`:
+To eliminate future refactoring friction without adding V2 scope to V1, the following lightweight adjustments are approved for [SPEC_BRAIN.md](SPEC_BRAIN.md):
 
 1. **Per-Call Voice Signature in `TTSBackend`:**
 

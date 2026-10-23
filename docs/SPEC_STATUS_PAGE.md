@@ -18,7 +18,7 @@ A browser dashboard for seeing what the stack is doing without a terminal tab pe
 | `GET /` | `static/index.html`: markup only. |
 | `GET /static/...` | The UI's CSS and ES modules (`StaticFiles`, mounted last so it never shadows an `/api` route; covered by the same Host-header guard). No build step, no external assets. |
 | `GET /api/overview` | One poll (the page polls every 3 s): unit states, backup status (`[storage] backup_dir`'s `state.db` mtime plus `deskmate-backup.timer`), brain `GET /health` + `GET /api/status` + `GET /api/skills`, endpoint probes, and from `state.db` the last 40 chat turns, 12 memory notes, `agent_state`, traits and mood. |
-| `GET /api/events` | Relays the brain's SSE event stream (`GET /api/events`, see `SPEC_BRAIN.md` "Event Stream") so the browser talks only to this service. `?since=` / `Last-Event-ID` pass through; if the brain is unreachable it emits a `brain-down` event and ends, and the browser's `EventSource` retries. |
+| `GET /api/events` | Relays the brain's SSE event stream (`GET /api/events`, see [SPEC_BRAIN.md](SPEC_BRAIN.md) "Event Stream") so the browser talks only to this service. `?since=` / `Last-Event-ID` pass through; if the brain is unreachable it emits a `brain-down` event and ends, and the browser's `EventSource` retries. |
 | `GET /api/history?kind=mood\|traits&hours=` | Time series from `personality_history`, step-function points per name, down-sampled to $\le 600$ per series, anchored by the last point before the window (1 hour to 30 days). |
 | `GET /api/logs/{source}` | SSE tail of one configured source: `journalctl --user -u <unit>.service -o short-iso -n 200 -f`, or `tail -F -n 200 <file>`. The client names a source; it can never supply a command or path (unknown $\to$ 404). |
 
