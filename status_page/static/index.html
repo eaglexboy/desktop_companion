@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deskmate Status</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="/static/css/thinking.css">
+  <link rel="stylesheet" href="/static/css/timeline.css">
+  <link rel="stylesheet" href="/static/css/chat.css">
+  <link rel="stylesheet" href="/static/css/logs.css">
+</head>
+
+<body>
+  <header>
+    <h1>Deskmate status</h1>
+    <nav role="tablist" id="nav">
+      <button role="tab" data-tab="overview">Overview</button>
+      <button role="tab" data-tab="thinking">Thinking</button>
+      <button role="tab" data-tab="skills">Skills</button>
+      <button role="tab" data-tab="timeline">Mood timeline</button>
+      <button role="tab" data-tab="chat">Chat &amp; memory</button>
+      <button role="tab" data-tab="logs">Logs</button>
+    </nav>
+    <span class="live"><span class="dot" id="livedot"></span><span id="livetxt">connecting…</span></span>
+    <span class="updated" id="updated">loading…</span>
+    <button id="theme" title="Toggle light/dark">Theme</button>
+  </header>
+  <main>
+    <div class="banner" id="banner"></div>
+
+    <div class="tab" id="tab-overview">
+      <section>
+        <h2>Services</h2>
+        <div id="units"></div>
+      </section>
+      <section>
+        <h2>Endpoints</h2>
+        <div id="probes"></div>
+      </section>
+      <section>
+        <h2>Companion</h2>
+        <dl class="kv" id="companion"></dl>
+      </section>
+      <section>
+        <h2>Feeling now</h2>
+        <p class="feeling"><span id="feeling">—</span></p>
+        <div class="bars" id="mood"></div>
+      </section>
+      <section>
+        <h2>Traits</h2>
+        <div class="bars" id="traits"></div>
+      </section>
+      <section>
+        <h2>Backup</h2>
+        <dl class="kv" id="backup"></dl>
+      </section>
+      <section>
+        <h2>Placement</h2>
+        <dl class="kv" id="placement"></dl>
+      </section>
+    </div>
+
+    <div class="tab" id="tab-thinking">
+      <section class="wide">
+        <h2>What it is thinking <span class="sp"></span>
+          <button id="showMinor" aria-pressed="false" title="Show placement moves and background work">Background
+            events</button>
+          <button id="clearFeed">Clear</button>
+        </h2>
+        <p class="reasoning-note" id="reasoningNote">Waiting for the first model call…</p>
+        <div id="feed">
+          <div class="empty">Nothing yet. Say something to the companion and each step shows up here as it happens.
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="tab" id="tab-skills">
+      <section class="wide">
+        <h2>Skills <span class="sp"></span><span class="muted" id="skillsSummary"></span></h2>
+        <div id="skillsTable">
+          <div class="empty">Loading…</div>
+        </div>
+      </section>
+      <section class="wide">
+        <h2>Recent activity (this page session)</h2>
+        <div id="skillActivity">
+          <div class="empty">No skill has run since you opened this page.</div>
+        </div>
+      </section>
+      <section class="wide">
+        <h2>What the model is told</h2>
+        <p class="reasoning-note">This block is appended to the system prompt on every message. It is the only way the
+          companion knows what it can do.</p>
+        <pre id="skillPrompt" class="mono boxed"></pre>
+      </section>
+    </div>
+
+    <div class="tab" id="tab-timeline">
+      <section class="wide">
+        <h2>Mood over time <span class="sp"></span>
+          <select id="tlKind">
+            <option value="mood">Mood</option>
+            <option value="traits">Traits</option>
+          </select>
+          <select id="tlRange">
+            <option value="1">1 hour</option>
+            <option value="6">6 hours</option>
+            <option value="24" selected>24 hours</option>
+            <option value="168">7 days</option>
+            <option value="720">30 days</option>
+          </select>
+          <button id="tlTable" aria-pressed="false">Table</button>
+        </h2>
+        <div class="legend" id="tlLegend"></div>
+        <div class="chart-wrap" id="tlWrap"><svg class="chart" id="tlSvg" role="img" aria-label="Mood over time"></svg>
+          <div class="tip" id="tlTip"></div>
+        </div>
+        <div class="legend" id="tlFeelings" aria-label="Feelings along the bottom strip"></div>
+        <div id="tlTableWrap" style="display:none"></div>
+      </section>
+    </div>
+
+    <div class="tab" id="tab-chat">
+      <section class="wide">
+        <h2>Recent chat</h2>
+        <div class="chat" id="chat"></div>
+      </section>
+      <section class="wide">
+        <h2>Memory notes</h2>
+        <ul class="notes" id="memories"></ul>
+      </section>
+    </div>
+
+    <div class="tab" id="tab-logs">
+      <section class="wide">
+        <h2>Logs</h2>
+        <div class="tabs" id="logtabs"></div>
+        <pre id="log"></pre>
+      </section>
+    </div>
+  </main>
+  <script type="module" src="/static/js/main.js"></script>
+</body>
+
+</html>

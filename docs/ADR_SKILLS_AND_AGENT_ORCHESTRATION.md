@@ -7,6 +7,8 @@
 
 ---
 
+> **Implementation note (2026-10):** a minimal slice of Track 2 now ships in V1 as `brain/skills/` (see `docs/SPEC_BRAIN.md`, "Structured Replies & Skills"): the model replies `{"say", "do"}`, and `do` entries run only through an in-process allowlisted registry with validated arguments, a per-reply cap and timeouts. Built-ins are `gesture`, `remember`, `change_look`, `revert_look`. It is fire-and-forget (results are not fed back to the model) and **none of the rest of this ADR is implemented**: no Inference Capacity Governor, no `skill.toml` manifests or drop-in skill loading, no `bwrap` sandbox or permission flow, no sub-agents. The `[skills]` config table exists (`enabled`, `disabled`, `max_actions_per_reply`); `max_script_workers` remains reserved.
+
 ## 1. Context & Executive Recommendation
 
 As a desktop companion, Deskmate requires capabilities beyond conversational dialogue. Users expect the companion to:

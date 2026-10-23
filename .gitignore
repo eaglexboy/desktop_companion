@@ -1,0 +1,33 @@
+# Note: deploy_dir (runtime state.db, generated assets, manifests) lives on
+# fast local storage outside this repo entirely — nothing to ignore for it
+# here.
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# C++/Qt build output
+overlay/build/
+overlay/CMakeFiles/
+overlay/CMakeCache.txt
+
+# Blender
+*.blend1
+
+# Local-only, never-commit config (real config lives at
+# $XDG_CONFIG_HOME/deskmate/config.toml, outside this repo, by design)
+config.toml
+
+# Editor settings
+.vscode/
+agent_state_backup/
+
+# Reference material
+docs/LEARNINGS.md
+docs/IMPLEMENTATION_PLAN.md
+docs/plan/

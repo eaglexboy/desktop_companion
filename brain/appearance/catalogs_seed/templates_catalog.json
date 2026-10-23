@@ -1,0 +1,72 @@
+{
+  "templates": {
+    "standard_humanoid_female": {
+      "tier": "tier_2_standard",
+      "path": "base_templates/standard_humanoid_female.glb",
+      "has_face": true,
+      "capabilities": {
+        "has_head": true,
+        "has_arms": true,
+        "has_legs": true,
+        "has_face": true
+      },
+      "supported_proportions": ["muscularity", "femininity", "height", "build"],
+      "viseme_shape_keys": [
+        "viseme_A", "viseme_B", "viseme_C", "viseme_D",
+        "viseme_E", "viseme_F", "viseme_G", "viseme_H", "viseme_X"
+      ],
+      "supported_sockets": [
+        "socket_head_top", "socket_eyes", "socket_neck",
+        "socket_chest", "socket_waist", "socket_hand_R", "socket_hand_L", "socket_orbit"
+      ]
+    },
+    "standard_humanoid_male": {
+      "tier": "tier_2_standard",
+      "path": "base_templates/standard_humanoid_male.glb",
+      "has_face": true,
+      "capabilities": {
+        "has_head": true,
+        "has_arms": true,
+        "has_legs": true,
+        "has_face": true
+      },
+      "supported_proportions": ["muscularity", "femininity", "height", "build"],
+      "viseme_shape_keys": [
+        "viseme_A", "viseme_B", "viseme_C", "viseme_D",
+        "viseme_E", "viseme_F", "viseme_G", "viseme_H", "viseme_X"
+      ],
+      "supported_sockets": [
+        "socket_head_top", "socket_eyes", "socket_neck",
+        "socket_chest", "socket_waist", "socket_hand_R", "socket_hand_L", "socket_orbit"
+      ]
+    },
+    "primitive_blob": {
+      "tier": "tier_3_primitive",
+      "path": null,
+      "has_face": false,
+      "capabilities": {
+        "has_head": true,
+        "has_arms": false,
+        "has_legs": false,
+        "has_face": false
+      },
+      "supported_proportions": ["height", "build"],
+      "viseme_shape_keys": [],
+      "supported_sockets": ["socket_head_top", "socket_eyes", "socket_orbit"]
+    },
+    "primitive_mechanical": {
+      "tier": "tier_3_primitive",
+      "path": null,
+      "has_face": false,
+      "capabilities": {
+        "has_head": true,
+        "has_arms": true,
+        "has_legs": false,
+        "has_face": false
+      },
+      "supported_proportions": ["height", "build"],
+      "viseme_shape_keys": [],
+      "supported_sockets": ["socket_head_top", "socket_chest", "socket_hand_R", "socket_hand_L", "socket_orbit"]
+    }
+  }
+}

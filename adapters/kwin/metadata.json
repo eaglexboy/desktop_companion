@@ -1,0 +1,18 @@
+{
+    "KPackageStructure": "KWin/Script",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "El Cas",
+                "Email": "eaglexboy@gmail.com"
+            }
+        ],
+        "Description": "Forwards active window geometry and screen layout to the Deskmate desktop companion daemon over D-Bus (org.deskmate.Presence), for non-intrusive avatar placement.",
+        "Icon": "preferences-system-windows-script-test",
+        "Id": "deskmate-presence",
+        "License": "GPL-3.0-or-later",
+        "Name": "Deskmate Presence Telemetry",
+        "Version": "1.0.0"
+    },
+    "X-Plasma-API": "javascript"
+}
