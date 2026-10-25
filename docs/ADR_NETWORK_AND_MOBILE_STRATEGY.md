@@ -26,7 +26,7 @@ Deskmate is designed as a desktop companion agent. However, users desire multi-s
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ Phase 1: Local Desktop V1 (Current Scope)                                │
-│ • Loopback bind (127.0.0.1:8765); single desktop client                 │
+│ • Loopback bind (127.0.0.1:8765); single desktop client                  │
 │ • Origin-header validation / Host-header check against DNS rebinding     │
 │ • IPC envelopes support dual-delivery (local paths + HTTP URLs)          │
 │ • Refuses non-loopback bind without auth_token_file configured           │
@@ -47,7 +47,7 @@ Deskmate is designed as a desktop companion agent. However, users desire multi-s
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ Phase 3: Mobile Companion Client (Web PWA / Three.js)                    │
 │ • Zero-install Progressive Web App running WebGL / WebSockets            │
-│ • Served over HTTPS / WSS (via tailscale serve with MagicDNS certs)     │
+│ • Served over HTTPS / WSS (via tailscale serve with MagicDNS certs)      │
 │ • Browser Auth: first-message token transmission in hello.token payload  │
 │ • Media Auth: HMAC-SHA256 signed query parameters (?sig=...&exp=...)     │
 │ • Streams binary audio chunks (Opus/PCM) over WebSocket                  │

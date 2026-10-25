@@ -8,7 +8,7 @@ The Brain Daemon is the central orchestration and control plane for the Deskmate
 * Multi-tier, capability-aware language model routing (Local vs. Cloud providers).
 * Persistent personality evolution, mood decay, and memory reflection.
 * Voice pipeline orchestration: pluggable local/remote speech-to-text (STT), pluggable local/remote text-to-speech (TTS), and audio-to-viseme lip-sync generation.
-* Headless procedural 3D asset generation orchestration via Blender, governing runtime redesigns per `docs/DESIGN_AVATAR_EVOLUTION_FLOW.md`.
+* Headless procedural 3D asset generation orchestration via Blender, governing runtime redesigns per [DESIGN_AVATAR_EVOLUTION_FLOW.md](DESIGN_AVATAR_EVOLUTION_FLOW.md).
 * Window awareness, user presence tracking (`User_Active`, `User_Idle`, `User_Away`), and non-intrusive placement calculation via an abstracted desktop D-Bus bridge.
 * Local WebSocket IPC server communication with frontend presentation clients.
 
@@ -31,9 +31,9 @@ The daemon exposes an asynchronous WebSocket IPC endpoint and an administrative 
 
 ### Out of Scope for V1 (Documented Roadmaps)
 
-* **Multi-Client & Remote Access:** Local loopback only (`127.0.0.1:8765`), secured against browser-origin hijacking. Private mesh networking (Tailscale) and mobile PWA access are defined in `docs/ADR_NETWORK_AND_MOBILE_STRATEGY.md`.
-* **Autonomous Voice Selection & Cloning:** V1 implements baseline voice synthesis and interface accommodations; autonomous acoustic evolution is defined in `docs/ADR_AUTONOMOUS_VOICE_SELECTION.md`.
-* **Skills & Sub-Agent Orchestration:** V1 reserves tool registration hooks, concurrency configuration keys (`max_parallel_slots`, `max_concurrency`, `max_script_workers`), and task state event schemas; deterministic script DAGs and cognitive sub-agents governed by the Inference Capacity Governor (ICG) are defined in `docs/ADR_SKILLS_AND_AGENT_ORCHESTRATION.md`.
+* **Multi-Client & Remote Access:** Local loopback only (`127.0.0.1:8765`), secured against browser-origin hijacking. Private mesh networking (Tailscale) and mobile PWA access are defined in [ADR_NETWORK_AND_MOBILE_STRATEGY.md](ADR_NETWORK_AND_MOBILE_STRATEGY.md).
+* **Autonomous Voice Selection & Cloning:** V1 implements baseline voice synthesis and interface accommodations; autonomous acoustic evolution is defined in [ADR_AUTONOMOUS_VOICE_SELECTION.md](ADR_AUTONOMOUS_VOICE_SELECTION.md).
+* **Skills & Sub-Agent Orchestration:** V1 reserves tool registration hooks, concurrency configuration keys (`max_parallel_slots`, `max_concurrency`, `max_script_workers`), and task state event schemas; deterministic script DAGs and cognitive sub-agents governed by the Inference Capacity Governor (ICG) are defined in [ADR_SKILLS_AND_AGENT_ORCHESTRATION.md](ADR_SKILLS_AND_AGENT_ORCHESTRATION.md).
 * **Dedicated Configuration GUI:** Direct editing of standard XDG TOML files (`config.toml`).
 
 ---
@@ -262,6 +262,16 @@ CREATE TABLE IF NOT EXISTS interactions (
     escalated INTEGER NOT NULL DEFAULT 0
 );
 
+-- The model's reply exactly as returned, before parsing and the plain-speech
+-- cleanup; `interactions.text` keeps the cleaned text that was said and shown.
+-- One row per assistant turn saved since this table existed (older turns and
+-- user turns have none), capped at 20,000 characters. A separate table rather
+-- than a column so an existing database needs no ALTER. Read by the status page.
+CREATE TABLE IF NOT EXISTS reply_raw (
+    interaction_id INTEGER PRIMARY KEY REFERENCES interactions(id),
+    raw TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS memories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL,
@@ -309,7 +319,7 @@ While the `agent_state` table uses a generic key-value schema (which requires ze
 
 ## Appearance & Blender Orchestration (`brain/appearance/`)
 
-Governed by `docs/DESIGN_AVATAR_EVOLUTION_FLOW.md`:
+Governed by [DESIGN_AVATAR_EVOLUTION_FLOW.md](DESIGN_AVATAR_EVOLUTION_FLOW.md):
 
 1. **LookSpec Validation (`spec.py`):** Asserts fields against catalog definitions (`templates_catalog.json`, `wardrobe_catalog.json`). Retries synthesis once on failure before graceful abort.
 2. **Headless Execution (`blender_gen.py`):** Centralizes background subprocess execution via `asyncio.create_subprocess_exec` with environment sanitization (stripping `VIRTUAL_ENV`, `PYTHONPATH`, `PYTHONHOME`) and a **120-second timeout**:

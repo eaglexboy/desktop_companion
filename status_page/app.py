@@ -117,12 +117,19 @@ def _db_rows(settings: Settings) -> dict:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1.0)
         conn.row_factory = sqlite3.Row
         try:
-            out["interactions"] = [
-                dict(r)
-                for r in conn.execute(
+            try:
+                # `raw` is what the model returned before the reply was parsed
+                # and cleaned for speech (NULL for older turns and user turns).
+                rows = conn.execute(
+                    "SELECT i.id, i.ts, i.role, i.text, i.provider, i.escalated, r.raw "
+                    "FROM interactions i LEFT JOIN reply_raw r ON r.interaction_id = i.id "
+                    "ORDER BY i.id DESC LIMIT 40"
+                )
+            except sqlite3.OperationalError:  # a database from before reply_raw existed
+                rows = conn.execute(
                     "SELECT id, ts, role, text, provider, escalated FROM interactions ORDER BY id DESC LIMIT 40"
                 )
-            ][::-1]
+            out["interactions"] = [dict(r) for r in rows][::-1]
             out["memories"] = [dict(r) for r in conn.execute("SELECT ts, note FROM memories ORDER BY id DESC LIMIT 12")]
             out["agent_state"] = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM agent_state")}
             out["traits"] = {r["name"]: r["value"] for r in conn.execute("SELECT name, value FROM traits")}

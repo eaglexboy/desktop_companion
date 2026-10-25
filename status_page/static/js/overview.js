@@ -2,8 +2,13 @@
 // the memory list, and the chat history. Owns the poll that feeds everyone else.
 import { $, esc, fmtTime, ago, getJSON } from "./util.js";
 import { on, emit } from "./bus.js";
+import { compareHtml, wasCleaned } from "./diff.js";
 
 const POLL_MS = 3000;
+
+// Chat messages whose raw-response comparison the viewer has open. The chat is
+// re-rendered on every poll, which would otherwise close it again.
+const openRaw = new Set();
 
 function row(state, label, detail) {
   return `<div class="row"><span class="dot ${state}"></span><span class="grow">${esc(label)}</span><span class="muted">${esc(detail)}</span></div>`;
@@ -127,10 +132,15 @@ function render(d) {
   const atBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 40;
   chat.innerHTML =
     d.db.interactions
-      .map(
-        (m) =>
-          `<div class="msg ${esc(m.role)}"><small>${esc(m.role)} · ${fmtTime(m.ts)}${m.provider ? " · " + esc(m.provider) : ""}${m.escalated ? " · escalated" : ""}</small>${esc(m.text)}</div>`,
-      )
+      .map((m) => {
+        // Assistant turns saved since the raw reply was recorded carry it, so the
+        // model's own words can be compared with what was said and stored.
+        const raw =
+          m.raw == null
+            ? ""
+            : `<details class="rawmsg" data-id="${m.id}"${openRaw.has(m.id) ? " open" : ""}><summary>raw response${wasCleaned(m.raw, m.text) ? " · cleaned" : ""}</summary>${compareHtml(m.raw, m.text)}</details>`;
+        return `<div class="msg ${esc(m.role)}"><small>${esc(m.role)} · ${fmtTime(m.ts)}${m.provider ? " · " + esc(m.provider) : ""}${m.escalated ? " · escalated" : ""}</small>${esc(m.text)}${raw}</div>`;
+      })
       .join("") || '<span class="muted">no messages</span>';
   if (atBottom) chat.scrollTop = chat.scrollHeight;
   if (d.db.error) problems.push("state.db: " + d.db.error);
@@ -150,6 +160,17 @@ async function poll() {
 }
 
 export function initOverview() {
+  // `toggle` does not bubble, so listen in the capture phase on the container.
+  $("chat").addEventListener(
+    "toggle",
+    (e) => {
+      const id = Number(e.target.dataset && e.target.dataset.id);
+      if (!id) return;
+      if (e.target.open) openRaw.add(id);
+      else openRaw.delete(id);
+    },
+    true,
+  );
   on("overview", render);
   poll();
   setInterval(poll, POLL_MS);

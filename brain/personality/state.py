@@ -25,6 +25,10 @@ from pathlib import Path
 
 from brain.events import emit
 
+# Longest raw model reply kept per assistant turn (replies are a few hundred
+# characters; this only stops a runaway generation filling the database).
+RAW_REPLY_MAX_CHARS = 20_000
+
 NEUTRAL_TRAIT = 50.0
 NEUTRAL_MOOD = 50.0
 # Placeholder default — the agent (or the user) can rename it later via
@@ -70,6 +74,15 @@ CREATE TABLE IF NOT EXISTS interactions (
     provider TEXT,                -- which LLM server produced it (assistant turns)
     escalated INTEGER NOT NULL DEFAULT 0,
     reflected INTEGER NOT NULL DEFAULT 0
+);
+-- What the model actually returned for an assistant turn, before the reply
+-- was parsed and cleaned for speech. `interactions.text` keeps the cleaned
+-- text (that is what was said and shown); this is the evidence for debugging
+-- the cleanup. A separate table, not a column, so an existing database needs
+-- no ALTER (CREATE IF NOT EXISTS is the whole migration).
+CREATE TABLE IF NOT EXISTS reply_raw (
+    interaction_id INTEGER PRIMARY KEY REFERENCES interactions(id),
+    raw TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS memories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -253,12 +266,30 @@ class PersonalityStore:
             )
 
     # --- interaction log (feeds reflect.py) ---
-    def log_interaction(self, role: str, text: str, *, provider: str | None = None, escalated: bool = False) -> None:
+    def log_interaction(
+        self,
+        role: str,
+        text: str,
+        *,
+        provider: str | None = None,
+        escalated: bool = False,
+        raw_text: str | None = None,
+    ) -> int:
+        """Returns the new row's id. `raw_text` is the model's reply as it came
+        back, kept next to the cleaned `text` for comparison on the status
+        page; capped, since it only exists to be read by a person."""
         with self._conn:
-            self._conn.execute(
+            cursor = self._conn.execute(
                 "INSERT INTO interactions(ts, role, text, provider, escalated) VALUES (?, ?, ?, ?, ?)",
                 (time.time(), role, text, provider, int(escalated)),
             )
+            interaction_id = cursor.lastrowid
+            if raw_text is not None:
+                self._conn.execute(
+                    "INSERT INTO reply_raw(interaction_id, raw) VALUES (?, ?)",
+                    (interaction_id, raw_text[:RAW_REPLY_MAX_CHARS]),
+                )
+        return interaction_id
 
     def pending_interactions(self, limit: int = 200) -> list[sqlite3.Row]:
         return self._conn.execute(
