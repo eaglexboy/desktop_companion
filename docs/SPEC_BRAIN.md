@@ -262,6 +262,16 @@ CREATE TABLE IF NOT EXISTS interactions (
     escalated INTEGER NOT NULL DEFAULT 0
 );
 
+-- The model's reply exactly as returned, before parsing and the plain-speech
+-- cleanup; `interactions.text` keeps the cleaned text that was said and shown.
+-- One row per assistant turn saved since this table existed (older turns and
+-- user turns have none), capped at 20,000 characters. A separate table rather
+-- than a column so an existing database needs no ALTER. Read by the status page.
+CREATE TABLE IF NOT EXISTS reply_raw (
+    interaction_id INTEGER PRIMARY KEY REFERENCES interactions(id),
+    raw TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS memories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL,

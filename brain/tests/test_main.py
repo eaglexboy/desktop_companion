@@ -553,3 +553,46 @@ def test_reload_without_overlay_relevant_change_sends_nothing(client):
         # reply to a /chat we make afterwards, not a config_update.
         c.post("/chat", json={"text": "hi", "speak": False})
         assert ws.receive_json()["type"] != "config_update"
+
+
+# --- the raw model reply is kept for the status page ------------------------------
+
+
+def _chat_with_reply(tmp_path, monkeypatch, reply: str):
+    from brain.events import bus
+
+    settings = _settings(tmp_path)
+    built_state = build_app_state(settings)
+    _wire_fakes(built_state, chat_reply=reply)
+    monkeypatch.setattr("brain.main.build_app_state", lambda *a, **kw: built_state)
+    before = max((e["seq"] for e in bus.since(0)), default=0)
+    with TestClient(app) as c:
+        assert c.post("/chat", json={"text": "hi there", "speak": False}).status_code == 200
+        # Read before the app shuts down (it closes the database on exit).
+        saved = [
+            dict(r)
+            for r in built_state.store._conn.execute(
+                "SELECT i.role, i.text, r.raw FROM interactions i "
+                "LEFT JOIN reply_raw r ON r.interaction_id = i.id ORDER BY i.id"
+            )
+        ]
+    return saved, [e for e in bus.since(before)]
+
+
+def test_raw_reply_is_emitted_and_saved_next_to_the_cleaned_text(tmp_path, monkeypatch):
+    saved, events = _chat_with_reply(tmp_path, monkeypatch, "*smiles* Hello there.")
+
+    raw_events = [e for e in events if e["type"] == "reply.raw"]
+    assert [e["data"]["text"] for e in raw_events] == ["*smiles* Hello there."]
+    said = [e for e in events if e["type"] == "turn.reply"]
+    assert said and said[-1]["data"]["text"] == "Hello there."  # cleaned: the stage direction is not spoken
+
+    assistant = [r for r in saved if r["role"] == "assistant"]
+    assert [(r["text"], r["raw"]) for r in assistant] == [("Hello there.", "*smiles* Hello there.")]
+    assert [r["raw"] for r in saved if r["role"] == "user"] == [None]
+
+
+def test_raw_reply_event_comes_before_the_turns_final_reply(tmp_path, monkeypatch):
+    _saved, events = _chat_with_reply(tmp_path, monkeypatch, "Hello there.")
+    order = [e["type"] for e in events if e["type"] in ("reply.raw", "turn.reply")]
+    assert order == ["reply.raw", "turn.reply"]

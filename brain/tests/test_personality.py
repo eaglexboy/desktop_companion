@@ -154,3 +154,52 @@ def test_agent_state_not_pre_seeded(tmp_path):
     store = _store(tmp_path)
     rows = store._conn.execute("SELECT COUNT(*) AS n FROM agent_state").fetchone()
     assert rows["n"] == 0
+
+
+# --- raw model reply kept next to the cleaned interaction text ------------------
+
+
+def test_log_interaction_returns_the_row_id_and_keeps_the_raw_reply(tmp_path):
+    store = _store(tmp_path)
+    first = store.log_interaction("user", "hi")
+    second = store.log_interaction("assistant", "Hello there.", raw_text='{"say": "*smiles* Hello there."}')
+
+    assert second == first + 1
+    row = store._conn.execute(
+        "SELECT i.text, r.raw FROM interactions i JOIN reply_raw r ON r.interaction_id = i.id WHERE i.id = ?",
+        (second,),
+    ).fetchone()
+    assert row["text"] == "Hello there."
+    assert row["raw"] == '{"say": "*smiles* Hello there."}'
+
+
+def test_turns_without_a_raw_reply_have_no_reply_raw_row(tmp_path):
+    store = _store(tmp_path)
+    store.log_interaction("user", "hi")
+    store.log_interaction("assistant", "hello")
+    assert store._conn.execute("SELECT COUNT(*) FROM reply_raw").fetchone()[0] == 0
+
+
+def test_a_runaway_raw_reply_is_capped(tmp_path):
+    from brain.personality.state import RAW_REPLY_MAX_CHARS
+
+    store = _store(tmp_path)
+    interaction_id = store.log_interaction("assistant", "x", raw_text="y" * (RAW_REPLY_MAX_CHARS + 500))
+    raw = store._conn.execute("SELECT raw FROM reply_raw WHERE interaction_id = ?", (interaction_id,)).fetchone()[0]
+    assert len(raw) == RAW_REPLY_MAX_CHARS
+
+
+def test_opening_a_database_from_before_reply_raw_adds_the_table(tmp_path):
+    """No ALTER needed: CREATE TABLE IF NOT EXISTS is the whole migration."""
+    import sqlite3
+
+    store = _store(tmp_path)
+    path = tmp_path / "personality.db"
+    store.close()
+    conn = sqlite3.connect(path)
+    conn.execute("DROP TABLE reply_raw")
+    conn.commit()
+    conn.close()
+
+    reopened = _store(tmp_path)
+    assert reopened.log_interaction("assistant", "hi", raw_text="raw hi") > 0

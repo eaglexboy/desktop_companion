@@ -3,13 +3,14 @@
 import { $, esc, fmtTime, sec, chips } from "./util.js";
 import { on } from "./bus.js";
 import { isShown } from "./tabs.js";
+import { compareHtml, wasCleaned } from "./diff.js";
 
 const MAX_CARDS = 80;
 const turns = new Map();   // turn id (or "bg<seq>") -> { ts, events, start, el }
 let showMinor = false;
 
 // ---- how each event type reads in the feed ----
-function stepHtml(ev) {
+function stepHtml(ev, c) {
   const d = ev.data;
   switch (ev.type) {
     case "turn.prompt":
@@ -28,6 +29,13 @@ function stepHtml(ev) {
       return `<div class="step decision" style="border-color:var(--bad)">LLM call failed ${chips([d.purpose, d.model, d.error])}</div>`;
     case "llm.reasoning":
       return `<div class="step reasoning"><details open><summary>Reasoning (${esc(d.purpose || "model")})</summary><pre>${esc(d.text)}</pre></details></div>`;
+    case "reply.raw": {
+      // Compared with the text that was finally said/saved once the turn has one.
+      const said = c && c.events.find((e) => e.type === "turn.reply");
+      const saved = said ? said.data.text : null;
+      const flag = saved != null && wasCleaned(d.text, saved) ? chips(["cleaned"]) : "";
+      return `<div class="step"><details open><summary>Raw response ${flag}</summary>${compareHtml(d.text, saved)}</details></div>`;
+    }
     case "reply.parsed":
       return d.structured
         ? `<div class="step decision"><b>Reply format:</b> structured ${chips([`${d.actions.length} action${d.actions.length === 1 ? "" : "s"} proposed`])}</div>`
@@ -53,7 +61,7 @@ function stepHtml(ev) {
 
 function cardHtml(c) {
   const head = c.start ? esc(c.start.data.text) : "(background)";
-  return `<h3><span>${c.start ? "You:" : "Background:"}</span><span style="font-weight:400">${head}</span><span class="t">${fmtTime(c.ts)}</span></h3>` + c.events.map(stepHtml).join("");
+  return `<h3><span>${c.start ? "You:" : "Background:"}</span><span style="font-weight:400">${head}</span><span class="t">${fmtTime(c.ts)}</span></h3>` + c.events.map((e) => stepHtml(e, c)).join("");
 }
 
 // ---- feed management ----

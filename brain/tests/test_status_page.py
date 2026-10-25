@@ -144,3 +144,50 @@ def test_scripts_carry_no_size_values(settings):
     size_style = re.compile(r"(?:width|height|border-radius|margin|padding|font-size|gap)\s*:\s*[\d.]+(?:px|rem|em|%)?\s*[;\"'`]")
     offenders = [f"{p.name}: {m.group(0)}" for p in (Path(status_app.STATIC_DIR) / "js").glob("*.js") for m in size_style.finditer(p.read_text())]
     assert not offenders, offenders
+
+
+def test_db_rows_pairs_each_saved_reply_with_the_raw_model_output(settings):
+    """The status page compares what the model returned with what was saved."""
+    conn = sqlite3.connect(settings.personality_db_path)
+    conn.executescript(
+        """
+        CREATE TABLE interactions(id INTEGER PRIMARY KEY, ts REAL, role TEXT, text TEXT, provider TEXT, escalated INT, reflected INT);
+        CREATE TABLE reply_raw(interaction_id INTEGER PRIMARY KEY, raw TEXT NOT NULL);
+        CREATE TABLE memories(id INTEGER PRIMARY KEY, ts REAL, note TEXT);
+        CREATE TABLE agent_state(key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE traits(name TEXT PRIMARY KEY, value REAL);
+        CREATE TABLE mood(name TEXT PRIMARY KEY, value REAL);
+        INSERT INTO interactions(id, ts, role, text) VALUES (1, 1, 'user', 'hi'), (2, 2, 'assistant', 'Hello there.'),
+                                                            (3, 3, 'assistant', 'older turn');
+        INSERT INTO reply_raw VALUES (2, '{"say": "*smiles* Hello there."}');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = {m["id"]: m for m in status_app._db_rows(settings)["interactions"]}
+
+    assert rows[2]["raw"] == '{"say": "*smiles* Hello there."}'
+    assert rows[2]["text"] == "Hello there."
+    assert rows[1]["raw"] is None  # user turns have none
+    assert rows[3]["raw"] is None  # nor do assistant turns saved before raw replies were recorded
+
+
+def test_db_rows_still_reads_a_database_without_the_reply_raw_table(settings):
+    conn = sqlite3.connect(settings.personality_db_path)
+    conn.executescript(
+        """
+        CREATE TABLE interactions(id INTEGER PRIMARY KEY, ts REAL, role TEXT, text TEXT, provider TEXT, escalated INT, reflected INT);
+        CREATE TABLE memories(id INTEGER PRIMARY KEY, ts REAL, note TEXT);
+        CREATE TABLE agent_state(key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE traits(name TEXT PRIMARY KEY, value REAL);
+        CREATE TABLE mood(name TEXT PRIMARY KEY, value REAL);
+        INSERT INTO interactions(ts, role, text) VALUES (1, 'assistant', 'hello');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    rows = status_app._db_rows(settings)
+
+    assert rows["available"] and [m["text"] for m in rows["interactions"]] == ["hello"]

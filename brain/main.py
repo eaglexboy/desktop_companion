@@ -331,6 +331,11 @@ async def _handle_chat_text(state: AppState, text: str, *, speak: bool = True) -
     emit("turn.prompt", {"system_prompt": system_prompt})
     store.log_interaction("user", text)
     result = await state.router.handle(text, system_prompt=system_prompt)
+    # What the model actually returned, before it is parsed and cleaned for
+    # speech -- kept (event + database) so the status page can show what the
+    # cleanup changed.
+    raw_text = result.text
+    emit("reply.raw", {"text": raw_text, "provider": result.source})
     actions: list[SkillCall] = []
     if state.settings.skills.enabled and not result.source.startswith("tool:"):
         # The model answers {"say": ..., "do": [...]}: only "say" is dialogue.
@@ -350,7 +355,9 @@ async def _handle_chat_text(state: AppState, text: str, *, speak: bool = True) -
     if not result.text:
         emit("turn.reply", {"text": "", "provider": result.source, "escalated": result.escalated, "reason": result.reason})
         return f"utt_{int(time.time() * 1000)}"
-    store.log_interaction("assistant", result.text, provider=result.source, escalated=result.escalated)
+    store.log_interaction(
+        "assistant", result.text, provider=result.source, escalated=result.escalated, raw_text=raw_text
+    )
     emit(
         "turn.reply",
         {"text": result.text, "provider": result.source, "escalated": result.escalated, "reason": result.reason},
