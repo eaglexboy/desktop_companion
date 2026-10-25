@@ -41,14 +41,59 @@ _VOCAL_CUES: tuple[tuple[re.Pattern[str], str], ...] = tuple(
 )
 
 
+# Verbs a model writes as a one-word silent stage direction ("*smiles*",
+# "*nodding*"). Only their INFLECTED forms count as an action: "*look* at
+# this" is emphasis on a base word, but "*looks*" can only be a stage
+# direction. Vocal cues ("*laughs*", "*sighs*") are caught earlier and become
+# sounds, so they are deliberately not here.
+_ACTION_VERBS = frozenset(
+    """smile grin nod wink wave blush beam shrug smirk bow pause blink tilt lean
+    nuzzle bounce wiggle twirl clap salute step turn look glance stare gaze frown
+    pout grimace wince shudder shiver tremble fidget squint perk flicker glow
+    pulse wag point gesture hug poke nudge tap snap spin hop jump dance sway
+    stretch cheer curtsy kneel sit stand rise blink bob shake lift raise lower
+    adjust straighten wring clasp fold cross uncross rub scratch tug fiddle
+    tinker peek peer squeal skip wander float drift settle relax stiffen
+    brighten dim sparkle twinkle light""".split()
+)
+_ACTION_INFLECTIONS = ("s", "es", "ed", "d", "ing")
+
+
+def _is_silent_action(word: str) -> bool:
+    word = word.lower()
+    for suffix in _ACTION_INFLECTIONS:
+        if len(word) <= len(suffix) + 1 or not word.endswith(suffix):
+            continue
+        stem = word[: -len(suffix)]
+        # smiles -> smile, nodded -> nod (doubled consonant), hopping -> hop,
+        # waving -> wave (dropped e), curtsied -> curtsy.
+        candidates = {stem, stem + "e", stem[:-1] if len(stem) > 2 and stem[-1] == stem[-2] else stem}
+        if stem.endswith("i"):
+            candidates.add(stem[:-1] + "y")
+        if suffix in ("es", "ed") and stem.endswith("i"):
+            candidates.add(stem[:-1] + "y")
+        if candidates & _ACTION_VERBS:
+            return True
+    return False
+
+
+# Marks where a stage direction was removed, so the gap it leaves can be
+# closed ("Sure thing *winks*." must not become "Sure thing .").
+_DROPPED = "\x00"
+
+
 def _star_span(match: re.Match[str]) -> str:
     inner = match.group(1).strip()
     for pattern, sound in _VOCAL_CUES:
         if pattern.search(inner):
             return sound
-    # One word is emphasis and keeps its word; anything longer is a silent
-    # action with nothing to say aloud.
-    return inner if len(inner.split()) == 1 else ""
+    words = inner.split()
+    # Anything longer than a word is a silent action with nothing to say
+    # aloud. One word is emphasis and keeps its word -- unless it is an
+    # inflected action verb ("*smiles*"), which is a stage direction.
+    if len(words) != 1 or _is_silent_action(words[0].strip(".,!?;:…")):
+        return _DROPPED
+    return inner
 
 
 _BOLD = re.compile(r"(\*\*|__)(.+?)\1", re.DOTALL)
@@ -83,6 +128,7 @@ def to_plain_speech(text: str) -> str:
     text = _BARE_URL.sub("", text)
     text = _INLINE_CODE.sub(r"\1", text)
     text = _SINGLE_STAR.sub(_star_span, text)
+    text = re.sub(r"[ \t]*\x00(?=[ \t]*[.,!?;:…])", "", text).replace(_DROPPED, "")
     text = _BOLD.sub(r"\2", text)
     text = _STRIKE.sub(r"\1", text)
     text = _ITALIC_UNDERSCORE.sub(r"\1", text)

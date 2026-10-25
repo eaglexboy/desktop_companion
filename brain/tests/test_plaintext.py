@@ -32,3 +32,33 @@ def test_vocal_cues_become_sounds_the_voice_can_make():
 
 def test_silent_actions_are_dropped_not_read_aloud():
     assert to_plain_speech("*waves a tiny hand* Hello there.") == "Hello there."
+
+
+def test_one_word_silent_actions_are_dropped_not_read_aloud():
+    # Regression: "*smiles*" was kept as if it were emphasis and spoken.
+    assert to_plain_speech("*smiles* Hello there.") == "Hello there."
+    assert to_plain_speech("Hello! *grins* Ready?") == "Hello! Ready?"
+    assert to_plain_speech("*nods*") == ""
+    assert to_plain_speech("*Smiles.* Welcome back.") == "Welcome back."
+    assert to_plain_speech("*nodding* I see.") == "I see."
+    assert to_plain_speech("*curtsies* Hi.") == "Hi."
+    assert to_plain_speech("*hopped* in.") == "in."
+
+
+def test_dropping_an_action_does_not_leave_a_gap_before_punctuation():
+    assert to_plain_speech("Sure thing *winks*.") == "Sure thing."
+    assert to_plain_speech("Okay *shrugs*, fine.") == "Okay, fine."
+    assert to_plain_speech("Well *tilts head and thinks*!") == "Well!"
+
+
+def test_one_word_emphasis_still_keeps_its_word():
+    # Only INFLECTED action verbs are stage directions; bare words are emphasis.
+    assert to_plain_speech("That is *so* good.") == "That is so good."
+    assert to_plain_speech("*look* at this.") == "look at this."
+    assert to_plain_speech("It *is* fine.") == "It is fine."
+    assert to_plain_speech("*Never* again.") == "Never again."
+
+
+def test_vocal_cues_still_win_over_the_action_list():
+    assert to_plain_speech("*laughs* Funny.") == "Ha ha ha. Funny."
+    assert to_plain_speech("*giggles* Hi.") == "Hee hee. Hi."
