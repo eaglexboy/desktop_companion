@@ -48,8 +48,8 @@ Skills and delegated goals are categorized into three distinct execution tracks 
 │ • Local CPU process   │ • Injected into dialogue│ • Background worker task      │
 │ • Bounded process pool│ • VIP Companion turn    │ • Governed by ICG slots       │
 │ • E.g.: "Mute audio", │ • E.g.: "What's the     │ • E.g.: "Audit repo, fix bugs,│
-│   "Run git pull &&      weather in Tokyo?",       write tests, report back"   │
-│    make build"          "Search docs for X"     │                               │
+│   "Run git pull &&    |  weather in Tokyo?",    |   write tests, report back"   │
+│    make build"        |  "Search docs for X"    │                               │
 └───────────────────────┴─────────────────────────┴───────────────────────────────┘
 ```
 
