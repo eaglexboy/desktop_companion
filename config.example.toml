@@ -36,6 +36,7 @@ base_url = "http://127.0.0.1:11434/v1"   # OpenAI-compatible local endpoint (vLL
 model = "local-default-model"
 timeout_s = 30.0
 max_parallel_slots = 1                    # Total concurrent sequence slots (Slot 0 reserved for companion VIP; reserved for V2+ ICG)
+context_tokens = 8192                     # The loaded model's context window. Skills size their prompt budget from it; set the real value
 extra_body = {}                           # Arbitrary engine flags passed into request bodies (e.g. { chat_template_kwargs = { enable_thinking = false } })
 
 # Example cloud provider — repeat [llm.cloud.<name>] for more. Delete if unused.
@@ -46,6 +47,7 @@ model = "cloud-reasoning-model"
 api_key = "env:DESKMATE_CLOUD_API_KEY"    # Direct string or "env:VAR_NAME"
 timeout_s = 60.0
 max_concurrency = 4                       # Max parallel calls allowed to this provider (reserved for V2+ ICG)
+context_tokens = 8192                     # This model's context window (same field as [llm.local]); set the real value
 capabilities = ["code", "complex_reasoning", "large_context"]
 priority = 10                             # Higher = prioritized for matching capabilities
 enabled = false
@@ -60,8 +62,23 @@ model = ""                                # Defaults to llm.local.model if blank
 timeout_s = 5.0                           # Defaults to classification_timeout_s / llm.local.timeout_s if blank
 extra_body = {}                           # Defaults to llm.local.extra_body if blank
 
-# Reserved for a future skills/agent-orchestration feature — not consumed yet:
-# [skills]
+[skills]
+# enabled = true
+# dir = ""                                 # Agent Skills (SKILL.md) install dir; blank = <deploy_dir>/skills
+#                                          # Install with: python -m brain.skills.importer <https-git-url | dir>
+#                                          # Installed skills are catalogued on the status page but not run (yet).
+#                                          # Manage them: python -m brain.skills.manage list|enable|disable|pin|unpin|alias
+# Prompt budget for third-party skills: stubs may use min(catalog_token_cap, catalog_fraction * smallest context_tokens)
+# catalog_fraction = 0.03
+# catalog_token_cap = 400
+# max_pinned = 8
+# activation_fraction = 0.25               # share of a worker's window for one activated skill body (Phase 2)
+# max_active_skills = 1
+# search_top_k = 5                         # keyword-search results shown (Phase 2)
+# winner_margin = 1.5                      # leader must beat the runner-up by this factor to skip the routing model (Phase 2)
+# max_auto_candidates = 3                  # more candidates than this always go to the routing model (Phase 2)
+# max_hint_categories = 12
+# Reserved for Track 1 script pipelines -- not consumed yet:
 # max_script_workers = 4                   # Process pool limit for Track 1 script tasks
 
 [voice]

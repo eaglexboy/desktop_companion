@@ -29,9 +29,12 @@ from pydantic import BaseModel
 from brain.appearance.blender_gen import is_build_running
 from brain.appearance.manifest import load_manifest
 from brain.events import begin_turn, bus, emit
+from brain.skills.agentskills import discover as discover_agent_skills
 from brain.skills.builtin import register_builtin
+from brain.skills.manage import StateChangeError, build_views, change_state, summarize, view_json
 from brain.skills.registry import SkillCall, SkillRegistry
 from brain.skills.reply import parse_reply
+from brain.skills.state import SkillStateStore
 from brain.voice.plaintext import to_plain_speech
 from brain.appearance.spec import CatalogError, LookSpec, validate_against_catalogs
 from brain.config import MOOD_NAMES, TRAIT_NAMES, Settings, get_settings, subscribe_if_running
@@ -79,6 +82,7 @@ class AppState:
     hub: OverlayHub
     desktop_bridge: DesktopPresenceBridge | None
     skills: SkillRegistry
+    skill_state: SkillStateStore
     interaction_active: bool = False
     # Last window/screen telemetry from the sensing adapter, kept so a
     # (re)connecting overlay can be placed immediately instead of waiting
@@ -176,6 +180,7 @@ def build_app_state(settings: Settings | None = None) -> AppState:
         hub=hub,
         desktop_bridge=desktop_bridge,
         skills=skills,
+        skill_state=SkillStateStore(settings.personality_db_path),
     )
     state_holder["state"] = state
     return state
@@ -550,6 +555,7 @@ async def lifespan(app: FastAPI):
         await state.local_pool.aclose()
         await state.tts_pool.aclose()
         state.store.close()
+        state.skill_state.close()
 
 
 app = FastAPI(title="deskmate brain", lifespan=lifespan)
@@ -592,12 +598,49 @@ async def api_skills():
     exact block the model is given."""
     state = _state(app)
     enabled = state.settings.skills.enabled
+    installed, rejected = discover_agent_skills(state.settings.skills_dir)
+    views = build_views(state.settings.skills_dir, installed, state.skill_state.all())
     return {
         "enabled": enabled,
         "max_actions_per_reply": state.skills.max_actions,
         "skills": state.skills.describe(),
         "prompt_block": state.skills.prompt_block() if enabled else "",
+        # Agent Skills (SKILL.md) installed from other people: catalogued, never run and never put in the prompt
+        # until the agent runtime exists. `budget` is what their pinned stubs would cost.
+        "installed": [view_json(v) for v in views],
+        "rejected": rejected,
+        "budget": summarize(state.settings.skills, state.settings.llm.smallest_context_tokens(), views),
     }
+
+
+class SkillStateRequest(BaseModel):
+    skill: str
+    enabled: bool | None = None
+    pinned: bool | None = None
+    alias: str | None = None
+    # The client must really have asked the user (typed or clicked, never spoken). A flagged skill also needs its
+    # name typed back in `confirm_text`. The server can only check that these are present.
+    confirmed: bool = False
+    confirm_text: str = ""
+
+
+@app.post("/api/skills/state")
+async def api_skill_state(req: SkillStateRequest):
+    """Enable, disable, pin or alias an installed Agent Skill. Not reachable by the model: no typed action calls
+    this, and replies are only ever parsed into registry skills."""
+    state = _state(app)
+    installed, _ = discover_agent_skills(state.settings.skills_dir)
+    views = build_views(state.settings.skills_dir, installed, state.skill_state.all())
+    try:
+        changed = change_state(
+            state.skill_state, views, req.skill, enabled=req.enabled, pinned=req.pinned, alias=req.alias,
+            confirmed=req.confirmed, confirm_text=req.confirm_text, changed_by="api",
+            max_pinned=state.settings.skills.max_pinned,
+        )
+    except StateChangeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    emit("skill.state", {"skill": changed.skill_id, "enabled": changed.enabled, "pinned": changed.pinned, "by": "api"})
+    return {"skill": changed.skill_id, "enabled": changed.enabled, "pinned": changed.pinned, "alias": changed.alias}
 
 
 @app.get("/api/events")
@@ -662,8 +705,8 @@ async def api_status():
             {"name": s.name, "x": s.rect.x, "y": s.rect.y, "w": s.rect.w, "h": s.rect.h} for s in screens
         ],
         "look": {
-            "current_version": manifest.current_version,
-            "versions": len(manifest.versions),
+            "current_version": manifest.current_version if manifest is not None else None,
+            "versions": len(manifest.versions) if manifest is not None else 0,
             "summary": state.evolution.current_look_summary(),
         },
     }

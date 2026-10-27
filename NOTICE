@@ -1,0 +1,38 @@
+Deskmate
+This project is licensed under the GNU General Public License v3.0 (see LICENSE).
+
+It incorporates material from the following third-party projects.
+
+--------------------------------------------------------------------------
+OpenJarvis
+  https://github.com/open-jarvis/OpenJarvis  (inspected at commit 40092da)
+  Copyright 2025 The OpenJarvis Authors
+  Licensed under the Apache License, Version 2.0
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Portions of the following files are adapted from OpenJarvis source files,
+and have been modified. Each file also carries a notice of its own.
+
+  brain/skills/agentskills.py  <- src/openjarvis/skills/parser.py, loader.py
+      (frontmatter splitting, spec name/description rules, directory discovery)
+  brain/skills/safety.py       <- src/openjarvis/security/injection_scanner.py,
+                                  src/openjarvis/skills/security.py,
+                                  src/openjarvis/skills/importer.py
+      (injection regexes, trust-tier model, symlink refusal)
+  brain/skills/importer.py     <- src/openjarvis/skills/importer.py,
+                                  src/openjarvis/skills/sources/github.py
+      (install flow, <source>/<name>/ layout, .source provenance, scripts opt-in)
+
+Apache-2.0 is compatible with distribution under GPL-3.0; the Apache terms
+continue to apply to the adapted portions.
+
+--------------------------------------------------------------------------
+Agent Skills specification
+  https://agentskills.io/specification
+The SKILL.md format implemented in brain/skills/agentskills.py follows this
+open standard. No specification text or code is copied.
+
+--------------------------------------------------------------------------
+Third-party skills installed at runtime (via brain.skills.importer) remain the
+work of their authors under their own licenses. The importer copies each
+skill's LICENSE files and records its origin and commit in a `.source` file.

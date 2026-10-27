@@ -1,0 +1,50 @@
+# Keeps pyproject.toml's version in step with the release this PR will become.
+# The bump kind comes from a PR label (release:major | release:minor | release:patch);
+# no label means patch. It is computed from the latest vX.Y.Z tag, so re-running or
+# re-labelling gives the same answer instead of bumping twice.
+name: Version bump
+
+on:
+  pull_request:
+    types: [opened, reopened, edited, labeled, unlabeled]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: version-bump-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  bump:
+    # Forks cannot be pushed to with this token; the bump bot's own commits must not loop.
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - name: Fetch tags
+        run: git fetch --tags --force
+      - name: Write the next version
+        id: version
+        env:
+          # Untrusted text: passed through the environment, never interpolated into the script.
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: echo "version=$(python3 deploy/bump_version.py --title "$TITLE" --body "$BODY" --labels "$LABELS" --write)" >> "$GITHUB_OUTPUT"
+      - name: Commit if it changed
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if git diff --quiet pyproject.toml; then
+            echo "pyproject.toml already at $VERSION"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: bump version to $VERSION"
+          git push
