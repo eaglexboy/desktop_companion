@@ -28,12 +28,12 @@ Key capabilities include:
 │ Path: <deploy_dir>/assets/custom_templates/                                                 │
 │ • User drops in custom .glb or .blend files.                                                │
 │ • Inspected headlessly via --inspect: discovers mesh geometry, materials, and face markers. │
-│ • Bound to canonical Tier 2 skeleton via modifier deform (arbitrary retargeting deferred). │
+│ • Bound to canonical Tier 2 skeleton via modifier deform (arbitrary retargeting deferred).  │
 └─────────────────────────────────────────────────────────────────────────────────────────────┘
                                                  │ (If requested template not found in Tier 1)
                                                  ▼
 ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Tier 2: Standard Base Templates (Curated In-Repo / Release Bundle)                         │
+│ Tier 2: Standard Base Templates (Curated In-Repo / Release Bundle)                          │
 │ Path: <deploy_dir>/assets/base_templates/                                                   │
 │ • Bundled reference model in V1: standard_humanoid_female                                   │
 │ • Standardized bone naming, canonical visemes, and proportion morph targets.                │
