@@ -6,7 +6,7 @@ import pytest
 
 from brain.config import Settings
 from brain.llm_pool import LLMClient, LLMPool, Message
-from brain.router import Router, build_router
+from brain.router import ReplyFormat, Router, build_router
 
 
 class _FakeClient(LLMClient):
@@ -239,6 +239,46 @@ async def test_history_included_in_message_list() -> None:
     assert sent[1] == {"role": "user", "content": "earlier"}
     assert sent[2] == {"role": "assistant", "content": "earlier reply"}
     assert sent[3] == {"role": "user", "content": "follow-up question"}
+
+
+# --- reply format enforcement ---------------------------------------------------
+
+_JSON_FORMAT = ReplyFormat("REMIND", "REPAIR", lambda raw: raw.lstrip().startswith("{"))
+
+
+@pytest.mark.asyncio
+async def test_reply_format_reminder_rides_on_user_message_and_valid_reply_is_not_retried() -> None:
+    client = _FakeClient(['{"say": "hi"}'])
+    router = Router(LLMPool([("fake", client, [])]), LLMPool([]))
+
+    result = await router.handle("hello", system_prompt="sys", reply_format=_JSON_FORMAT)
+
+    assert result.text == '{"say": "hi"}'
+    assert len(client.calls) == 1
+    assert client.calls[0][-1] == {"role": "user", "content": "hello\n\nREMIND"}
+
+
+@pytest.mark.asyncio
+async def test_malformed_reply_gets_one_repair_round_trip() -> None:
+    client = _FakeClient(["*sigh* hi", '{"say": "*sigh* hi"}'])
+    router = Router(LLMPool([("fake", client, [])]), LLMPool([]))
+
+    result = await router.handle("hello", system_prompt="sys", reply_format=_JSON_FORMAT)
+
+    assert result.text == '{"say": "*sigh* hi"}'
+    assert client.calls[1][-2:] == [
+        {"role": "assistant", "content": "*sigh* hi"},
+        {"role": "user", "content": "REPAIR"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_failed_or_still_malformed_repair_keeps_original_reply() -> None:
+    still_bad = Router(LLMPool([("fake", _FakeClient(["plain", "still plain"]), [])]), LLMPool([]))
+    assert (await still_bad.handle("x", system_prompt="s", reply_format=_JSON_FORMAT)).text == "plain"
+
+    errors = Router(LLMPool([("fake", _FakeClient(["plain", RuntimeError("down")]), [])]), LLMPool([]))
+    assert (await errors.handle("x", system_prompt="s", reply_format=_JSON_FORMAT)).text == "plain"
 
 
 # --- build_router wiring ------------------------------------------------------

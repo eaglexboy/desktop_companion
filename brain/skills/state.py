@@ -44,6 +44,8 @@ class SkillStateStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False, timeout=5.0)
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._lock = threading.Lock()
         with self._lock, self._conn:
             self._conn.executescript(_SCHEMA)

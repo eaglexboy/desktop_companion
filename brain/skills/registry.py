@@ -117,8 +117,10 @@ class SkillRegistry:
             return ""
         lines = "\n".join(f"- {s.signature()}: {s.description}" for s in skills)
         return (
-            'Reply with ONLY a JSON object: {"say": "<what you say out loud>", "do": [{"skill": "<name>", '
-            '"args": {...}}]}. "say" is spoken aloud, so write it as plain talk. "do" is optional and lists '
+            'Your whole reply is ALWAYS one JSON object, never plain text, even for a single word or a vocal '
+            'cue: {"say": "<what you say out loud>", "do": [{"skill": "<name>", "args": {...}}]}. "say" is spoken '
+            'aloud, so write it as plain talk; any vocal cue like *sigh* goes inside the "say" string, e.g. '
+            '{"say": "*sigh* I hear you.", "do": []}. "do" is optional and lists '
             "skills to run; use it only when the user asks for something a skill covers, or it clearly fits. "
             'Never say you did something unless it is in "do", and never invent skills. Skills you have:\n' + lines
         )

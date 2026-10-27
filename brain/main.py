@@ -33,7 +33,7 @@ from brain.skills.agentskills import discover as discover_agent_skills
 from brain.skills.builtin import register_builtin
 from brain.skills.manage import StateChangeError, build_views, change_state, summarize, view_json
 from brain.skills.registry import SkillCall, SkillRegistry
-from brain.skills.reply import parse_reply
+from brain.skills.reply import FORMAT_REMINDER, REPAIR_PROMPT, is_structured, parse_reply
 from brain.skills.state import SkillStateStore
 from brain.voice.plaintext import to_plain_speech
 from brain.appearance.spec import CatalogError, LookSpec, validate_against_catalogs
@@ -52,7 +52,7 @@ from brain.presence.placement import (
     choose_position,
     is_own_window,
 )
-from brain.router import Router, build_router
+from brain.router import ReplyFormat, Router, build_router
 from brain.voice.delivery import pick_delivery
 from brain.voice.lipsync import RhubarbLipSync, extract_visemes_if_needed
 from brain.voice.stereo import ensure_stereo_wav
@@ -325,17 +325,19 @@ async def _handle_chat_text(state: AppState, text: str, *, speak: bool = True) -
     store = state.store
     begin_turn()
     emit("turn.start", {"text": text, "speak": speak})
+    skills_block = state.skills.prompt_block() if state.settings.skills.enabled else ""
     system_prompt = build_system_prompt(
         agent_name=store.get_identity_name(),
         traits=store.get_traits(),
         mood=store.get_mood(),
         memory_notes=[n.note for n in rank_memory_notes(store.recent_memory_notes(limit=20), text)[:10]],
         look_summary=state.evolution.current_look_summary(),
-        skills_block=state.skills.prompt_block() if state.settings.skills.enabled else "",
+        skills_block=skills_block,
     )
     emit("turn.prompt", {"system_prompt": system_prompt})
     store.log_interaction("user", text)
-    result = await state.router.handle(text, system_prompt=system_prompt)
+    reply_format = ReplyFormat(FORMAT_REMINDER, REPAIR_PROMPT, is_structured) if skills_block else None
+    result = await state.router.handle(text, system_prompt=system_prompt, reply_format=reply_format)
     # What the model actually returned, before it is parsed and cleaned for
     # speech -- kept (event + database) so the status page can show what the
     # cleanup changed.

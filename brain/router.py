@@ -66,6 +66,17 @@ class RouterResult:
     capability: str | None = None
 
 
+@dataclass(frozen=True)
+class ReplyFormat:
+    """A reply shape the router enforces without provider support: the
+    reminder rides on the user message, and a reply failing `is_valid` gets one
+    repair round-trip."""
+
+    reminder: str
+    repair_prompt: str
+    is_valid: Callable[[str], bool]
+
+
 ToolHandler = Callable[[str], Awaitable[Any]]
 
 
@@ -178,7 +189,12 @@ class Router:
             return False, "general", f"classifier error: {exc}"
 
     async def handle(
-        self, user_text: str, *, system_prompt: str, history: list[dict[str, str]] | None = None
+        self,
+        user_text: str,
+        *,
+        system_prompt: str,
+        history: list[dict[str, str]] | None = None,
+        reply_format: ReplyFormat | None = None,
     ) -> RouterResult:
         tool_name = self._match_tool_keyword(user_text)
         if tool_name is not None and tool_name in self._tools:
@@ -199,7 +215,8 @@ class Router:
 
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history or [])
-        messages.append({"role": "user", "content": user_text})
+        user_content = f"{user_text}\n\n{reply_format.reminder}" if reply_format else user_text
+        messages.append({"role": "user", "content": user_content})
 
         emit(
             "router.route",
@@ -217,6 +234,22 @@ class Router:
         else:
             with llm_purpose("reply"):
                 source, reply = await pool.chat(messages, max_tokens=1024)
+        if reply_format and not reply_format.is_valid(reply):
+            # Provider-agnostic repair: one re-ask with the bad reply in context.
+            # If it is still malformed, the original is kept (the caller falls
+            # back to treating it as plain dialogue).
+            emit("reply.repair", {"source": source, "bad": reply[:300]})
+            repair = messages + [
+                {"role": "assistant", "content": reply},
+                {"role": "user", "content": reply_format.repair_prompt},
+            ]
+            try:
+                with llm_purpose("reply"):
+                    source2, fixed = await pool.chat(repair, max_tokens=1024)
+                if reply_format.is_valid(fixed):
+                    source, reply = source2, fixed
+            except Exception as exc:  # noqa: BLE001 -- a failed repair must never lose the reply we already have
+                logger.warning("Reply repair failed (%s); keeping the original reply", exc)
         return RouterResult(text=reply, source=source, escalated=escalate, reason=reason, capability=capability if escalate else None)
 
     async def aclose(self) -> None:

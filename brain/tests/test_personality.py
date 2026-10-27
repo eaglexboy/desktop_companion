@@ -203,3 +203,10 @@ def test_opening_a_database_from_before_reply_raw_adds_the_table(tmp_path):
 
     reopened = _store(tmp_path)
     assert reopened.log_interaction("assistant", "hi", raw_text="raw hi") > 0
+
+
+def test_state_db_uses_wal(tmp_path):
+    import sqlite3
+    path = tmp_path / "state.db"
+    PersonalityStore(path, ("a",), ("m",))
+    assert sqlite3.connect(path).execute("PRAGMA journal_mode").fetchone()[0] == "wal"
