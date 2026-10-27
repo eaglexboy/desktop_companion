@@ -100,6 +100,9 @@ class LLMLocalConfig(StrictModel):
     # Reserved for a future inference-concurrency governor -- parsed now,
     # not consumed yet.
     max_parallel_slots: int = 1
+    # The model's context window in tokens. Skills (and, later, session compaction) size themselves from it,
+    # so set it to the real value for the loaded/selected model. The same field exists on every backend.
+    context_tokens: int = Field(default=8192, ge=512)
     extra_body: dict = Field(default_factory=dict)
     # Let the model think before it answers. Turns thinking back on (overriding
     # an `enable_thinking = false` in extra_body) and adds `reasoning_extra_tokens`
@@ -121,6 +124,9 @@ class LLMCloudConfig(StrictModel):
     # Reserved for a future inference-concurrency governor -- parsed now,
     # not consumed yet.
     max_concurrency: int = 4
+    # The model's context window in tokens. Skills (and, later, session compaction) size themselves from it,
+    # so set it to the real value for the loaded/selected model. The same field exists on every backend.
+    context_tokens: int = Field(default=8192, ge=512)
     capabilities: list[str] = Field(default_factory=list)
     priority: int = 100
     enabled: bool = True
@@ -155,6 +161,11 @@ class LLMConfig(StrictModel):
     local: LLMLocalConfig
     cloud: dict[str, LLMCloudConfig] = Field(default_factory=dict)
     routing: LLMRoutingConfig = Field(default_factory=LLMRoutingConfig)
+
+    def smallest_context_tokens(self) -> int:
+        """The smallest window among the backends that may answer (local and enabled cloud). Prompt parts that
+        must fit wherever the router sends the turn are sized to this."""
+        return min([self.local.context_tokens, *(p.context_tokens for p in self.enabled_cloud_providers())])
 
     def enabled_cloud_providers(self) -> list[LLMCloudConfig]:
         """Enabled cloud providers, highest priority first."""
@@ -328,7 +339,7 @@ class TTSConfig(StrictModel):
     # multiplier the overlay applies to its audio output. It stacks with the
     # system mixer's volume for the overlay's stream. Applied live on config
     # reload (brain pushes `config_update`), and in every `welcome`.
-    volume: float = Field(1.0, ge=0.0, le=1.0)
+    volume: float = Field(default=1.0, ge=0.0, le=1.0)
     rate: float = 1.0
     local: TTSLocalConfig = Field(default_factory=TTSLocalConfig)
     remote: dict[str, TTSRemoteEntry] = Field(default_factory=dict)
@@ -440,6 +451,20 @@ class SkillsConfig(StrictModel):
     enabled: bool = True
     disabled: list[str] = Field(default_factory=list)   # skill names to switch off individually
     max_actions_per_reply: int = Field(default=3, ge=1, le=10)
+    # Where Agent Skills (SKILL.md packages, see brain/skills/agentskills.py) are installed.
+    # Blank = <deploy_dir>/skills. Installed skills are catalogued but inert until the agent runtime exists.
+    dir: str = ""
+    # Context budget for third-party skills (docs/ADR_SKILLS_AND_AGENT_ORCHESTRATION.md, "Skill Activation &
+    # Context Budget"): stubs may use min(catalog_token_cap, catalog_fraction * context window).
+    catalog_fraction: float = Field(default=0.03, gt=0, le=0.5)
+    catalog_token_cap: int = Field(default=400, ge=50)
+    activation_fraction: float = Field(default=0.25, gt=0, le=0.8)
+    max_pinned: int = Field(default=8, ge=0, le=50)
+    max_active_skills: int = Field(default=1, ge=1, le=5)
+    search_top_k: int = Field(default=5, ge=1, le=20)
+    winner_margin: float = Field(default=1.5, ge=1.0)
+    max_auto_candidates: int = Field(default=3, ge=1, le=10)
+    max_hint_categories: int = Field(default=12, ge=0, le=50)
     # Reserved for the Track 1 script pipelines in docs/ADR_SKILLS_AND_AGENT_ORCHESTRATION.md
     # -- parsed now, not consumed yet.
     max_script_workers: int = Field(default=4, ge=1)
@@ -520,6 +545,10 @@ class Settings(StrictModel):
     def logs_dir(self) -> Path:
         return self.deploy_dir / "logs"
 
+    @property
+    def skills_dir(self) -> Path:
+        return Path(self.skills.dir).expanduser() if self.skills.dir else self.deploy_dir / "skills"
+
     def ensure_dirs(self) -> None:
         for d in (
             self.workspace_dir,
@@ -532,6 +561,7 @@ class Settings(StrictModel):
             self.voice_cache_dir,
             self.blender_build_dir,
             self.logs_dir,
+            self.skills_dir,
         ):
             d.mkdir(parents=True, exist_ok=True)
 
@@ -578,8 +608,9 @@ class _ReloadHandler(FileSystemEventHandler):
         self._path = path.resolve()
         self._on_change = on_change
 
-    def _matches(self, raw_path: str) -> bool:
-        return Path(raw_path).resolve() == self._path
+    def _matches(self, raw_path: str | bytes) -> bool:
+        # watchdog types event paths as `bytes | str`; some backends hand over bytes.
+        return Path(os.fsdecode(raw_path)).resolve() == self._path
 
     def on_modified(self, event) -> None:
         if not event.is_directory and self._matches(event.src_path):

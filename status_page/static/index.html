@@ -88,6 +88,16 @@
         </div>
       </section>
       <section class="wide">
+        <h2>Installed Agent Skills <span class="sp"></span><span class="muted" id="installedSummary"></span></h2>
+        <p class="reasoning-note">Third-party <code>SKILL.md</code> skills installed with
+          <code>python -m brain.skills.importer</code>. They are checked and catalogued but <b>not run</b>, and even an enabled skill is
+          not put in the prompt yet: that needs the agent runtime and sandbox still to come. This page is read-only; change a skill with
+          <code>python -m brain.skills.manage enable|disable|pin|unpin &lt;skill&gt;</code>.</p>
+        <div id="installedTable">
+          <div class="empty">Loading…</div>
+        </div>
+      </section>
+      <section class="wide">
         <h2>Recent activity (this page session)</h2>
         <div id="skillActivity">
           <div class="empty">No skill has run since you opened this page.</div>

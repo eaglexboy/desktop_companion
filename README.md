@@ -104,11 +104,16 @@ See [`docs/SPEC_OVERVIEW.md`](docs/SPEC_OVERVIEW.md) for the full target layout,
 * [`docs/DESIGN_AVATAR_EVOLUTION_FLOW.md`](docs/DESIGN_AVATAR_EVOLUTION_FLOW.md) — how and when the avatar's appearance changes.
 * [`docs/ADR_NETWORK_AND_MOBILE_STRATEGY.md`](docs/ADR_NETWORK_AND_MOBILE_STRATEGY.md) — multi-client network and mobile roadmap.
 * [`docs/ADR_AUTONOMOUS_VOICE_SELECTION.md`](docs/ADR_AUTONOMOUS_VOICE_SELECTION.md) — autonomous voice evolution and cloning roadmap.
-* [`docs/ADR_SKILLS_AND_AGENT_ORCHESTRATION.md`](docs/ADR_SKILLS_AND_AGENT_ORCHESTRATION.md) — skills and sub-agent orchestration roadmap.
+* [`docs/ADR_SKILLS_AND_AGENT_ORCHESTRATION.md`](docs/ADR_SKILLS_AND_AGENT_ORCHESTRATION.md) — skills and sub-agent orchestration roadmap (adopts the open Agent Skills standard).
+* [`docs/ADR_MCP_INTEGRATION.md`](docs/ADR_MCP_INTEGRATION.md) — Model Context Protocol client, deferred to V2+.
 
 ## License
 
-See [`LICENSE`](LICENSE).
+See [`LICENSE`](LICENSE) (GPL-3.0). Third-party code and standards we build on are listed in [`NOTICE`](NOTICE).
+
+## Releases
+
+The version in `pyproject.toml` is set automatically when a pull request to `main` is opened (or its title, description or labels change): `.github/workflows/version-bump.yml` takes the latest `vX.Y.Z` tag and bumps it. Write the PR title as a [Conventional Commit](https://www.conventionalcommits.org): `feat: ...` is a minor bump, `fix: ...` and `perf: ...` are patch, and `feat!: ...` (or a `BREAKING CHANGE:` line in the description) is major. A title that is not one of those (`docs:`, `chore:`, or free text) falls back to a `release:major`, `release:minor` or `release:patch` label, and with neither the bump is patch. These are the default rules of python-semantic-release, so the titles keep working if the repo moves to it. When the PR merges, `.github/workflows/tag-release.yml` tags `main` with that version. `deploy/bump_version.py --title "feat: x"` shows the next version. The three labels must exist in the repository before they can be applied.
 
 ## Versions
 

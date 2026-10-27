@@ -596,3 +596,69 @@ def test_raw_reply_event_comes_before_the_turns_final_reply(tmp_path, monkeypatc
     _saved, events = _chat_with_reply(tmp_path, monkeypatch, "Hello there.")
     order = [e["type"] for e in events if e["type"] in ("reply.raw", "turn.reply")]
     assert order == ["reply.raw", "turn.reply"]
+
+
+def _install_pdf_skill(state, *, scripts: bool = False):
+    from brain.skills.importer import install
+
+    skills_dir = state.settings.skills_dir
+    src = skills_dir.parent / "src" / "pdf-tools"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "SKILL.md").write_text("---\nname: pdf-tools\ndescription: Extract text from PDFs. Use for PDFs.\n---\nbody\n")
+    if scripts:
+        (src / "scripts").mkdir(exist_ok=True)
+        (src / "scripts" / "run.sh").write_text("echo hi\n")
+    assert install(src, skills_dir, source="example", commit="abc12345", category="docs/pdf").ok
+    return skills_dir
+
+
+def test_api_skills_lists_installed_agent_skills_with_provenance_and_rejections(client):
+    c, state = client
+    skills_dir = _install_pdf_skill(state, scripts=True)
+    (skills_dir / "broken").mkdir()
+    (skills_dir / "broken" / "SKILL.md").write_text("not a skill")
+
+    body = c.get("/api/skills").json()
+    (k,) = body["installed"]
+    assert (k["id"], k["name"], k["status"], k["has_scripts"]) == ("example/pdf-tools", "pdf-tools", "inert", False)
+    assert (k["tier"], k["enabled"], k["pinned"], k["exposure"]) == ("flagged", False, False, "absent")  # imports start off
+    assert k["provenance"]["commit"] == "abc12345" and k["provenance"]["category"] == "docs/pdf"
+    assert k["provenance"]["scripts_in_source"] is True and k["provenance"]["scripts_installed"] is False
+    assert [r["path"].endswith("broken") for r in body["rejected"]] == [True]
+    assert body["skills"]  # the typed actions are unaffected
+    assert body["budget"]["in_prompt"] is False and body["budget"]["installed"] == 1
+
+
+def test_enabling_over_the_api_needs_confirmation_and_flagged_skills_need_the_name_typed(client):
+    c, state = client
+    _install_pdf_skill(state, scripts=True)  # scripts make it flagged
+    post = lambda **kw: c.post("/api/skills/state", json={"skill": "pdf-tools", **kw})  # noqa: E731
+
+    assert post(enabled=True).status_code == 409                                     # not confirmed
+    assert post(enabled=True, confirmed=True).status_code == 409                     # flagged: name not typed
+    assert post(enabled=True, confirmed=True, confirm_text="yes").status_code == 409
+    assert post(pinned=True).status_code == 409                                      # cannot pin a disabled skill
+    assert post(enabled=True, confirmed=True, confirm_text="pdf-tools").status_code == 200
+    assert post(pinned=True).status_code == 200
+    k = c.get("/api/skills").json()["installed"][0]
+    assert (k["enabled"], k["pinned"], k["exposure"], k["changed_by"]) == (True, True, "stub", "api")
+    assert k["stub_tokens"] > 0
+    assert post(enabled=False).status_code == 200                                    # disabling needs no confirmation
+    k = c.get("/api/skills").json()["installed"][0]
+    assert (k["enabled"], k["pinned"]) == (False, False)                             # and un-pins
+
+
+def test_nothing_the_model_can_do_changes_skill_state(client):
+    """Invariant 3: enabling is the user's act. The model reaches skills only through the registry."""
+    _c, state = client
+    names = {s.name for s in state.skills.enabled}
+    assert names.isdisjoint({"enable_skill", "disable_skill", "pin_skill", "skill_state", "use_skill"})
+    assert not any("skill_state" in repr(s.handler) for s in state.skills.enabled)
+
+
+def test_api_status_works_before_any_avatar_manifest_exists(client):
+    """A fresh install has no asset manifest; the status endpoint must say so, not 500."""
+    c, _state = client
+    r = c.get("/api/status")
+    assert r.status_code == 200
+    assert r.json()["look"]["current_version"] is None and r.json()["look"]["versions"] == 0

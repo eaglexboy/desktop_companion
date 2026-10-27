@@ -579,3 +579,14 @@ def test_voice_lipsync_recognizer_defaults_to_the_fast_one_and_rejects_typos():
     assert VoiceConfig(lipsync_recognizer="pocketSphinx").lipsync_recognizer == "pocketSphinx"
     with pytest.raises(ValidationError):
         VoiceConfig(lipsync_recognizer="pocketsphynx")
+
+
+def test_reload_handler_matches_the_watched_file_whether_watchdog_gives_str_or_bytes(tmp_path) -> None:
+    import os
+
+    from brain.config import _ReloadHandler
+
+    target = tmp_path / "config.toml"
+    handler = _ReloadHandler(target, lambda: None)
+    assert handler._matches(str(target)) and handler._matches(os.fsencode(target))
+    assert not handler._matches(str(tmp_path / "other.toml")) and not handler._matches(os.fsencode(tmp_path / "other.toml"))

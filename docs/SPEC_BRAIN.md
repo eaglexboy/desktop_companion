@@ -33,7 +33,7 @@ The daemon exposes an asynchronous WebSocket IPC endpoint and an administrative 
 
 * **Multi-Client & Remote Access:** Local loopback only (`127.0.0.1:8765`), secured against browser-origin hijacking. Private mesh networking (Tailscale) and mobile PWA access are defined in [ADR_NETWORK_AND_MOBILE_STRATEGY.md](ADR_NETWORK_AND_MOBILE_STRATEGY.md).
 * **Autonomous Voice Selection & Cloning:** V1 implements baseline voice synthesis and interface accommodations; autonomous acoustic evolution is defined in [ADR_AUTONOMOUS_VOICE_SELECTION.md](ADR_AUTONOMOUS_VOICE_SELECTION.md).
-* **Skills & Sub-Agent Orchestration:** V1 reserves tool registration hooks, concurrency configuration keys (`max_parallel_slots`, `max_concurrency`, `max_script_workers`), and task state event schemas; deterministic script DAGs and cognitive sub-agents governed by the Inference Capacity Governor (ICG) are defined in [ADR_SKILLS_AND_AGENT_ORCHESTRATION.md](ADR_SKILLS_AND_AGENT_ORCHESTRATION.md).
+* **Skills & Sub-Agent Orchestration:** V1 reserves tool registration hooks, concurrency configuration keys (`max_parallel_slots`, `max_concurrency`, `max_script_workers`), and task state event schemas; deterministic script DAGs and cognitive sub-agents governed by the Inference Capacity Governor (ICG) are defined in [ADR_SKILLS_AND_AGENT_ORCHESTRATION.md](ADR_SKILLS_AND_AGENT_ORCHESTRATION.md). Third-party skills follow the open Agent Skills (`SKILL.md`) standard; V1 parses, vets and lists them (`brain/skills/agentskills.py`, `importer.py`, `safety.py`; `GET /api/skills` -> `installed`/`rejected`/`budget`) but never executes them or puts them in the prompt. Each skill is enabled/disabled and pinned through `python -m brain.skills.manage` or `POST /api/skills/state` (state in `skill_state`, `brain/skills/state.py`; imports start disabled; enabling needs a typed or clicked confirmation, a flagged skill its name typed; the model cannot reach either). `[llm.*] context_tokens` on every backend sizes the skills prompt budget (`brain/skills/context.py`). MCP tool servers are deferred: [ADR_MCP_INTEGRATION.md](ADR_MCP_INTEGRATION.md).
 * **Dedicated Configuration GUI:** Direct editing of standard XDG TOML files (`config.toml`).
 
 ---
@@ -86,6 +86,7 @@ base_url = "http://127.0.0.1:11434/v1"   # OpenAI-compatible local endpoint (vLL
 model = "local-default-model"
 timeout_s = 30.0
 max_parallel_slots = 1                    # Total concurrent sequence slots (Slot 0 reserved for companion VIP)
+context_tokens = 8192                     # The loaded model's context window; skills size their prompt budget from it
 extra_body = {}                           # Arbitrary engine flags passed into request bodies
 
 [llm.cloud.<provider_name>]               # Keyed table for one or more cloud providers
@@ -95,6 +96,7 @@ model = "cloud-reasoning-model"
 api_key = "env:DESKMATE_CLOUD_API_KEY"    # Direct string or environment reference
 timeout_s = 60.0
 max_concurrency = 4                       # Max parallel calls allowed to this provider
+context_tokens = 8192                     # This model's context window (same field on every backend)
 capabilities = ["code", "complex_reasoning", "large_context"]
 priority = 10                             # Higher = prioritized for matching capabilities
 enabled = true
@@ -109,8 +111,9 @@ model = ""                                # e.g., "small-fast-classifier" (defau
 timeout_s = 5.0                           # (defaults to classification_timeout_s or llm.local.timeout_s)
 extra_body = {}                           # (defaults to llm.local.extra_body)
 
-# Reserved skills configuration keys for Phase 2/3:
 # [skills]
+# dir = ""                                 # Agent Skills (SKILL.md) install dir; blank = <deploy_dir>/skills
+# Reserved skills configuration keys for Phase 2/3:
 # max_script_workers = 4                   # Process pool limit for Track 1 script tasks
 
 [voice.stt]

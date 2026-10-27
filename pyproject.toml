@@ -1,6 +1,6 @@
 [project]
 name = "deskmate-brain"
-version = "0.1.0"
+version = "1.1.0"
 description = "Local brain daemon for the deskmate desktop companion agent"
 requires-python = ">=3.11"
 dependencies = [
@@ -14,6 +14,7 @@ dependencies = [
     "faster-whisper>=1.0",
     "soundfile>=0.12",
     "numpy>=1.26",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +29,11 @@ asyncio_mode = "auto"
 [[tool.mypy.overrides]]
 # jeepney ships no type stubs / py.typed marker.
 module = "jeepney.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# PyYAML ships no type stubs here.
+module = "yaml.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

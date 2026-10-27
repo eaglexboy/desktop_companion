@@ -1,9 +1,10 @@
 # Architecture Decision Record: Extensible Skills & Sub-Agent Orchestration Framework
 
 * **Status:** Accepted for V2+ Roadmap (Deferred from V1; V1 Interface Accommodations Approved)
-* **Date:** 2026-09-30
+* **Date:** 2026-09-30 (amended 2026-10-26: adopt the open Agent Skills standard, §4 and §9; skill activation and context budget, §4 "Skill Activation & Context Budget")
 * **Deciders:** Architecture & Core Engineering Team
 * **Supersedes:** None
+* **Related:** [ADR_MCP_INTEGRATION.md](ADR_MCP_INTEGRATION.md)
 
 ---
 
@@ -28,7 +29,9 @@ As a desktop companion, Deskmate requires capabilities beyond conversational dia
 4. **Hierarchical Work Plan (DAG) Orchestration:** Sub-agents cannot recursively spawn further agents directly. If a complex task requires multiple workers, the agent proposes a structured **Work Plan (Task DAG)** back to the Companion Supervisor. The Companion coordinates, resolves dependencies, and schedules worker agents according to ICG capacity.
 5. **Dedicated Task Fallback for Single-Slot Setups:** When only a single local inference slot exists with no cloud fallback, the companion offers conversational delegation into a focused, non-concurrent mode rather than silently failing.
 6. **Sandboxing & Permission Pre-Approval:** Enforce OS-level containerization for terminal/disk scripts via Linux Bubblewrap (`bwrap`) with persistent user pre-approval policies (`"allow_once"`, `"always_allow"`, `"deny"`). Fail fast if `bwrap` is missing; enterprise container/root fallbacks (`chroot`, Docker) are rejected as anti-patterns for an unprivileged desktop daemon.
-7. **Define V1 Non-Breaking Accommodations:** Reserve tool routing interfaces, concurrency configuration keys (`max_parallel_slots`, `max_concurrency`, `max_script_workers`), and task state event schemas in V1 to ensure V2 introduces zero breaking changes.
+7. **Adopt the Agent Skills open standard (`SKILL.md`) for third-party skills** ([agentskills.io](https://agentskills.io/specification)) instead of a bespoke manifest, so the companion can use skills written by others. Our own settings ride in the spec's `metadata` map under `deskmate.*` keys. Imported skills are untrusted, vetted on import, and **inert until the Track 3 runtime and sandbox exist** (§4, §9).
+8. **Budget the context skills consume.** Skills are enabled and pinned explicitly (imports start disabled), only a bounded set of one-line stubs ever enters the companion's prompt, selection escalates from local keyword search to the routing model only when several candidates remain, and a skill's full instructions load into the agent that runs it, never the companion, which supervises by clearing plans and checking at checkpoints (§4, "Skill Activation & Context Budget"). The model can never enable a skill.
+9. **Define V1 Non-Breaking Accommodations:** Reserve tool routing interfaces, concurrency configuration keys (`max_parallel_slots`, `max_concurrency`, `max_script_workers`), and task state event schemas in V1 to ensure V2 introduces zero breaking changes.
 
 ---
 
@@ -237,39 +240,78 @@ When a user requests a Track 3 agentic task on a hardware setup where `max_paral
 
 ## 4. Skill Architecture & Extensibility Standard
 
-Skills are encapsulated modules that expose tools to the router and sub-agents. Deskmate adopts a lightweight, Python-native standard compatible with the **Model Context Protocol (MCP)**.
+Deskmate has two kinds of skill, deliberately kept apart:
 
-### 1. Skill Manifest Schema (`skill.toml`)
+| | **Typed actions** (today) | **Agent Skills** (`SKILL.md`, this ADR) |
+|---|---|---|
+| Defined by | Python `Skill(...)` registered in `brain/skills/builtin.py` | A directory with a `SKILL.md`, per the open standard |
+| Author | Us | Anyone (community repos, the user) |
+| What it is | A validated function the reply format can call: `{"do":[{"skill":...}]}` | Markdown instructions (+ optional `scripts/`, `references/`, `assets/`) an agent follows with its tools |
+| Runs in | The companion's single reply turn (Track 2-like) | A Track 3 agent loop, or Track 1 when the skill is a script pipeline |
+| Status | Live | Parsed, vetted, catalogued; **not executed** until Phase 2 |
 
-Each skill lives in its own directory within `<deploy_dir>/skills/<skill_name>/`:
+The typed actions stay as they are. They are the companion's own body (gestures, memory, appearance) and are not worth wrapping in markdown.
 
-```toml
-[skill]
-id = "desktop_media"
-name = "Desktop Media Controller"
-version = "1.0.0"
-author = "Core"
-description = "Controls media playback (play, pause, next, volume) via MPRIS D-Bus."
-track = "script"                         # "script" (Track 1), "tool" (Track 2), or "agent" (Track 3)
-requires_desktop_presence = true
+### 1. Skill Format: Agent Skills (`SKILL.md`)
 
-[permissions]
-allow_dbus_services = ["org.mpris.MediaPlayer2.*"]
-allow_filesystem_read = ["~/Music", "~/Videos"]
-allow_filesystem_write = []
-allow_network = false
-allow_terminal_exec = false
+Skills live in `<deploy_dir>/skills/<source>/<name>/` (override with `[skills] dir`); `<source>` is where the skill came from (`local`, or a label derived from its repository). The package layout and frontmatter are exactly the standard's:
 
-[[tools]]
-name = "media_pause"
-description = "Pauses active desktop media players."
-parameters = {}
-
-[[tools]]
-name = "media_play_pause"
-description = "Toggles playback on the active media player."
-parameters = {}
 ```
+pdf-tools/
+├── SKILL.md        # required: YAML frontmatter + markdown instructions
+├── scripts/        # optional executable code (not installed by default)
+├── references/     # optional docs, loaded on demand
+├── assets/         # optional templates and data
+├── LICENSE         # the upstream license, always preserved
+└── .source         # ours: provenance written by the importer
+```
+
+```markdown
+---
+name: pdf-tools                      # required; 1-64 chars, a-z 0-9 and single hyphens; matches the directory
+description: Extract text from PDFs. Use when the user mentions PDFs.   # required; 1-1024 chars
+license: Apache-2.0                  # optional
+compatibility: Requires poppler-utils    # optional, <= 500 chars
+allowed-tools: Bash(pdftotext:*) Read    # optional, experimental in the spec; a request, never a grant
+metadata:                            # optional free-form map; our settings live under deskmate.*
+  deskmate.track: agent              # script | tool | agent   (default: agent)
+  deskmate.allow_network: "false"    # string "true" only; anything else is false
+---
+# Steps
+1. ...
+```
+
+**Progressive disclosure** (from the standard, and it matters for small local models): at startup only `name` + `description` (about 100 tokens each) enter the catalog; the body is loaded when a skill is activated; `references/` and `assets/` are read on demand. A catalog of hundreds of skills must never be pasted into the companion's prompt.
+
+**Our extensions** are only ever read from `metadata` keys prefixed `deskmate.`, so a skill remains valid for every other implementation. Absent keys mean the most restrictive reading, which is why an unmodified community skill is always safe to *load*:
+
+| Key | Meaning | Default |
+|---|---|---|
+| `deskmate.track` | `script`, `tool` or `agent` (§2) | `agent` |
+| `deskmate.requires_desktop_presence` | needs the on-screen companion | `false` |
+| `deskmate.allow_network`, `allow_terminal_exec` | sandbox grants a script skill asks for | `false` |
+| `deskmate.allow_filesystem_read`, `allow_filesystem_write` | comma-separated path roots | none |
+
+These replace the former `skill.toml` `[permissions]` table; the §2 enforcement and §3 approval flow are unchanged. A skill's own request (`allowed-tools`, `deskmate.*`) is only ever an *ask*: the user's pre-approval decision stays the only grant.
+
+### 1a. Import Flow, Trust Tiers & Vetting
+
+`python -m brain.skills.importer <https-git-url | dir> [--skill NAME]` (implemented in `brain/skills/importer.py`):
+
+1. **Fetch** shallowly over https only, with symlinks checked out as plain files, a sanitized environment and no prompts.
+2. **Discover** every `SKILL.md` in the repository; **validate** each strictly against the standard. Anything invalid is reported and skipped, and one bad skill never blocks the rest. Tolerated deviations (directory name differs from `name`, `allowed-tools` written as a list) become warnings.
+3. **Refuse** packages containing symlinks, larger than 20 MiB, or whose instructions match a prompt-hijack pattern (`prompt_override`, `identity_override`, `jailbreak`, `delimiter_injection`) unless the user passes `--accept-findings`.
+4. **Label**, not refuse, command-shaped text (`curl ... | sh`, `POST http://`), `allowed-tools` naming `Bash`/`Write`/`Edit`, and any `scripts/` directory. Reason: measured on 231 real community skills these are ordinary in tool documentation, and a regex cannot tell documentation from an attack. They set the trust tier to `flagged` and are enforced at *run* time by the sandbox and permission flow.
+5. **Install** to `<source>/<name>/` without `scripts/` unless `--with-scripts`; never overwrite without `--force`; copy the upstream `LICENSE`; write `.source` (origin, commit, license, tier, findings).
+
+| Tier | Meaning | Run policy (Phase 2) |
+|---|---|---|
+| `bundled` | ships with Deskmate | normal |
+| `local` | the user wrote or placed it | normal |
+| `imported` | fetched from a source; scanned clean | instructions only; no scripts |
+| `flagged` | imported with findings, scripts or dangerous tools | every dangerous call asks first; never `always_allow` without an explicit user act |
+
+Imported skills are **inert in V1/Phase 1**. They appear on the status page (`/api/skills` -> `installed`, `rejected`) so the user can see what is installed and why anything was refused, but nothing executes them. Skills are third-party instructions fed to a model: the sandbox in §2 and the approval flow in §3 are prerequisites for running them, not enhancements.
 
 ### 2. Sandboxing & Security Enforcement Mechanism
 
@@ -326,6 +368,167 @@ Sub-Agent                  Brain Daemon (ICG)                 Overlay Client / U
    * Complex time-based TTL cache expiration is unneeded enterprise overhead for a personal companion.
    * Permissions granted as `"always_allow"` persist in SQLite until explicitly revoked by the user via conversational instruction (*"Forget my permissions for git"*) or via administrative endpoint `DELETE /skills/{skill_id}/permissions`.
    * When revoked, the corresponding rows are unlinked from SQLite table `skill_permissions`, forcing subsequent dangerous tool calls to prompt the user again.
+
+### 4. Skill Activation & Context Budget
+
+**Problem.** A catalog can be far larger than any prompt. Measured on 227 published community skills (the Hermes Agent and Anthropic repositories; tokens estimated as characters ÷ 4):
+
+| Content | Tokens |
+|---|---|
+| Name + description of all 227 (the standard's "metadata" tier) | about 6,000 |
+| Median / largest single description | about 18 / about 250 |
+| Full instructions (`SKILL.md` bodies) of all 227 | about 580,000 |
+| A 13,700-skill catalog (OpenClaw scale; extrapolated) | about 360,000 for names and descriptions alone |
+
+Even the metadata tier alone does not fit a small local model on every turn, so "progressive disclosure" of bodies is necessary but not sufficient. The cost of skills in the prompt must be **independent of how many are installed**.
+
+#### 4.1 Invariants
+
+1. **O(budget), not O(N).** The tokens spent on skills in any prompt never exceed a budget derived from the active backend's context size (4.4), however many skills are installed. Enforced where the prompt is assembled, and covered by a test with a catalog far larger than the budget.
+2. **Disabled means absent.** A disabled skill costs zero tokens and cannot be reached by any call, including a model that guesses its name (the registry already behaves this way for typed actions).
+3. **The model cannot enable skills.** Enabling a skill widens what the companion may do, so only the user can do it, with an explicit confirmation (4.2). A model reply, a tool result or a skill's own text can never enable anything. *Disabling* is safe and needs no confirmation.
+4. **Skill search never costs an LLM call on ordinary dialogue.** The keyword search is local and runs only when a request looks like it needs a skill. A model call happens only to choose between several remaining candidates (4.3), uses the small routing model first, and never delays a plain conversational turn.
+5. **Over budget degrades visibly.** Lowest-ranked entries are dropped and a `skill.context` event records what was dropped. Text is never silently truncated mid-instruction.
+
+#### 4.2 State: installed, enabled, pinned
+
+Three independent facts per skill, not one switch:
+
+| Fact | Meaning | Who sets it | Default |
+|---|---|---|---|
+| **installed** | on disk under `<skills dir>/<source>/<name>/` | the importer | |
+| **enabled** | eligible to be offered at all | the user (invariant 3) | `local`/`bundled`: yes. **`imported`: no.** `flagged`: no, and the UI says why |
+| **pinned** | always shown to the companion as a one-line stub | the user | no |
+
+Exposure levels, each strictly more expensive than the last:
+
+| Level | What is in context | When |
+|---|---|---|
+| L0 absent | nothing | not enabled |
+| L1 discoverable | nothing per skill; one fixed hint line naming `find_skill` and the categories of enabled skills (4.3) | enabled, not pinned |
+| L2 stub | `name: first sentence of description`, capped at 160 chars | pinned, or returned by this turn's search |
+| L3 activated | the full `SKILL.md` body | loaded into the agent that runs the task |
+| L4 resource | one `references/` or `assets/` file | the activated skill asks for it |
+
+State is stored in SQLite (§6, `skill_state`), not in `config.toml`, so it can change at runtime without a restart.
+
+**Confirming an enable.** Enabling needs a confirmation the user can give **without a microphone**: a typed answer or a click. **A spoken "yes" is never accepted**, for any skill: it can be produced by anyone in earshot or by the companion's own speaker. A spoken request may *start* an enable ("turn on the arxiv skill"); the companion then asks for the typed or clicked confirmation. A `flagged` skill requires the stronger form, the skill's name typed out. A confirmation not given within 60 seconds leaves the skill disabled.
+
+Where that confirmation happens: the **CLI** (`python -m brain.skills.manage enable <id>`, which asks you to type the answer), the brain's **`POST /api/skills/state`** (the call refuses unless `confirmed` is true, plus `confirm_text` equal to the skill name for `flagged` ones; the client is responsible for really asking), and later the **overlay** (typed in the input bar or a click on the prompt). The **status page stays read-only**, as its own spec requires: it shows each skill's state and the token meter but has no switches. The model cannot reach any of these: no typed action can change skill state, and a test asserts it.
+
+Precondition for Phase 2: the brain's HTTP API has no authentication today (`[server] auth_token_file` is reserved). Because enabling is inert in V1 this is acceptable now; **before any imported skill can run, state-changing endpoints must be authenticated**, or any local process could enable a skill.
+
+**Identity and name clashes.** The canonical identifier is always `<source>/<name>` (for example `hermes-agent/arxiv`). It is what `skill_state`, pins, logs and task records store, and it never changes. People and the model use a short form:
+
+* The bare `name` works only while it is unique among installed skills.
+* When two installed skills share a name, the bare name becomes ambiguous (the companion asks) and the **static suffix `@<source>`** is always valid: `pdf@hermes-agent`, `pdf@anthropics-skills`.
+* The suffix is the source label chosen at install time, so it is fixed by the install, not by what else is installed. The user may set a short `alias` per skill (`skill_state.alias`).
+* *Why static, not a dynamic counter (`pdf`, `pdf-2`):* a counter depends on install order and would silently change what an old reference means. A suffix drawn from the source never shifts under an existing reference. The default label should be the repository name alone (`hermes-agent`), falling back to `owner-repo` only when two sources would collide.
+
+#### 4.3 Selection without listing
+
+```
+user request ──► keyword search over enabled skills (name + description + tags + category)
+                        │  local, in-memory index, no model call
+                        ├─ 0 candidates ──────────────► answer without a skill
+                        ├─ 1 candidate ───────────────► select it
+                        ├─ 2-3 candidates, and the top score beats the runner-up by winner_margin
+                        │                              ► select the top one
+                        └─ 2-3 close candidates, or more than 3 candidates
+                                                       ► routing model chooses among their stubs
+                                                         (main model only if the routing model is
+                                                          unavailable or not confident)
+                        ▼
+   model proposes use_skill(<id>); the registry validates it (enabled, exists)
+                        ▼
+   Supervisor starts a Track 3 task whose context holds ONLY that skill (L3)
+```
+
+* **Least context first.** The cheapest mechanism that works is used, and each step escalates only if the previous one leaves more than one option. The rule is deterministic and unit-tested without any model: **one candidate wins outright; two or three candidates are decided by score if the leader's score is at least `winner_margin` times the runner-up's; more than three candidates always go to the routing model**, which sees at most `search_top_k` stubs. `winner_margin` starts at 1.5 and is tuned on the measured corpus.
+* **Send enough, let the model ask for more.** Context is assembled for the smallest eligible backend window, and what is sent is a small, ranked, bounded set. A model that needs more calls `find_skill` again with a different query or category, or asks for a reference file (L4). Pulling is cheap; over-sending is not.
+* **Categories first, skills second.** Many catalogs (Hermes among them) group skills by category. The importer records each skill's `category` (its parent path inside the source) in `.source`; categories are indexed as tags and the L1 hint lists the categories of enabled skills (at most `max_hint_categories`, inside the budget), so the model can narrow before it searches: `find_skill(query, category?)`.
+* **Index:** a small in-memory BM25 index over the metadata tier, rebuilt on install, enable or disable. Pure Python, no new dependency. Embeddings are a later option, justified only by measurement.
+* **Quality depends on descriptions.** The standard asks authors to say what a skill does *and when to use it*. The user may add search tags in `metadata` (`deskmate.tags`).
+* **Typed actions are counted too.** The built-in actions' prompt block is accounted against the same budget; it is small, but not exempt. Built-ins keep their own `[skills] disabled` list (4.7): turning one off is a different decision from turning off a third-party skill.
+
+#### 4.4 Context size and budget configuration
+
+Budgets must scale with the backend actually answering. Context size is a property of the backend: fixed for local inference (the hardware is the limit), different for each cloud model. It is recorded in config, not guessed, and **the same field exists on every backend, local or cloud, so the budget code is identical wherever the model runs**:
+
+```toml
+[llm.local]
+context_tokens = 8192            # set to the real value of the loaded model (e.g. llama-server -c)
+
+[llm.cloud.anthropic]            # per provider; a per-model table is allowed where one provider serves several
+context_tokens = 200000
+
+[skills]
+catalog_fraction = 0.03          # share of the backend's context that stubs may use
+catalog_token_cap = 400          # ...never more than this, however large the window
+activation_fraction = 0.25       # share a worker may spend on the activated skill body
+winner_margin = 1.5              # leader must beat the runner-up by this factor to skip the routing model
+max_auto_candidates = 3          # more candidates than this always go to the routing model
+max_pinned = 8
+max_active_skills = 1            # skills loaded into one worker at a time
+search_top_k = 5
+max_hint_categories = 12
+```
+
+The budget is `min(cap, fraction × context_tokens)`. Because the router can fail over between local and cloud, the prompt is assembled for the **smallest eligible window** and the model pulls more when it needs it (see "Send enough", 4.3). The same `context_tokens` value is what a future **session-compaction** feature needs to know when to summarise history; compaction is a separate decision, out of scope here.
+
+#### 4.5 The companion as supervisor
+
+When a task uses a skill, the **agent** owns the skill: it loads the body, decides how to apply it, and its context holds the instructions (4.3). The companion does not execute the skill and does not micromanage steps. It is the supervisor, with three jobs:
+
+1. **Clear the plan before execution.** The agent first states what it is about to do (for Track 3, the `propose_work_plan` contract in §5, or a short step list for a single task). The companion checks it before anything runs. Deterministic checks come first: the skills and tools named are enabled and in the task's allowed set; the plan is within the turn, token and time budgets; nothing in it needs a permission that has not been granted. Only if those pass, and only when the plan is large or touches something sensitive, does a model read it to ask "does this match what the user asked for?" It may approve, ask the agent to revise, or ask the user.
+2. **Track what is done and what is pending.** Task and step state is recorded (`plans`, `tasks`, `task_logs`, §6). The companion can answer "how is that going?" from this record without asking the agent, and shows progress through `agent_task_progress` events.
+3. **Intervene at defined checkpoints only.** Between plan approval and completion the companion does not review each step. The checkpoints are the ones that already exist: a dangerous call raising a permission request (the Permission Pre-Approval Flow above), a budget being exhausted, a step failing, and the user cancelling. At each, the companion decides whether to continue, pause, ask the user or stop.
+
+The principle is the same as in 4.3: deterministic checks first, a small model next, the main model last.
+
+**What counts as a "big" or "sensitive" plan (proposed; to be tuned).** Both are task-relative, so neither is a fixed number. The approach:
+
+1. **A deterministic floor.** Every tool belongs to a risk class (`read`, `write`, `exec`, `network`, `credentials`, `irreversible`; the sandbox grants already name most of them). A plan's oversight level is computed from what it contains: any `irreversible` or `credentials` step, or `exec`/`write` outside the task's own working area, sets `high`; any `write`, `exec` or `network` sets `normal`; read-only sets `low`. Size is judged against the task's own budgets and history (a plan notably larger than its declared `max_turns`, or than the median for that skill, is bumped one level), not against a global constant.
+2. **The model may only raise it.** After the floor is computed, the supervisor (routing model first) may escalate the level based on context ("this touches the user's tax folder"). It can never lower it below the floor, so a mistaken or manipulated model call cannot make a risky plan quieter.
+3. **The level tells the agent how often to report.** It becomes part of the task envelope: `oversight = {level, report_every_steps, approve_before: [risk classes]}`. `low`: report at completion. `normal`: report at each milestone. `high`: approval before each step in the listed risk classes, plus a periodic heartbeat. The agent reports; the companion does not poll.
+4. **Escalation during the run.** A failed step, a budget at 80%, or an unexpected tool request raises the level for the rest of the task.
+
+#### 4.6 Observability
+
+* Per turn, a `skill.context` event: `{pinned, offered, activated, tokens_used, budget, dropped}`.
+* The status page (read-only) shows each skill's state (installed, enabled, pinned, tier, exposure level), a meter of skill tokens against budget, and the dropped list. This is how you notice trouble before the model degrades. Changes are made with the CLI or the brain API (4.2).
+* `GET /api/skills` carries `id`, `enabled`, `pinned`, `exposure` and `stub_tokens` per skill, and a `budget` summary.
+
+#### 4.7 Phasing, decisions and what is still open
+
+| Phase | Scope |
+|---|---|
+| **V1 (now)** | `context_tokens` on every backend; `skill_state` table; enable/pin through the CLI and brain API with typed confirmation (status page read-only); stub builder and token estimator; importer records `category` and uses repository-name source labels; the budget meter. Imported skills stay inert and are not put in the prompt, so the meter reports what *would* be sent. Invariant 1-3 tests. |
+| **Phase 2** | Keyword index, `find_skill` / `use_skill`, routing-model disambiguation; worker-scoped activation (L3/L4); plan clearing and checkpoints (4.5); voice-started enables. |
+| **Later, if measured necessary** | Embeddings; usage-based ranking; session compaction (its own ADR). |
+
+**Decided (2026-10-26):**
+
+| # | Decision |
+|---|---|
+| 1 | Imports start **disabled**; the user enables each one. |
+| 2 | Context size is a **config value on every backend**, local and cloud alike (`context_tokens`); budgets are fractions of it with absolute caps. |
+| 3 | The **agent owns the skill** and loads it; the companion supervises: it clears the plan, tracks progress and intervenes at checkpoints, not per step (4.5). |
+| 4 | **Least context first:** keyword search; one candidate wins; two or three go by score margin; more than three go to the routing model, then the main model only if needed. |
+| 5 | Built-in typed actions keep their **separate** `[skills] disabled` list. |
+| 6 | Enabling is confirmed by a **typed or clicked answer**; a spoken "yes" is **never** accepted; flagged skills need the name typed (4.2). |
+| 7 | Name clashes use a **static `@<source>` suffix** on a never-changing `<source>/<name>` id; the user may set an alias (4.2). |
+| 8 | **Categories** are recorded and used to narrow search (4.3). |
+| 9 | `max_pinned = 8` and 160-character stubs are starting values, to be tuned. |
+| 10 | **Send enough, let the model ask for more:** assemble for the smallest eligible window; the model pulls more by calling `find_skill` or asking for a reference. |
+| 11 | The status page stays **read-only**; skill switches live in the CLI and brain API (and later the overlay). |
+
+**Still open (to settle while building):**
+
+1. **Plan oversight levels (4.5):** the risk classes, the thresholds that bump a level, and the default reporting cadence per level are proposals and need to be tried on real tasks.
+2. **`winner_margin` value and the routing model's prompt** need a query set against the 227-skill corpus; record recall@5 before and after.
+3. **Per-model context sizes** for a cloud provider that serves several models: one `context_tokens` per provider entry is enough while an entry names one model, which is the current config shape.
+4. **API authentication** (4.2) before Phase 2.
 
 ---
 
@@ -480,6 +683,15 @@ CREATE TABLE IF NOT EXISTS task_logs (
     FOREIGN KEY(task_id) REFERENCES tasks(task_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS skill_state (
+    skill_id TEXT PRIMARY KEY,           -- "<source>/<name>", e.g. "hermes-agent/arxiv"
+    enabled INTEGER NOT NULL DEFAULT 0,  -- 1 = eligible to be offered
+    pinned INTEGER NOT NULL DEFAULT 0,   -- 1 = always shown as a stub (requires enabled)
+    alias TEXT,                          -- optional user-chosen short name
+    changed_by TEXT NOT NULL,            -- "default", "cli", "api", "overlay"
+    updated_at REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS skill_permissions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     skill_id TEXT NOT NULL,
@@ -511,6 +723,10 @@ To ensure V1 code seamlessly accommodates V2 skills, DAG work plans, and sub-age
 ## 8. Actionable Exit Criteria & Automated Testing Matrix
 
 * **V1 Readiness:**
+  * Agent Skills are parsed and validated (`brain/skills/agentskills.py`), vetted and installable (`importer.py`, `safety.py`), listed on the status page, and never executed.
+  * `context_tokens` is configurable per backend; skill enable/pin state persists in `skill_state`; imports start disabled and enabling needs a typed or clicked confirmation; the CLI and brain API change it and the (read-only) status page shows state and tokens spent on skills against the budget.
+  * With a catalog 100x larger than the budget, the skills portion of the prompt stays within `catalog_token_budget` (test).
+  * A disabled skill cannot be reached by any call; nothing in a model reply or tool result can enable one (tests).
   * `router.py` exposes open tool registration.
   * Config parses reserved concurrency keys (`max_parallel_slots`, `max_concurrency`, `max_script_workers`).
   * Subprocess utilities are centralized.
@@ -523,6 +739,8 @@ To ensure V1 code seamlessly accommodates V2 skills, DAG work plans, and sub-age
   * Permission decisions persist in SQLite; `DELETE /skills/{id}/permissions` clears cache cleanly.
   * Missing `bwrap` raises descriptive diagnostic failure directing user to install it.
 
+* **Phase 2 additions (skill selection):** keyword index, `find_skill`/`use_skill`, routing-model disambiguation and authenticated state-changing endpoints; the body loads only into the agent that runs the task; the companion clears plans before execution; recall@5 on the 227-skill community corpus measured and recorded before any embedding work.
+
 * **Phase 2 (V2 Agents & ICG):**
   * Inference Capacity Governor enforces slot reservations via `acquire_slot` / `release_slot`.
   * Priority 0 VIP Companion turns preempt immediately without blocking on background tasks.
@@ -534,3 +752,15 @@ To ensure V1 code seamlessly accommodates V2 skills, DAG work plans, and sub-age
   * Lead planner invokes `propose_work_plan`, receiving `plan_id` and registered DAG execution graph.
   * Supervisor schedules tasks based on dependency graph and ICG slot capacity.
   * WebSocket emits `agent_task_progress` with `plan_id`, and overlay visualizes progress.
+
+---
+
+## 9. Amendment 2026-10-26: Open Standard & Prior Art
+
+**Why the change.** The original §4 specified a bespoke `skill.toml`. Skills are now an open standard with a large community catalog (Anthropic's reference skills, Hermes Agent, and others). A private format would cut the companion off from all of it for no gain, since the standard's `metadata` map carries everything we needed.
+
+**What running the importer on real skills found:** run against the Hermes Agent and Anthropic skill repositories, the importer found 231 skills and installed 227 (141 `imported`, 86 `flagged`). Four were refused: two as suspected prompt injection, one with an underscore in its name, one with a description over 1024 characters. The scan as inherited from [OpenJarvis](https://openjarvis.stanford.edu/) refused 38 of the 231, almost all false positives on tool documentation, so its command-shaped patterns were downgraded (see `brain/skills/safety.py`).
+
+**What is not decided here.** Most community skills assume an agent with shell, file and web tools and use Claude Code's tool names (`Bash`, `Read`, `Write`...). Running them needs the Phase 2 runtime, a tool-name translation layer onto our own tools, and the sandbox. The OpenJarvis `ToolTranslator` table is the reference starting point for that mapping. MCP is the other source of tools: [ADR_MCP_INTEGRATION.md](ADR_MCP_INTEGRATION.md).
+
+**Attribution.** Parts of the importer, scanner and parser are adapted from [OpenJarvis](https://openjarvis.stanford.edu/) (Apache-2.0, Copyright 2025 The OpenJarvis Authors); see [`NOTICE`](../NOTICE) and the header of each file.
