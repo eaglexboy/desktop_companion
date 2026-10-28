@@ -28,16 +28,15 @@ from pydantic import BaseModel
 
 from brain.appearance.blender_gen import is_build_running
 from brain.appearance.manifest import load_manifest
-from brain.events import begin_turn, bus, emit
-from brain.skills.agentskills import discover as discover_agent_skills
-from brain.skills.builtin import register_builtin
-from brain.skills.manage import StateChangeError, build_views, change_state, summarize, view_json
-from brain.skills.registry import SkillCall, SkillRegistry
-from brain.skills.reply import FORMAT_REMINDER, REPAIR_PROMPT, is_structured, parse_reply
-from brain.skills.state import SkillStateStore
-from brain.voice.plaintext import to_plain_speech
 from brain.appearance.spec import CatalogError, LookSpec, validate_against_catalogs
-from brain.config import MOOD_NAMES, TRAIT_NAMES, Settings, get_settings, subscribe_if_running
+from brain.config import (
+    MOOD_NAMES,
+    TRAIT_NAMES,
+    Settings,
+    get_settings,
+    subscribe_if_running,
+)
+from brain.events import begin_turn, bus, emit
 from brain.evolution import AvatarEvolution
 from brain.ipc.server import OverlayHub, project_manifest, welcome_config_subset
 from brain.llm_pool import LLMPool, LocalLLMClient
@@ -53,8 +52,26 @@ from brain.presence.placement import (
     is_own_window,
 )
 from brain.router import ReplyFormat, Router, build_router
+from brain.skills.agentskills import discover as discover_agent_skills
+from brain.skills.builtin import register_builtin
+from brain.skills.manage import (
+    StateChangeError,
+    build_views,
+    change_state,
+    summarize,
+    view_json,
+)
+from brain.skills.registry import SkillCall, SkillRegistry
+from brain.skills.reply import (
+    FORMAT_REMINDER,
+    REPAIR_PROMPT,
+    is_structured,
+    parse_reply,
+)
+from brain.skills.state import SkillStateStore
 from brain.voice.delivery import pick_delivery
 from brain.voice.lipsync import RhubarbLipSync, extract_visemes_if_needed
+from brain.voice.plaintext import to_plain_speech
 from brain.voice.stereo import ensure_stereo_wav
 from brain.voice.stt import StreamingSTT, build_stt_coordinator
 from brain.voice.tts import TTSPool, build_tts_pool

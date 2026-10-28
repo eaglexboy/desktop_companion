@@ -490,7 +490,7 @@ async def test_lipsync_overlaps_next_sentence_and_chunks_stay_in_order(client, m
     # sentence 0's lip-sync is slow, sentence 1's is instant: 1 finishes first
     delays = {"A.": 0.3, "B.": 0.0}
 
-    async def slow_lipsync(_lipsync, wav_path, *, has_face, dialog_text=None):
+    async def slow_lipsync(_lipsync, wav_path, *, has_face, dialog_text: str):
         events.append(f"lip-start:{dialog_text}")
         await asyncio.sleep(delays[dialog_text])
         events.append(f"lip-end:{dialog_text}")
@@ -518,7 +518,6 @@ async def test_lipsync_overlaps_next_sentence_and_chunks_stay_in_order(client, m
 
 
 def test_reload_with_changed_volume_pushes_config_update(client):
-    import asyncio
 
     from brain.main import _apply_reloaded_settings
 
@@ -632,7 +631,7 @@ def test_api_skills_lists_installed_agent_skills_with_provenance_and_rejections(
 def test_enabling_over_the_api_needs_confirmation_and_flagged_skills_need_the_name_typed(client):
     c, state = client
     _install_pdf_skill(state, scripts=True)  # scripts make it flagged
-    post = lambda **kw: c.post("/api/skills/state", json={"skill": "pdf-tools", **kw})  # noqa: E731
+    post = lambda **kw: c.post("/api/skills/state", json={"skill": "pdf-tools", **kw})
 
     assert post(enabled=True).status_code == 409                                     # not confirmed
     assert post(enabled=True, confirmed=True).status_code == 409                     # flagged: name not typed

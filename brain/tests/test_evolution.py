@@ -16,7 +16,13 @@ import pytest
 
 import brain.evolution as evolution_module
 from brain.appearance.blender_gen import CompileResult
-from brain.appearance.manifest import AssetManifest, AssetVersionEntry, append_version, load_manifest, save_manifest
+from brain.appearance.manifest import (
+    AssetManifest,
+    AssetVersionEntry,
+    append_version,
+    load_manifest,
+    save_manifest,
+)
 from brain.appearance.spec import LookSpec, PaletteSpec, WardrobeSpec
 from brain.config import MOOD_NAMES, TRAIT_NAMES, Settings
 from brain.evolution import (
@@ -533,12 +539,3 @@ def test_keyword_prefilter_is_off_when_skills_are_enabled(tmp_path):
     settings = _settings(tmp_path)
     settings.skills.enabled = True
     assert build_router(settings)._match_tool_keyword("please change your look for me") is None
-
-
-def test_current_look_reports_blob_when_stored_template_has_no_model(tmp_path):
-    settings = _settings(tmp_path)
-    evolution = AvatarEvolution(settings, _store(tmp_path), _pool("{}"))
-    spec = evolution.current_look_spec().model_copy(update={"base_template": "standard_humanoid_female"})
-    save_manifest(settings.deploy_dir, append_version(None, _build_json(), spec.model_dump(mode="json")))
-
-    assert evolution.current_look_spec().base_template == "primitive_blob"

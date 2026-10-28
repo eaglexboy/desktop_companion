@@ -187,17 +187,6 @@ def resolve_template(base_template: str, deploy_dir: Path) -> dict:
     return {"tier": "tier_3_primitive", "imported": False, "path": None}
 
 
-def import_template_asset(path: Path) -> None:
-    if path.suffix == ".glb":
-        bpy.ops.import_scene.gltf(filepath=str(path))
-    elif path.suffix == ".blend":
-        with bpy.data.libraries.load(str(path), link=False) as (data_from, data_to):
-            data_to.objects = data_from.objects
-        for obj in data_to.objects:
-            if obj is not None:
-                bpy.context.scene.collection.objects.link(obj)
-
-
 # --- body / head / eyes / mouth / teeth ---------------------------------------
 
 
@@ -226,6 +215,50 @@ def build_body_tier3(base_template: str, proportions: dict, palette: dict, surfa
     bpy.ops.object.shade_smooth()
     body.data.materials.append(make_material("BodyMat", primary, material=surface_material))
     return body, head_loc, has_arms, has_legs
+
+
+def build_body_humanoid(proportions: dict, palette: dict, surface_material: str):
+    """Procedural stand-in for a standard_humanoid_* model: pelvis, torso, two
+    legs, two arms with hands, feet on the ground (z=0) and the head sitting
+    on top, facing -Y. Returns (body_obj, head_location, has_arms, has_legs,
+    layout) -- `layout` is what build_armature needs to put bones where the
+    limbs are. muscularity/femininity reshape the shoulders and hips; height
+    and build scale the whole figure like the other templates."""
+    primary = hex_to_rgba(palette["primary"])
+    h = proportions.get("height", 1.0)
+    b = proportions.get("build", 1.0)
+    mus = proportions.get("muscularity", 0.5)
+    fem = proportions.get("femininity", 0.5)
+
+    shoulder = 0.46 * b * (1.0 + 0.30 * (mus - 0.5) - 0.20 * (fem - 0.5))
+    hip = 0.40 * b * (1.0 + 0.25 * (fem - 0.5))
+    leg_x = 0.30 * b
+    arm_x = shoulder + 0.14
+    shoulder_z, hand_z = 1.5 * h, 0.85 * h
+    arm_r = 0.11 * b * (1.0 + 0.4 * (mus - 0.5))
+    mat = make_material("BodyMat", primary, material=surface_material)
+
+    parts = [
+        (_prim("sphere", (0, 0, 0.95 * h), scale=(hip, 0.30 * b, 0.28 * h)), mat),  # pelvis
+        (_prim("sphere", (0, 0, 1.22 * h), scale=(shoulder, 0.32 * b, 0.46 * h)), mat),  # torso
+        (_prim("cylinder", (0, 0, 1.66 * h), r=0.13 * b, depth=0.2 * h), mat),  # neck
+    ]
+    for x in (-leg_x, leg_x):
+        parts.append((_prim("cylinder", (x, 0, 0.45 * h), r=0.15 * b, depth=0.9 * h), mat))
+    for x in (-arm_x, arm_x):
+        parts.append((_prim("cylinder", (x, 0, (shoulder_z + hand_z) / 2), r=arm_r, depth=shoulder_z - hand_z), mat))
+        parts.append((_prim("sphere", (x, 0, hand_z), r=arm_r * 1.3), mat))  # hand
+
+    body = _assemble("Body", parts)
+    # Origin at the bounding-box centre, like the Tier 3 primitives, so the
+    # _BODY bounds (footwear height, hoodie pocket) read it the same way.
+    bpy.context.view_layer.objects.active = body
+    body.select_set(True)
+    bpy.ops.object.origin_set(type="ORIGIN_GEOMETRY", center="BOUNDS")
+    body.select_set(False)
+    head_loc = (0.0, 0.0, 2.05 * h)
+    layout = {"arm_x": arm_x, "shoulder_z": shoulder_z, "hand_z": hand_z, "leg_x": leg_x, "hip_z": 0.9 * h}
+    return body, head_loc, True, True, layout
 
 
 def build_head(head_loc) -> bpy.types.Object:
@@ -737,7 +770,7 @@ def build_socket_accessory(socket_name: str, item: str, head_loc, palette: dict,
 # --- armature / rigging --------------------------------------------------------
 
 
-def build_armature(has_arms: bool, head_loc) -> bpy.types.Object:
+def build_armature(has_arms: bool, head_loc, *, has_legs: bool = False, layout: dict | None = None) -> bpy.types.Object:
     bpy.ops.object.armature_add(enter_editmode=True, location=(0, 0, 0))
     arm_obj = bpy.context.active_object
     arm_obj.name = "Rig"
@@ -758,8 +791,18 @@ def build_armature(has_arms: bool, head_loc) -> bpy.types.Object:
     if has_arms:
         for side, x in (("L", -0.7), ("R", 0.7)):
             arm = eb.new(f"arm_{side}")
-            arm.head, arm.tail = (0, 0, head_loc[2] - 0.6), (x, 0, head_loc[2] - 1.0)
+            if layout is not None:  # limbs that hang straight down from the shoulder
+                ax = x / 0.7 * layout["arm_x"]
+                arm.head, arm.tail = (ax, 0, layout["shoulder_z"]), (ax, 0, layout["hand_z"])
+            else:
+                arm.head, arm.tail = (0, 0, head_loc[2] - 0.6), (x, 0, head_loc[2] - 1.0)
             arm.parent = spine
+
+    if has_legs and layout is not None:
+        for side, sign in (("L", -1), ("R", 1)):
+            leg = eb.new(f"leg_{side}")
+            leg.head, leg.tail = (sign * layout["leg_x"], 0, layout["hip_z"]), (sign * layout["leg_x"], 0, 0.05)
+            leg.parent = root
 
     bpy.ops.object.mode_set(mode="OBJECT")
     return arm_obj
@@ -1072,6 +1115,106 @@ def export_glb(out_path: Path) -> None:
     )
 
 
+# --- imported (Tier 1/2) models --------------------------------------------------
+
+IMPORT_TARGET_HEIGHT = 2.5  # metres; the procedural bodies stand roughly this tall
+
+
+def _import_objects(path: Path) -> list:
+    before = {obj.name for obj in bpy.data.objects}
+    if path.suffix == ".glb":
+        bpy.ops.import_scene.gltf(filepath=str(path))
+    elif path.suffix == ".blend":
+        with bpy.data.libraries.load(str(path), link=False) as (data_from, data_to):
+            data_to.objects = data_from.objects
+        for obj in data_to.objects:
+            if obj is not None:
+                bpy.context.scene.collection.objects.link(obj)
+    else:
+        raise ValueError(f"unrecognized model file extension {path.suffix!r}")
+    return [obj for obj in bpy.data.objects if obj.name not in before]
+
+
+def _world_bounds(objs) -> tuple:
+    lo = mathutils.Vector((math.inf, math.inf, math.inf))
+    hi = mathutils.Vector((-math.inf, -math.inf, -math.inf))
+    for obj in objs:
+        for corner in obj.bound_box:
+            co = obj.matrix_world @ mathutils.Vector(corner)
+            lo = mathutils.Vector((min(lo.x, co.x), min(lo.y, co.y), min(lo.z, co.z)))
+            hi = mathutils.Vector((max(hi.x, co.x), max(hi.y, co.y), max(hi.z, co.z)))
+    return lo, hi
+
+
+def build_imported_model(path: Path, warnings: list[str]) -> dict:
+    """Uses an authored model as the body instead of building one: imports it,
+    scales it to the house height, stands it on the floor facing -Y, and
+    reads what it can do (head/arms/legs from its bone names, lip-sync from
+    its viseme shape keys). Wardrobe is the model's own, so outfits/footwear
+    are not layered on top; accessories still attach. A model with no
+    armature gets the canonical rig (the caller parents it); one with its own
+    armature keeps it. Raises if the file holds no mesh at all."""
+    objs = _import_objects(path)
+    for obj in objs:
+        if obj.type in ("CAMERA", "LIGHT"):
+            bpy.data.objects.remove(obj, do_unlink=True)
+    objs = [obj for obj in objs if obj.name in bpy.data.objects]
+    meshes = [obj for obj in objs if obj.type == "MESH"]
+    if not meshes:
+        raise ValueError(f"{path.name} contains no mesh")
+    armatures = [obj for obj in objs if obj.type == "ARMATURE"]
+
+    bpy.context.view_layer.update()
+    lo, hi = _world_bounds(meshes)
+    k = IMPORT_TARGET_HEIGHT / max(hi.z - lo.z, 1e-6)
+    roots = [obj for obj in objs if obj.parent is None or obj.parent not in objs]
+    for root in roots:  # scale about the world origin, so separate parts keep their spacing
+        root.scale = (root.scale.x * k, root.scale.y * k, root.scale.z * k)
+        root.location = root.location * k
+    bpy.context.view_layer.update()
+    lo, hi = _world_bounds(meshes)
+    shift = mathutils.Vector(((lo.x + hi.x) / -2, (lo.y + hi.y) / -2, -lo.z))
+    for root in roots:
+        root.location = root.location + shift
+    bpy.context.view_layer.update()
+    lo, hi = _world_bounds(meshes)
+
+    bone_names = [b.name.lower() for b in armatures[0].data.bones] if armatures else []
+    viseme_keys: set[str] = set()
+    for mesh in meshes:
+        if mesh.data.shape_keys is not None:
+            viseme_keys |= {kb.name for kb in mesh.data.shape_keys.key_blocks if kb.name.startswith(SHAPE_KEY_PREFIX)}
+    expected = {shape_key_name(code) for code in VISEME_CODES}
+    if viseme_keys and not expected <= viseme_keys:
+        warnings.append(f"model has only part of the viseme set ({len(viseme_keys & expected)}/9); lip-sync disabled")
+        viseme_keys = set()
+
+    head_loc = (0.0, (lo.y + hi.y) / 2, hi.z - 0.55)
+    if armatures:
+        head_bones = [b for b in armatures[0].data.bones if "head" in b.name.lower()]
+        if head_bones:
+            head_loc = tuple(armatures[0].matrix_world @ head_bones[0].head_local)
+
+    largest = max(meshes, key=lambda m: m.dimensions.x * m.dimensions.y * m.dimensions.z)
+    _BODY.update(
+        obj=largest,
+        build=1.0,
+        front=lo.y,
+        back=hi.y,
+        bottom=lo.z,
+        half_width=(hi.x - lo.x) / 2,
+    )
+    return {
+        "meshes": meshes,
+        "armature": armatures[0] if armatures else None,
+        "head_loc": head_loc,
+        "has_arms": any("arm" in n for n in bone_names),
+        "has_legs": any("leg" in n or "thigh" in n for n in bone_names),
+        "viseme_keys": sorted(viseme_keys, key=lambda n: VISEME_CODES.index(n[len(SHAPE_KEY_PREFIX) :])),
+        "body": largest,
+    }
+
+
 # --- --inspect mode -------------------------------------------------------------
 
 _SOCKET_NAMES = (
@@ -1189,52 +1332,84 @@ def main() -> None:
     accessories = spec.get("accessories", {})
 
     resolution = resolve_template(base_template, DEPLOY_DIR)
-    tier = resolution["tier"]
     warnings: list[str] = []
 
+    imported = None
     if resolution["imported"]:
-        # Tier 1/2: import what exists. Full proportion-baking/wardrobe-fit
-        # integration against an imported base is untested without a real
-        # Tier 1/2 asset to try it against; falls through to the same Tier
-        # 3 procedural build below using whichever base_template string was
-        # given, so a build is still produced rather than failing outright.
-        warnings.append(f"tier {tier} asset import is not yet fully integrated; building Tier 3 procedurally instead")
-        import_template_asset(resolution["path"])
-        for obj in list(bpy.context.scene.objects):
-            bpy.data.objects.remove(obj, do_unlink=True)
-        tier = "tier_3_primitive"
+        try:
+            imported = build_imported_model(resolution["path"], warnings)
+        except Exception as exc:  # noqa: BLE001 -- an unusable asset must not fail the whole build
+            warnings.append(f"could not use model {resolution['path'].name} ({exc}); building procedurally instead")
+            reset_scene()
+            bpy.context.scene.render.fps = 30
 
-    procedural_template = base_template if base_template in ("primitive_blob", "primitive_mechanical") else "primitive_blob"
-    body, head_loc, has_arms, has_legs = build_body_tier3(procedural_template, proportions, palette, surface_material)
-    head = build_head(head_loc)
-    eyes = build_eyes(head_loc, hex_to_rgba(palette["secondary"]))
-    mouth, teeth, viseme_keys = build_mouth(head_loc, has_face)
+    if imported is not None:
+        body = imported["body"]
+        head_loc, has_arms, has_legs = imported["head_loc"], imported["has_arms"], imported["has_legs"]
+        viseme_keys = imported["viseme_keys"]
+        if has_face and not viseme_keys:
+            warnings.append("model has no viseme shape keys; building it without a face (talk_pulse speech indicator)")
+        has_face = bool(viseme_keys)
+        eyes: list = []
+        if wardrobe.get("outfit", "none") != "none" or wardrobe.get("footwear", "none") != "none":
+            warnings.append("wardrobe is not layered onto an imported model; it keeps its own clothes")
 
-    bpy.context.view_layer.update()
-    _BODY.update(
-        obj=body,
-        build=proportions.get("build", 1.0),
-        front=body.location.y - body.dimensions.y / 2,
-        back=body.location.y + body.dimensions.y / 2,
-        bottom=body.location.z - body.dimensions.z / 2,
-        half_width=body.dimensions.x / 2,
-    )
+        accessory_objs = []
+        for socket_name in _SOCKET_NAMES:
+            item = accessories.get(socket_name)
+            if item:
+                accessory_objs += build_socket_accessory(socket_name, item, head_loc, palette, DEPLOY_DIR)
 
-    outfit_objs = build_outfit(body, wardrobe.get("outfit", "none"), head_loc, palette, surface_material)
-    footwear_objs = build_footwear(wardrobe.get("footwear", "none"), palette)
+        arm_obj = imported["armature"]
+        meshes = accessory_objs
+        if arm_obj is None:  # a static model: give it the canonical rig and bind it
+            arm_obj = build_armature(has_arms, head_loc)
+            meshes = [*imported["meshes"], *accessory_objs]
+        else:
+            bone_names = {b.name for b in arm_obj.data.bones}
+            missing = {"root", "spine", "head"} - bone_names
+            if missing:
+                warnings.append(f"model rig has no {sorted(missing)} bone(s); those animations are empty")
+        parent_to_armature(arm_obj, meshes)
+        if imported["armature"] is None:
+            bake_proportions(arm_obj, proportions)
+        bake_morphological_proportions(body, proportions)
+    else:
+        layout = None
+        if base_template in ("standard_humanoid_female", "standard_humanoid_male"):
+            body, head_loc, has_arms, has_legs, layout = build_body_humanoid(proportions, palette, surface_material)
+        else:
+            procedural_template = base_template if base_template == "primitive_mechanical" else "primitive_blob"
+            body, head_loc, has_arms, has_legs = build_body_tier3(procedural_template, proportions, palette, surface_material)
+        head = build_head(head_loc)
+        eyes = build_eyes(head_loc, hex_to_rgba(palette["secondary"]))
+        mouth, teeth, viseme_keys = build_mouth(head_loc, has_face)
 
-    accessory_objs = []
-    for socket_name in _SOCKET_NAMES:
-        item = accessories.get(socket_name)
-        if item:
-            accessory_objs += build_socket_accessory(socket_name, item, head_loc, palette, DEPLOY_DIR)
+        bpy.context.view_layer.update()
+        _BODY.update(
+            obj=body,
+            build=proportions.get("build", 1.0),
+            front=body.location.y - body.dimensions.y / 2,
+            back=body.location.y + body.dimensions.y / 2,
+            bottom=body.location.z - body.dimensions.z / 2,
+            half_width=body.dimensions.x / 2,
+        )
 
-    arm_obj = build_armature(has_arms, head_loc)
-    meshes = [body, head, *eyes, mouth, teeth, *outfit_objs, *footwear_objs, *accessory_objs]
-    parent_to_armature(arm_obj, meshes)
+        outfit_objs = build_outfit(body, wardrobe.get("outfit", "none"), head_loc, palette, surface_material)
+        footwear_objs = build_footwear(wardrobe.get("footwear", "none"), palette)
 
-    bake_proportions(arm_obj, proportions)
-    bake_morphological_proportions(body, proportions)
+        accessory_objs = []
+        for socket_name in _SOCKET_NAMES:
+            item = accessories.get(socket_name)
+            if item:
+                accessory_objs += build_socket_accessory(socket_name, item, head_loc, palette, DEPLOY_DIR)
+
+        arm_obj = build_armature(has_arms, head_loc, has_legs=has_legs, layout=layout)
+        meshes = [body, head, *eyes, mouth, teeth, *outfit_objs, *footwear_objs, *accessory_objs]
+        parent_to_armature(arm_obj, meshes)
+
+        bake_proportions(arm_obj, proportions)
+        bake_morphological_proportions(body, proportions)
 
     speech_indicator_mode = "viseme_shapekeys" if has_face else "talk_pulse"
     talk_pulse_clip = None

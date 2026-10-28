@@ -177,7 +177,7 @@ class SkillRegistry:
         try:
             result = await asyncio.wait_for(skill.handler(args, state), SKILL_TIMEOUT_S)
             ok, error = True, None
-        except Exception as exc:  # noqa: BLE001 -- a skill must never break the reply
+        except Exception as exc:
             logger.exception("skill %s failed", call.skill)
             result, ok, error = None, False, f"{type(exc).__name__}: {exc}"
         ms = round((time.monotonic() - started) * 1000)

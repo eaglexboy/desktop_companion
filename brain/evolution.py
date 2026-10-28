@@ -34,7 +34,7 @@ from brain.appearance.manifest import (
 )
 from brain.appearance.spec import (
     LookSpec,
-    buildable_template_ids,
+    available_custom_templates,
     ensure_catalogs_seeded,
     example_look_spec,
     load_templates_catalog,
@@ -224,17 +224,6 @@ class AvatarEvolution:
     # --- current look -----------------------------------------------------
 
     def current_look_spec(self) -> LookSpec:
-        look = self._stored_look_spec()
-        if look.base_template not in buildable_template_ids(self._settings.deploy_dir) and not look.base_template.startswith(
-            "custom:"
-        ):
-            # An earlier build asked for a body that has no model installed;
-            # the generator drew a blob instead. Report what is really on
-            # screen, so deltas merge onto something that can be rebuilt.
-            return look.model_copy(update={"base_template": "primitive_blob"})
-        return look
-
-    def _stored_look_spec(self) -> LookSpec:
         manifest = load_manifest(self._settings.deploy_dir)
         if manifest is not None:
             current = manifest.current()
@@ -271,7 +260,7 @@ class AvatarEvolution:
         wardrobe_catalog = load_wardrobe_catalog(catalogs_dir)
         prompt = _DELTA_SYNTHESIS_PROMPT.format(
             current_look_json=current.model_dump_json(),
-            template_ids=", ".join(buildable_template_ids(self._settings.deploy_dir)),
+            template_ids=", ".join([*sorted(templates), *available_custom_templates(self._settings.deploy_dir)]),
             outfits=", ".join(wardrobe_catalog["outfits"]),
             footwear=", ".join(wardrobe_catalog["footwear"]),
             accessories=wardrobe_catalog["accessories"],
@@ -321,7 +310,7 @@ class AvatarEvolution:
             return
         try:
             await self._on_progress(payload)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("appearance on_progress hook failed for stage %r", stage)
 
     async def _finish(self, result: CompileResult, source: str) -> None:
