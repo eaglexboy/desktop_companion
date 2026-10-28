@@ -126,8 +126,11 @@ class PersonalityStore:
         identity_name: str = DEFAULT_NAME,
     ) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn = sqlite3.connect(db_path, check_same_thread=False, timeout=5.0)
         self._conn.row_factory = sqlite3.Row
+        # WAL: the status page and backup read state.db while the brain writes.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.executescript(_SCHEMA)
         self._seed(trait_names, mood_names, identity_name)
         self._conn.commit()

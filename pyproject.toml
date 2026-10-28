@@ -1,6 +1,6 @@
 [project]
 name = "deskmate-brain"
-version = "1.1.1"
+version = "1.1.2"
 description = "Local brain daemon for the deskmate desktop companion agent"
 requires-python = ">=3.11"
 dependencies = [

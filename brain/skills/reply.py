@@ -18,6 +18,20 @@ from brain.skills.registry import SkillCall
 _FENCE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL | re.IGNORECASE)
 
 
+# Appended to the last user message of every skills-enabled turn, and used as the
+# repair prompt when a reply still isn't JSON. Restating the format right where
+# the model starts writing is what small models actually obey, and it needs
+# nothing from the provider (no response_format / guided decoding).
+FORMAT_REMINDER = (
+    'Format: reply with ONLY the JSON object {"say": "...", "do": []}, even for one word or a vocal cue. '
+    'Put any *sigh* or *laughs* inside the "say" string. No text outside the JSON.'
+)
+REPAIR_PROMPT = (
+    "That reply was not the required JSON object. Resend the same reply, unchanged in wording, as "
+    '{"say": "<your reply>", "do": []} and nothing else.'
+)
+
+
 @dataclass
 class ParsedReply:
     say: str
@@ -53,3 +67,7 @@ def parse_reply(raw: str) -> ParsedReply:
                 args = item.get("args")
                 actions.append(SkillCall(item["skill"], args if isinstance(args, dict) else {}))
     return ParsedReply(say=obj["say"].strip(), actions=actions, structured=True)
+
+
+def is_structured(raw: str) -> bool:
+    return parse_reply(raw).structured
