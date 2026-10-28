@@ -128,8 +128,18 @@ def test_validate_against_catalogs_accepts_known_tier3_template(tmp_path):
     validate_against_catalogs(spec, deploy_dir)  # must not raise
 
 
+def test_validate_against_catalogs_rejects_humanoid_without_a_model(tmp_path):
+    deploy_dir = _deploy_with_catalogs(tmp_path)
+    spec = LookSpec.model_validate(_minimal_spec(base_template="standard_humanoid_female"))
+    with pytest.raises(CatalogError, match="no model installed"):
+        validate_against_catalogs(spec, deploy_dir)
+
+
 def test_validate_against_catalogs_accepts_both_humanoid_genders(tmp_path):
     deploy_dir = _deploy_with_catalogs(tmp_path)
+    (deploy_dir / "assets" / "base_templates").mkdir(parents=True)
+    for gender in ("female", "male"):
+        (deploy_dir / "assets" / "base_templates" / f"standard_humanoid_{gender}.glb").write_bytes(b"glTF")
     for base_template in ("standard_humanoid_female", "standard_humanoid_male"):
         spec = LookSpec.model_validate(_minimal_spec(base_template=base_template))
         validate_against_catalogs(spec, deploy_dir)  # must not raise

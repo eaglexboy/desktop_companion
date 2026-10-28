@@ -367,7 +367,7 @@ Governed by [DESIGN_AVATAR_EVOLUTION_FLOW.md](DESIGN_AVATAR_EVOLUTION_FLOW.md):
   * `org.freedesktop.login1.Session` (`LockedHint`, `IdleHint`).
 * State Machine:
   * **`User_Away`:** Screensaver active, session locked, or display sleeping.
-  * **`User_Idle`:** No window/pointer activity for $> \text{idle\_after\_s}$ (default 10m).
+  * **`User_Idle`:** No window/pointer activity for longer than `idle_after_s` (default 10m).
   * **`User_Active`:** Active window interaction and unlocked session.
 
 ### 2. Non-Intrusive Placement (`placement.py`)
@@ -439,6 +439,7 @@ Returns screen-local `Placement(x, y, screen_name, hidden)`:
 {"type": "chat_response", "timestamp": 1718000000.0, "payload": {"utterance_id": "utt_1", "text": "Hello!", "provider": "local", "escalated": false, "rationale": "chat"}}
 {"type": "set_position", "timestamp": 1718000000.0, "payload": {"x": 100, "y": 200, "screen_name": "DP-1", "duration_ms": 400, "hidden": false}}
 {"type": "status_update", "timestamp": 1718000000.0, "payload": {"state": "idle" | "thinking" | "rebuilding" | "listening" | "speaking"}}
+{"type": "appearance_progress", "timestamp": 1718000000.0, "payload": {"stage": "designing" | "building" | "done" | "staged" | "failed", "label": "Building the 3D model...", "source": "user" | "api" | "autonomous", "version": 4, "error": "..."}}
 {"type": "mood_update", "timestamp": 1718000000.0, "payload": {"energy": 60.0, "valence": 50.0, "stress": 20.0}}
 {"type": "play_gesture", "timestamp": 1718000000.0, "payload": {"clip": "greet", "loop": false}}
 {"type": "config_update", "timestamp": 1718000000.0, "payload": {"presence": {}, "shortcuts": {}}}

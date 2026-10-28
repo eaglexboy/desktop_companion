@@ -107,7 +107,12 @@ def build_app_state(settings: Settings | None = None) -> AppState:
     def _get_presence_state() -> PresenceState:
         return desktop_bridge.state if desktop_bridge is not None else PresenceState.ACTIVE
 
-    evolution = AvatarEvolution(settings, store, local_pool, get_presence_state=_get_presence_state)
+    async def _on_appearance_progress(payload: dict) -> None:
+        await _handle_appearance_progress(state_holder["state"], payload)
+
+    evolution = AvatarEvolution(
+        settings, store, local_pool, get_presence_state=_get_presence_state, on_progress=_on_appearance_progress
+    )
     evolution.wire_tools(router)
 
     tts_pool = build_tts_pool(settings)
@@ -427,6 +432,31 @@ async def _broadcast_set_position(state: AppState, window: WindowState | None, s
     )
 
 
+async def _broadcast_hot_reload(state: AppState) -> None:
+    manifest = load_manifest(state.settings.deploy_dir)
+    manifest_payload = (
+        project_manifest(manifest, include_look_spec_and_warnings=False)
+        if manifest is not None
+        else {"current_version": 0, "versions": []}
+    )
+    current_entry = manifest.current() if manifest is not None else None
+    glb_url = f"/assets/{current_entry.glb_filename}" if current_entry is not None else ""
+    await state.hub.broadcast("hot_reload_asset", {"manifest": manifest_payload, "glb_url": glb_url})
+
+
+async def _handle_appearance_progress(state: AppState, payload: dict) -> None:
+    """Pushes redesign progress to the overlay's status pill. A freshly
+    published look is also hot-reloaded here -- nothing else broadcasts it
+    outside the staged-reveal path. Autonomous (reflection-driven) redesigns
+    stay invisible until they land: no pill for a change nobody asked for."""
+    stage = payload["stage"]
+    if stage == "done":
+        await _broadcast_hot_reload(state)
+    if payload["source"] == "autonomous" and stage != "done":
+        return
+    await state.hub.broadcast("appearance_progress", payload)
+
+
 async def _handle_presence_transition(state: AppState, old_state: PresenceState, new_state: PresenceState) -> None:
     had_staged = state.store.get_agent_state("staged_version") is not None
     await state.evolution.on_presence_transition(old_state, new_state)
@@ -436,15 +466,7 @@ async def _handle_presence_transition(state: AppState, old_state: PresenceState,
         # A staged build was just revealed by the call above; reuse the
         # normal speech pipeline to deliver a verbal reveal greeting
         # rather than a separate one-off mechanism.
-        manifest = load_manifest(state.settings.deploy_dir)
-        manifest_payload = (
-            project_manifest(manifest, include_look_spec_and_warnings=False)
-            if manifest is not None
-            else {"current_version": 0, "versions": []}
-        )
-        current_entry = manifest.current() if manifest is not None else None
-        glb_url = f"/assets/{current_entry.glb_filename}" if current_entry is not None else ""
-        await state.hub.broadcast("hot_reload_asset", {"manifest": manifest_payload, "glb_url": glb_url})
+        await _broadcast_hot_reload(state)
         await _speak(state, "Welcome back! While you were away, I decided to try out a new look. What do you think?")
 
 

@@ -117,6 +117,8 @@ void IpcClient::handleEnvelope(const QString &type, const QVariantMap &payload)
         emit hotReloadAsset(payload.value(QStringLiteral("manifest")).toMap(), payload.value(QStringLiteral("glb_url")).toString());
     } else if (type == QStringLiteral("status_update")) {
         emit statusUpdateReceived(payload);
+    } else if (type == QStringLiteral("appearance_progress")) {
+        emit appearanceProgressReceived(payload);
     } else if (type == QStringLiteral("mood_update")) {
         emit moodUpdateReceived(payload);
     } else if (type == QStringLiteral("play_gesture")) {

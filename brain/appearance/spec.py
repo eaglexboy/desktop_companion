@@ -134,6 +134,23 @@ def _custom_template_exists(deploy_dir: Path, name: str) -> bool:
     return any((custom_dir / f"{name}{ext}").is_file() for ext in (".glb", ".blend"))
 
 
+def template_is_buildable(templates: dict, base_template: str, deploy_dir: Path) -> bool:
+    """A catalog entry only counts if the generator can really build it: Tier
+    3 primitives always can; a Tier 2 standard template needs its asset file
+    under `<deploy_dir>/assets/`. Without it the generator silently falls
+    back to a blob, so offering it only produces a recolour."""
+    entry = templates.get(base_template)
+    if entry is None:
+        return False
+    path = entry.get("path")
+    return path is None or (deploy_dir / "assets" / path).is_file()
+
+
+def buildable_template_ids(deploy_dir: Path) -> list[str]:
+    templates = load_templates_catalog(deploy_dir / "assets" / "catalogs")["templates"]
+    return sorted(t for t in templates if template_is_buildable(templates, t, deploy_dir))
+
+
 def validate_against_catalogs(look_spec: LookSpec, deploy_dir: Path) -> None:
     """Rejects a base_template/wardrobe/accessory value that no catalog (or,
     for Tier 1, no on-disk custom template file) declares -- entirely
@@ -152,6 +169,11 @@ def validate_against_catalogs(look_spec: LookSpec, deploy_dir: Path) -> None:
             )
     elif base_template not in templates:
         raise CatalogError(f"base_template {base_template!r} is not in templates_catalog.json: {sorted(templates)}")
+    elif not template_is_buildable(templates, base_template, deploy_dir):
+        raise CatalogError(
+            f"base_template {base_template!r} has no model installed (expected {templates[base_template]['path']} "
+            f"under {deploy_dir / 'assets'}); buildable: {buildable_template_ids(deploy_dir)}"
+        )
 
     if look_spec.wardrobe.outfit not in wardrobe_catalog["outfits"]:
         raise CatalogError(f"wardrobe.outfit {look_spec.wardrobe.outfit!r} is not in wardrobe_catalog.json")
