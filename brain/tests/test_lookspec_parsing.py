@@ -147,6 +147,13 @@ def test_validate_against_catalogs_accepts_both_humanoid_genders(tmp_path):
         validate_against_catalogs(spec, deploy_dir)  # must not raise
 
 
+def test_validate_against_catalogs_rejects_the_reserved_generated_prefix(tmp_path):
+    deploy_dir = _deploy_with_catalogs(tmp_path)
+    spec = LookSpec.model_validate(_minimal_spec(base_template="generated:jellyfish-1a2b3c4d"))
+    with pytest.raises(CatalogError, match="reserved"):
+        validate_against_catalogs(spec, deploy_dir)
+
+
 def test_validate_against_catalogs_rejects_unknown_base_template(tmp_path):
     deploy_dir = _deploy_with_catalogs(tmp_path)
     spec = LookSpec.model_validate(_minimal_spec(base_template="totally_made_up"))

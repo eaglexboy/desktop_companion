@@ -96,6 +96,10 @@ class LookSpec(_Strict):
     accessories: AccessoriesSpec = Field(default_factory=AccessoriesSpec)
 
 
+# Reserved for model-written body scripts (docs/ADR_GENERATED_BODIES.md, V2+).
+GENERATED_PREFIX = "generated:"
+
+
 class CatalogError(ValueError):
     """Raised when a LookSpec references a base_template/wardrobe/accessory
     value that no catalog or on-disk custom template declares."""
@@ -154,6 +158,11 @@ def validate_against_catalogs(look_spec: LookSpec, deploy_dir: Path) -> None:
     wardrobe_catalog = load_wardrobe_catalog(deploy_dir / "assets" / "catalogs")
 
     base_template = look_spec.base_template
+    if base_template.startswith(GENERATED_PREFIX):
+        raise CatalogError(
+            f"base_template {base_template!r} uses the reserved {GENERATED_PREFIX!r} prefix, "
+            "which is not available yet (docs/ADR_GENERATED_BODIES.md)"
+        )
     if base_template.startswith("custom:"):
         custom_name = base_template[len("custom:") :]
         if not _custom_template_exists(deploy_dir, custom_name):

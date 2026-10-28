@@ -539,3 +539,35 @@ def test_keyword_prefilter_is_off_when_skills_are_enabled(tmp_path):
     settings = _settings(tmp_path)
     settings.skills.enabled = True
     assert build_router(settings)._match_tool_keyword("please change your look for me") is None
+
+
+@pytest.mark.asyncio
+async def test_unmet_note_is_recorded_and_the_closest_look_still_builds(tmp_path, monkeypatch):
+    _install_fake_compile_and_publish(monkeypatch)
+    store = _store(tmp_path)
+    delta_reply = json.dumps({"wardrobe": {"outfit": "hoodie"}, "unmet": "no jellyfish body"})
+    evolution = AvatarEvolution(_settings(tmp_path), store, _pool(delta_reply))
+
+    result = await evolution._run_trigger_a("become a jellyfish")
+
+    assert result is not None and result.outcome == "published"
+    assert any("become a jellyfish" in n.note and "no jellyfish body" in n.note for n in store.recent_memory_notes(limit=10))
+
+
+@pytest.mark.asyncio
+async def test_invented_option_fails_clearly_and_is_recorded_as_unmet(tmp_path, monkeypatch):
+    _install_fake_compile_and_publish(monkeypatch)
+    store = _store(tmp_path)
+    stages: list[dict] = []
+
+    async def hook(payload: dict) -> None:
+        stages.append(payload)
+
+    bad_reply = json.dumps({"base_template": "jellyfish"})
+    evolution = AvatarEvolution(_settings(tmp_path), store, _pool(bad_reply), on_progress=hook)
+
+    assert await evolution._run_trigger_a("become a jellyfish") is None
+
+    assert stages[-1]["stage"] == "failed"
+    assert "don't have the parts" in stages[-1]["error"]
+    assert any("jellyfish" in n.note for n in store.recent_memory_notes(limit=10))

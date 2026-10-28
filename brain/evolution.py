@@ -33,6 +33,7 @@ from brain.appearance.manifest import (
     save_manifest,
 )
 from brain.appearance.spec import (
+    CatalogError,
     LookSpec,
     available_custom_templates,
     ensure_catalogs_seeded,
@@ -75,6 +76,10 @@ Available footwear: {footwear}
 Available accessories per socket: {accessories}
 {budget_block}
 Context for this change: {trigger_context}
+
+Use only the options listed above. If what was asked for cannot be done with \
+them, still pick the closest options and add "unmet": "<one sentence: what is \
+missing>" -- never invent an option name.
 
 Respond with ONLY compact JSON representing the delta (a partial LookSpec; \
 omit anything unchanged). Example shape:
@@ -199,6 +204,11 @@ class AvatarEvolution:
         self._clock = clock
         self._on_progress = on_progress
         self._background_tasks: set[asyncio.Task] = set()
+        # What the last delta synthesis could not do with the catalogs (the
+        # model's own "unmet" note), and why it last failed -- read by the
+        # caller right after `_synthesize_delta()` returns.
+        self._unmet: str | None = None
+        self._last_error: Exception | None = None
         ensure_catalogs_seeded(settings.deploy_dir)
 
     def wire_tools(self, router: Router) -> None:
@@ -251,6 +261,8 @@ class AvatarEvolution:
         budget_block: str = "",
         allow_base_template_change: bool = True,
     ) -> dict | None:
+        self._unmet = None
+        self._last_error = None
         if self._local_pool.is_empty:
             logger.warning("no local LLM pool configured, cannot synthesize an appearance delta")
             return None
@@ -276,15 +288,18 @@ class AvatarEvolution:
                 delta = json.loads(_extract_json_object(raw))
                 if not isinstance(delta, dict):
                     raise TypeError(f"expected a JSON object, got {type(delta).__name__}")
+                unmet = delta.pop("unmet", None)
                 if not allow_base_template_change:
                     delta.pop("base_template", None)
                 if budget_block:
                     delta = cap_delta_budget(delta, _MAX_AUTONOMOUS_LEAVES)
                 merged = merge_delta(current, delta)
                 validate_against_catalogs(merged, self._settings.deploy_dir)
+                self._unmet = unmet.strip()[:300] if isinstance(unmet, str) and unmet.strip() else None
                 return delta
             except Exception as exc:  # noqa: BLE001 -- a bad delta must never crash the caller
                 last_error = exc
+                self._last_error = exc
                 if attempt == 0:
                     prompt = prompt + _RETRY_SUFFIX.format(error=exc)
 
@@ -334,6 +349,15 @@ class AvatarEvolution:
         self._schedule_background(self._run_trigger_a(request))
         return "I like that idea. Let me put something together..."
 
+    def _record_unmet(self, request: str, missing: str) -> None:
+        """The catalogs could not express (all of) a request. Surfaced as an
+        event and a memory note so the companion knows what it wanted and a
+        later version (docs/ADR_GENERATED_BODIES.md) has real requests to
+        design against; nothing here changes how the look is built."""
+        emit("appearance.unmet", {"request": request, "missing": missing})
+        logger.info("appearance request not fully expressible with the catalogs: %s (%s)", request, missing)
+        self._store.add_memory_note(f"Couldn't fully do an appearance request ({request!r}): {missing}")
+
     async def _run_trigger_a(self, request: str) -> CompileResult | None:
         current = self.current_look_spec()
         await self._progress("designing", "user", request=request)
@@ -343,8 +367,16 @@ class AvatarEvolution:
             # put something together"); the failed stage is what tells the
             # user, via the overlay's status pill.
             logger.info("Trigger A: could not synthesize a valid delta for request=%r", request)
-            await self._progress("failed", "user", error="couldn't come up with a valid design")
+            if isinstance(self._last_error, CatalogError):
+                # The model reached for an option that does not exist.
+                self._record_unmet(request, str(self._last_error))
+                error = "I don't have the parts to build that yet"
+            else:
+                error = "couldn't come up with a valid design"
+            await self._progress("failed", "user", error=error)
             return None
+        if self._unmet:
+            self._record_unmet(request, self._unmet)
 
         merged = merge_delta(current, delta)
         await self._progress("building", "user", summary=look_summary(merged))
