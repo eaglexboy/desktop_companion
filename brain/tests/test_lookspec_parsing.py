@@ -13,6 +13,7 @@ from brain.appearance.spec import (
     CATALOGS_SEED_DIR,
     CatalogError,
     LookSpec,
+    available_custom_templates,
     ensure_catalogs_seeded,
     example_look_spec,
     look_summary,
@@ -128,11 +129,29 @@ def test_validate_against_catalogs_accepts_known_tier3_template(tmp_path):
     validate_against_catalogs(spec, deploy_dir)  # must not raise
 
 
+def test_available_custom_templates_lists_dropped_in_models(tmp_path):
+    deploy_dir = _deploy_with_catalogs(tmp_path)
+    assert available_custom_templates(deploy_dir) == []
+    custom_dir = deploy_dir / "assets" / "custom_templates"
+    custom_dir.mkdir(parents=True)
+    (custom_dir / "robot.glb").write_bytes(b"glTF")
+    (custom_dir / "cat.blend").write_bytes(b"")
+    (custom_dir / "notes.txt").write_text("not a model")
+    assert available_custom_templates(deploy_dir) == ["custom:cat", "custom:robot"]
+
+
 def test_validate_against_catalogs_accepts_both_humanoid_genders(tmp_path):
     deploy_dir = _deploy_with_catalogs(tmp_path)
     for base_template in ("standard_humanoid_female", "standard_humanoid_male"):
         spec = LookSpec.model_validate(_minimal_spec(base_template=base_template))
         validate_against_catalogs(spec, deploy_dir)  # must not raise
+
+
+def test_validate_against_catalogs_rejects_the_reserved_generated_prefix(tmp_path):
+    deploy_dir = _deploy_with_catalogs(tmp_path)
+    spec = LookSpec.model_validate(_minimal_spec(base_template="generated:jellyfish-1a2b3c4d"))
+    with pytest.raises(CatalogError, match="reserved"):
+        validate_against_catalogs(spec, deploy_dir)
 
 
 def test_validate_against_catalogs_rejects_unknown_base_template(tmp_path):

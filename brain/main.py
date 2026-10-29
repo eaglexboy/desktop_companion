@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 import time
 from contextlib import asynccontextmanager
@@ -28,16 +29,15 @@ from pydantic import BaseModel
 
 from brain.appearance.blender_gen import is_build_running
 from brain.appearance.manifest import load_manifest
-from brain.events import begin_turn, bus, emit
-from brain.skills.agentskills import discover as discover_agent_skills
-from brain.skills.builtin import register_builtin
-from brain.skills.manage import StateChangeError, build_views, change_state, summarize, view_json
-from brain.skills.registry import SkillCall, SkillRegistry
-from brain.skills.reply import FORMAT_REMINDER, REPAIR_PROMPT, is_structured, parse_reply
-from brain.skills.state import SkillStateStore
-from brain.voice.plaintext import to_plain_speech
 from brain.appearance.spec import CatalogError, LookSpec, validate_against_catalogs
-from brain.config import MOOD_NAMES, TRAIT_NAMES, Settings, get_settings, subscribe_if_running
+from brain.config import (
+    MOOD_NAMES,
+    TRAIT_NAMES,
+    Settings,
+    get_settings,
+    subscribe_if_running,
+)
+from brain.events import begin_turn, bus, emit
 from brain.evolution import AvatarEvolution
 from brain.ipc.server import OverlayHub, project_manifest, welcome_config_subset
 from brain.llm_pool import LLMPool, LocalLLMClient
@@ -53,8 +53,26 @@ from brain.presence.placement import (
     is_own_window,
 )
 from brain.router import ReplyFormat, Router, build_router
+from brain.skills.agentskills import discover as discover_agent_skills
+from brain.skills.builtin import register_builtin
+from brain.skills.manage import (
+    StateChangeError,
+    build_views,
+    change_state,
+    summarize,
+    view_json,
+)
+from brain.skills.registry import SkillCall, SkillRegistry
+from brain.skills.reply import (
+    FORMAT_REMINDER,
+    REPAIR_PROMPT,
+    is_structured,
+    parse_reply,
+)
+from brain.skills.state import SkillStateStore
 from brain.voice.delivery import pick_delivery
 from brain.voice.lipsync import RhubarbLipSync, extract_visemes_if_needed
+from brain.voice.plaintext import to_plain_speech
 from brain.voice.stereo import ensure_stereo_wav
 from brain.voice.stt import StreamingSTT, build_stt_coordinator
 from brain.voice.tts import TTSPool, build_tts_pool
@@ -107,7 +125,12 @@ def build_app_state(settings: Settings | None = None) -> AppState:
     def _get_presence_state() -> PresenceState:
         return desktop_bridge.state if desktop_bridge is not None else PresenceState.ACTIVE
 
-    evolution = AvatarEvolution(settings, store, local_pool, get_presence_state=_get_presence_state)
+    async def _on_appearance_progress(payload: dict) -> None:
+        await _handle_appearance_progress(state_holder["state"], payload)
+
+    evolution = AvatarEvolution(
+        settings, store, local_pool, get_presence_state=_get_presence_state, on_progress=_on_appearance_progress
+    )
     evolution.wire_tools(router)
 
     tts_pool = build_tts_pool(settings)
@@ -442,25 +465,78 @@ async def _broadcast_set_position(state: AppState, window: WindowState | None, s
     )
 
 
+async def _broadcast_hot_reload(state: AppState) -> None:
+    manifest = load_manifest(state.settings.deploy_dir)
+    manifest_payload = (
+        project_manifest(manifest, include_look_spec_and_warnings=False)
+        if manifest is not None
+        else {"current_version": 0, "versions": []}
+    )
+    current_entry = manifest.current() if manifest is not None else None
+    glb_url = f"/assets/{current_entry.glb_filename}" if current_entry is not None else ""
+    await state.hub.broadcast("hot_reload_asset", {"manifest": manifest_payload, "glb_url": glb_url})
+
+
+async def _handle_appearance_progress(state: AppState, payload: dict) -> None:
+    """Pushes redesign progress to the overlay's status pill. A freshly
+    published look is also hot-reloaded here -- nothing else broadcasts it
+    outside the staged-reveal path. Autonomous (reflection-driven) redesigns
+    stay invisible until they land: no pill for a change nobody asked for."""
+    stage = payload["stage"]
+    if stage == "done":
+        await _broadcast_hot_reload(state)
+    if payload["source"] == "autonomous" and stage != "done":
+        return
+    await state.hub.broadcast("appearance_progress", payload)
+
+
 async def _handle_presence_transition(state: AppState, old_state: PresenceState, new_state: PresenceState) -> None:
     had_staged = state.store.get_agent_state("staged_version") is not None
     await state.evolution.on_presence_transition(old_state, new_state)
     still_staged = state.store.get_agent_state("staged_version") is not None
 
-    if had_staged and not still_staged and new_state == PresenceState.ACTIVE:
+    revealed = had_staged and not still_staged and new_state == PresenceState.ACTIVE
+    if revealed:
         # A staged build was just revealed by the call above; reuse the
         # normal speech pipeline to deliver a verbal reveal greeting
         # rather than a separate one-off mechanism.
-        manifest = load_manifest(state.settings.deploy_dir)
-        manifest_payload = (
-            project_manifest(manifest, include_look_spec_and_warnings=False)
-            if manifest is not None
-            else {"current_version": 0, "versions": []}
-        )
-        current_entry = manifest.current() if manifest is not None else None
-        glb_url = f"/assets/{current_entry.glb_filename}" if current_entry is not None else ""
-        await state.hub.broadcast("hot_reload_asset", {"manifest": manifest_payload, "glb_url": glb_url})
-        await _speak(state, "Welcome back! While you were away, I decided to try out a new look. What do you think?")
+        await _broadcast_hot_reload(state)
+
+    returned = old_state == PresenceState.AWAY and new_state == PresenceState.ACTIVE
+    greeting = _return_greeting(state, revealed=revealed) if returned else None
+    emit(
+        "presence.transition",
+        {"from": old_state.value, "to": new_state.value, "greeted": greeting is not None, "revealed": revealed},
+    )
+    if greeting is None:
+        return
+    state.store.set_agent_state("last_greeting_timestamp", str(time.time()))
+    await state.hub.broadcast("play_gesture", {"name": "greet", "clip": "greet", "loop": False})
+    await _speak(state, greeting)
+
+
+def _return_greeting(state: AppState, *, revealed: bool) -> str | None:
+    """Text to greet the user with on returning from User_Away, or None when
+    greeting is disabled or still inside the cooldown. A just-revealed look
+    always gets its show-off line (it is news, not a pleasantry), but still
+    counts toward the cooldown."""
+    cfg = state.settings.presence
+    if not cfg.greet_on_return:
+        return None
+    last_raw = state.store.get_agent_state("last_greeting_timestamp")
+    if not revealed and last_raw is not None and time.time() - float(last_raw) < cfg.greet_cooldown_s:
+        return None
+    if revealed:
+        return "Welcome back! While you were away, I decided to try out a new look. What do you think?"
+    hour = time.localtime().tm_hour
+    part = "morning" if hour < 12 else "afternoon" if hour < 18 else "evening"
+    return random.choice(
+        [
+            f"Welcome back! Good {part}.",
+            "Hey, you're back!",
+            f"Good {part}! Ready when you are.",
+        ]
+    )
 
 
 # --- background loops -----------------------------------------------------------

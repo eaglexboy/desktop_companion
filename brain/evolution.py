@@ -16,7 +16,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +33,9 @@ from brain.appearance.manifest import (
     save_manifest,
 )
 from brain.appearance.spec import (
+    CatalogError,
     LookSpec,
+    available_custom_templates,
     ensure_catalogs_seeded,
     example_look_spec,
     load_templates_catalog,
@@ -75,6 +77,10 @@ Available accessories per socket: {accessories}
 {budget_block}
 Context for this change: {trigger_context}
 
+Use only the options listed above. If what was asked for cannot be done with \
+them, still pick the closest options and add "unmet": "<one sentence: what is \
+missing>" -- never invent an option name.
+
 Respond with ONLY compact JSON representing the delta (a partial LookSpec; \
 omit anything unchanged). Example shape:
 {{"wardrobe": {{"outfit": "wizard_robe"}}, "accessories": {{"socket_eyes": "glasses"}}, "palette": {{"primary": "#1E1E2E"}}}}
@@ -85,6 +91,17 @@ _RETRY_SUFFIX = "\n\nYour previous answer was invalid: {error}\nRespond again wi
 _AUTONOMOUS_BUDGET_BLOCK = "Change at most 1 to 3 attributes total. {base_template_clause}\n"
 _BASE_TEMPLATE_ALLOWED_CLAUSE = "You may change \"base_template\" if a new one truly fits."
 _BASE_TEMPLATE_FORBIDDEN_CLAUSE = 'Do NOT include "base_template" in your delta.'
+
+# Stages of one redesign, in order. `done`/`staged`/`failed` are terminal.
+# Mirrored 1:1 by overlay/qml/Main.qml's appearance status pill.
+_PROGRESS_LABELS = {
+    "designing": "Designing a new look...",
+    "building": "Building the 3D model...",
+    "done": "New look ready!",
+    "staged": "New look built, revealing it when you're back",
+    "failed": "Couldn't change my look",
+}
+ProgressHook = Callable[[dict[str, Any]], Awaitable[None]]
 
 _MAX_AUTONOMOUS_LEAVES = 3
 _BASE_TEMPLATE_OPENNESS_THRESHOLD = 85.0
@@ -178,13 +195,20 @@ class AvatarEvolution:
         *,
         get_presence_state: Callable[[], PresenceState] = lambda: PresenceState.ACTIVE,
         clock: Callable[[], float] = time.time,
+        on_progress: ProgressHook | None = None,
     ) -> None:
         self._settings = settings
         self._store = store
         self._local_pool = local_pool
         self._get_presence_state = get_presence_state
         self._clock = clock
+        self._on_progress = on_progress
         self._background_tasks: set[asyncio.Task] = set()
+        # What the last delta synthesis could not do with the catalogs (the
+        # model's own "unmet" note), and why it last failed -- read by the
+        # caller right after `_synthesize_delta()` returns.
+        self._unmet: str | None = None
+        self._last_error: Exception | None = None
         ensure_catalogs_seeded(settings.deploy_dir)
 
     def wire_tools(self, router: Router) -> None:
@@ -237,6 +261,8 @@ class AvatarEvolution:
         budget_block: str = "",
         allow_base_template_change: bool = True,
     ) -> dict | None:
+        self._unmet = None
+        self._last_error = None
         if self._local_pool.is_empty:
             logger.warning("no local LLM pool configured, cannot synthesize an appearance delta")
             return None
@@ -246,7 +272,7 @@ class AvatarEvolution:
         wardrobe_catalog = load_wardrobe_catalog(catalogs_dir)
         prompt = _DELTA_SYNTHESIS_PROMPT.format(
             current_look_json=current.model_dump_json(),
-            template_ids=", ".join(sorted(templates)),
+            template_ids=", ".join([*sorted(templates), *available_custom_templates(self._settings.deploy_dir)]),
             outfits=", ".join(wardrobe_catalog["outfits"]),
             footwear=", ".join(wardrobe_catalog["footwear"]),
             accessories=wardrobe_catalog["accessories"],
@@ -262,15 +288,18 @@ class AvatarEvolution:
                 delta = json.loads(_extract_json_object(raw))
                 if not isinstance(delta, dict):
                     raise TypeError(f"expected a JSON object, got {type(delta).__name__}")
+                unmet = delta.pop("unmet", None)
                 if not allow_base_template_change:
                     delta.pop("base_template", None)
                 if budget_block:
                     delta = cap_delta_budget(delta, _MAX_AUTONOMOUS_LEAVES)
                 merged = merge_delta(current, delta)
                 validate_against_catalogs(merged, self._settings.deploy_dir)
+                self._unmet = unmet.strip()[:300] if isinstance(unmet, str) and unmet.strip() else None
                 return delta
             except Exception as exc:  # noqa: BLE001 -- a bad delta must never crash the caller
                 last_error = exc
+                self._last_error = exc
                 if attempt == 0:
                     prompt = prompt + _RETRY_SUFFIX.format(error=exc)
 
@@ -284,6 +313,24 @@ class AvatarEvolution:
 
     def _is_user_active(self) -> bool:
         return self._get_presence_state() == PresenceState.ACTIVE
+
+    async def _progress(self, stage: str, source: str, **extra: Any) -> None:
+        """Narrates one redesign stage to the event bus (status page) and the
+        `on_progress` hook (overlay). Observation only: a failing hook must
+        never break the redesign it is reporting on."""
+        payload = {"stage": stage, "label": _PROGRESS_LABELS[stage], "source": source, **extra}
+        emit(f"appearance.{stage}", payload)
+        logger.info("appearance %s (%s)%s", stage, source, f": {extra['error']}" if "error" in extra else "")
+        if self._on_progress is None:
+            return
+        try:
+            await self._on_progress(payload)
+        except Exception:
+            logger.exception("appearance on_progress hook failed for stage %r", stage)
+
+    async def _finish(self, result: CompileResult, source: str) -> None:
+        stage = "done" if result.outcome == "published" else "staged"
+        await self._progress(stage, source, version=result.version)
 
     # --- Trigger A: user-prompted ------------------------------------------
 
@@ -302,26 +349,47 @@ class AvatarEvolution:
         self._schedule_background(self._run_trigger_a(request))
         return "I like that idea. Let me put something together..."
 
+    def _record_unmet(self, request: str, missing: str) -> None:
+        """The catalogs could not express (all of) a request. Surfaced as an
+        event and a memory note so the companion knows what it wanted and a
+        later version (docs/ADR_GENERATED_BODIES.md) has real requests to
+        design against; nothing here changes how the look is built."""
+        emit("appearance.unmet", {"request": request, "missing": missing})
+        logger.info("appearance request not fully expressible with the catalogs: %s (%s)", request, missing)
+        self._store.add_memory_note(f"Couldn't fully do an appearance request ({request!r}): {missing}")
+
     async def _run_trigger_a(self, request: str) -> CompileResult | None:
         current = self.current_look_spec()
+        await self._progress("designing", "user", request=request)
         delta = await self._synthesize_delta(current, trigger_context=request)
         if delta is None:
-            # Logged only, not delivered as a follow-up utterance -- a
-            # real gap: the caller already replied with "let me put
-            # something together," so a silent failure here leaves the
-            # user without any indication it didn't actually happen.
+            # No spoken follow-up (the caller already replied with "let me
+            # put something together"); the failed stage is what tells the
+            # user, via the overlay's status pill.
             logger.info("Trigger A: could not synthesize a valid delta for request=%r", request)
+            if isinstance(self._last_error, CatalogError):
+                # The model reached for an option that does not exist.
+                self._record_unmet(request, str(self._last_error))
+                error = "I don't have the parts to build that yet"
+            else:
+                error = "couldn't come up with a valid design"
+            await self._progress("failed", "user", error=error)
             return None
+        if self._unmet:
+            self._record_unmet(request, self._unmet)
 
         merged = merge_delta(current, delta)
+        await self._progress("building", "user", summary=look_summary(merged))
         try:
             result = await compile_and_publish(self._settings, merged, is_user_present=lambda: True)
-        except Exception:
+        except Exception as exc:
             # This runs as a detached background task (see
             # change_appearance()) -- an uncaught exception here would
             # otherwise only surface via asyncio's default handler.
             logger.exception("Trigger A: compile_and_publish failed for request=%r", request)
+            await self._progress("failed", "user", error=str(exc)[:200])
             return None
+        await self._finish(result, "user")
         if result.outcome == "published":
             self._stamp_redesign_metadata(current, merged)
             self._store.add_memory_note(f"Changed appearance at the user's request: {look_summary(merged)}.")
@@ -337,11 +405,14 @@ class AvatarEvolution:
         reveal, same as Trigger A -- a direct API call implies an operator
         is watching for the result."""
         current = self.current_look_spec()
+        await self._progress("building", "api", summary=look_summary(look_spec))
         try:
             result = await compile_and_publish(self._settings, look_spec, is_user_present=lambda: True)
-        except Exception:
+        except Exception as exc:
             logger.exception("generate_from_full_spec: compile_and_publish failed")
+            await self._progress("failed", "api", error=str(exc)[:200])
             return None
+        await self._finish(result, "api")
         if result.outcome == "published":
             self._stamp_redesign_metadata(current, look_spec)
             self._store.add_memory_note(f"Appearance set directly via the API: {look_summary(look_spec)}.")
@@ -390,6 +461,7 @@ class AvatarEvolution:
         if bias_lines:
             budget_block = "\n".join(bias_lines) + "\n" + budget_block
 
+        await self._progress("designing", "autonomous")
         delta = await self._synthesize_delta(
             current,
             trigger_context="An autonomous personality-driven reflection cycle.",
@@ -398,18 +470,22 @@ class AvatarEvolution:
         )
         if delta is None:
             logger.info("Trigger B: could not synthesize a valid delta this cycle")
+            await self._progress("failed", "autonomous", error="couldn't come up with a valid design")
             return
 
         merged = merge_delta(current, delta)
+        await self._progress("building", "autonomous", summary=look_summary(merged))
         try:
             result = await compile_and_publish(self._settings, merged, is_user_present=self._is_user_active)
-        except Exception:
+        except Exception as exc:
             # Called directly from reflect.maybe_trigger_autonomous_redesign()
             # -- an uncaught exception here would propagate into the
             # reflection loop itself, not just this one cycle.
             logger.exception("Trigger B: compile_and_publish failed")
+            await self._progress("failed", "autonomous", error=str(exc)[:200])
             return
 
+        await self._finish(result, "autonomous")
         if result.outcome == "published":
             self._stamp_redesign_metadata(current, merged)
             self._store.add_memory_note(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 
-from brain.events import EventBus, begin_turn, emit, bus
+from brain.events import EventBus, begin_turn, bus, emit
 from brain.personality.state import PersonalityStore
 
 

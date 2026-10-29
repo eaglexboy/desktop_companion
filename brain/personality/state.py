@@ -18,12 +18,15 @@ to work at all.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from brain.events import emit
+
+logger = logging.getLogger("deskmate.personality")
 
 # Longest raw model reply kept per assistant turn (replies are a few hundred
 # characters; this only stops a runaway generation filling the database).
@@ -158,8 +161,8 @@ class PersonalityStore:
                         [(now, kind, n, v) for n, v in values.items()],
                     )
                 self._last_snapshot[kind] = (now, dict(values))
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception:
+            logger.debug("could not record personality history", exc_info=True)
 
     def _seed(self, trait_names: tuple[str, ...], mood_names: tuple[str, ...], identity_name: str) -> None:
         now = time.time()

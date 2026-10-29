@@ -88,44 +88,68 @@ def test_tier3_generation(tmp_path):
     assert build_json["evaluated_triangles"] > 0
 
 
-def test_humanoid_base_templates_fall_back_to_tier3_when_no_asset_exists(tmp_path):
-    """No real standard_humanoid_{female,male}.glb exists in this environment
-    (deferred content-authoring task), so both gendered identifiers should
-    resolve the same way primitive_blob does today -- a procedural Tier 3
-    build, not a crash -- confirming resolve_template() handles the male
-    identifier exactly like the female one (see generator.py's
-    resolve_template()). No file is found at all here, so this hits
-    resolve_template()'s "missing Tier 2 file" branch (imported=False),
-    not main()'s separate "found but not yet integrated" warning path --
-    that path is covered by test_imported_tier2_asset_falls_back_with_warning."""
+def test_humanoid_base_templates_build_a_procedural_humanoid_when_no_model_exists(tmp_path):
+    """With no standard_humanoid_{female,male}.glb installed, the generator
+    builds its own humanoid: a head, two arms and two legs, rigged -- not the
+    blob it used to quietly substitute."""
     for base_template in ("standard_humanoid_female", "standard_humanoid_male"):
         result, out_path, build_json = _compile(_minimal_spec(base_template=base_template), tmp_path, base_template)
         assert result.returncode == 0, result.stderr
         assert out_path.is_file()
         assert build_json["status"] == "ok"
+        assert build_json["capabilities"] == {"has_head": True, "has_arms": True, "has_legs": True, "has_face": True}
+        assert build_json["warnings"] == []
 
 
-def test_imported_tier2_asset_falls_back_with_warning(tmp_path):
-    """When a standard_humanoid_male.glb file DOES exist under deploy_dir,
-    resolve_template() reports imported=True, but main() currently discards
-    that import and rebuilds Tier 3 procedurally instead (documented
-    limitation: no real Tier 1/2 integration exists yet to test against).
-    This exercises that branch specifically for the male identifier, not
-    just the file-missing branch covered above."""
-    deploy_dir = tmp_path / "deploy"
-    base_templates_dir = deploy_dir / "assets" / "base_templates"
+def test_blob_has_no_limbs(tmp_path):
+    _, _, build_json = _compile(_minimal_spec(), tmp_path)
+    assert build_json["capabilities"]["has_arms"] is False
+    assert build_json["capabilities"]["has_legs"] is False
+
+
+def test_installed_model_is_used_not_discarded(tmp_path):
+    """A rigged model dropped in as standard_humanoid_male.glb becomes the
+    body: it keeps its own limbs and lip-sync, and is scaled to house height."""
+    _, source_glb, _ = _compile(_minimal_spec(base_template="standard_humanoid_female"), tmp_path, "source")
+    base_templates_dir = tmp_path / "deploy" / "assets" / "base_templates"
+    base_templates_dir.mkdir(parents=True)
+    shutil.copy(source_glb, base_templates_dir / "standard_humanoid_male.glb")
+
+    result, _, build_json = _compile(_minimal_spec(base_template="standard_humanoid_male"), tmp_path, "used")
+    assert result.returncode == 0, result.stderr
+    assert build_json["status"] == "ok"
+    assert build_json["capabilities"] == {"has_head": True, "has_arms": True, "has_legs": True, "has_face": True}
+    assert len(build_json["viseme_shape_keys"]) == 9
+    assert build_json["bounds"]["height_m"] == pytest.approx(2.5, abs=0.01)
+    assert not any("procedurally" in w for w in build_json["warnings"])
+
+
+def test_installed_model_without_a_face_builds_faceless(tmp_path):
+    """A model with no viseme shape keys is built with the talk_pulse speech
+    indicator, and the build's own has_face says so."""
+    _, source_glb, _ = _compile(_minimal_spec(base_template="primitive_mechanical", has_face=False), tmp_path, "source")
+    custom_dir = tmp_path / "deploy" / "assets" / "custom_templates"
+    custom_dir.mkdir(parents=True)
+    shutil.copy(source_glb, custom_dir / "bot.glb")
+
+    result, _, build_json = _compile(_minimal_spec(base_template="custom:bot", has_face=True), tmp_path, "used")
+    assert result.returncode == 0, result.stderr
+    assert build_json["has_face"] is False
+    assert build_json["speech_indicator_mode"] == "talk_pulse"
+    assert any("no viseme shape keys" in w for w in build_json["warnings"])
+
+
+def test_unusable_installed_model_falls_back_to_procedural_with_warning(tmp_path):
+    """A model file with no mesh in it must not fail the build."""
+    base_templates_dir = tmp_path / "deploy" / "assets" / "base_templates"
     base_templates_dir.mkdir(parents=True)
     (base_templates_dir / "standard_humanoid_male.glb").write_bytes(_minimal_valid_glb_bytes())
 
-    spec_path = tmp_path / "look.json"
-    spec_path.write_text(json.dumps(_minimal_spec(base_template="standard_humanoid_male")))
-    out_path = tmp_path / "look.glb"
-    result = _run_generator("--spec", str(spec_path), "--out", str(out_path), "--deploy-dir", str(deploy_dir))
-    build_json = json.loads(out_path.with_suffix(".build.json").read_text())
-
+    result, out_path, build_json = _compile(_minimal_spec(base_template="standard_humanoid_male"), tmp_path)
     assert result.returncode == 0, result.stderr
     assert build_json["status"] == "ok"
-    assert any("building Tier 3 procedurally instead" in w for w in build_json["warnings"])
+    assert any("building procedurally instead" in w for w in build_json["warnings"])
+    assert build_json["capabilities"]["has_legs"] is True
     assert build_json["size_bytes"] == out_path.stat().st_size
 
 

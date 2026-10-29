@@ -31,7 +31,7 @@ def _run(cfg: Path, **env):
     import os
 
     return subprocess.run(
-        [str(SCRIPT)], capture_output=True, text=True, timeout=60,
+        [str(SCRIPT)], capture_output=True, text=True, timeout=60, check=False,
         env={**os.environ, "DESKMATE_CONFIG_FILE": str(cfg), "DESKMATE_BACKUP_DIR": "", **env},
     )
 

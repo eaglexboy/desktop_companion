@@ -16,7 +16,13 @@ import pytest
 
 import brain.evolution as evolution_module
 from brain.appearance.blender_gen import CompileResult
-from brain.appearance.manifest import append_version, load_manifest, save_manifest
+from brain.appearance.manifest import (
+    AssetManifest,
+    AssetVersionEntry,
+    append_version,
+    load_manifest,
+    save_manifest,
+)
 from brain.appearance.spec import LookSpec, PaletteSpec, WardrobeSpec
 from brain.config import MOOD_NAMES, TRAIT_NAMES, Settings
 from brain.evolution import (
@@ -96,6 +102,25 @@ def _build_json(**overrides) -> dict:
     }
     payload.update(overrides)
     return payload
+
+
+def _manifest(settings: Settings) -> AssetManifest:
+    """`load_manifest` is Optional; tests that dereference it expect one to exist."""
+    manifest = load_manifest(settings.deploy_dir)
+    assert manifest is not None
+    return manifest
+
+
+def _current_entry(manifest: AssetManifest) -> AssetVersionEntry:
+    entry = manifest.current()
+    assert entry is not None
+    return entry
+
+
+def _version_entry(manifest: AssetManifest, version: int) -> AssetVersionEntry:
+    entry = manifest.get_version(version)
+    assert entry is not None
+    return entry
 
 
 def _install_fake_compile_and_publish(monkeypatch) -> None:
@@ -196,11 +221,57 @@ async def test_trigger_a_full_cycle_publishes_and_updates_agent_state(tmp_path, 
 
     assert result is not None
     assert result.outcome == "published"
-    manifest = load_manifest(settings.deploy_dir)
+    manifest = _manifest(settings)
     assert manifest.current_version == 1
-    assert manifest.current().look_spec["wardrobe"]["outfit"] == "wizard_robe"
+    assert _current_entry(manifest).look_spec["wardrobe"]["outfit"] == "wizard_robe"
     assert store.get_agent_state("last_redesign_timestamp") is not None
     assert store.get_agent_state("staged_version") is None
+
+
+@pytest.mark.asyncio
+async def test_trigger_a_reports_progress_stages_in_order(tmp_path, monkeypatch):
+    _install_fake_compile_and_publish(monkeypatch)
+    stages: list[dict] = []
+
+    async def hook(payload: dict) -> None:
+        stages.append(payload)
+
+    delta_reply = json.dumps({"wardrobe": {"outfit": "wizard_robe"}})
+    evolution = AvatarEvolution(_settings(tmp_path), _store(tmp_path), _pool(delta_reply), on_progress=hook)
+
+    await evolution._run_trigger_a("put on a wizard robe")
+
+    assert [p["stage"] for p in stages] == ["designing", "building", "done"]
+    assert all(p["source"] == "user" for p in stages)
+    assert stages[-1]["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_trigger_a_reports_failure_when_no_valid_delta(tmp_path, monkeypatch):
+    _install_fake_compile_and_publish(monkeypatch)
+    stages: list[dict] = []
+
+    async def hook(payload: dict) -> None:
+        stages.append(payload)
+
+    evolution = AvatarEvolution(_settings(tmp_path), _store(tmp_path), _pool("not json"), on_progress=hook)
+
+    assert await evolution._run_trigger_a("become a humanoid") is None
+    assert [p["stage"] for p in stages] == ["designing", "failed"]
+
+
+@pytest.mark.asyncio
+async def test_a_raising_progress_hook_never_breaks_the_redesign(tmp_path, monkeypatch):
+    _install_fake_compile_and_publish(monkeypatch)
+
+    async def hook(_payload: dict) -> None:
+        raise RuntimeError("overlay gone")
+
+    delta_reply = json.dumps({"wardrobe": {"outfit": "hoodie"}})
+    evolution = AvatarEvolution(_settings(tmp_path), _store(tmp_path), _pool(delta_reply), on_progress=hook)
+
+    result = await evolution._run_trigger_a("put on a hoodie")
+    assert result is not None and result.outcome == "published"
 
 
 @pytest.mark.asyncio
@@ -217,7 +288,7 @@ async def test_trigger_a_tool_handler_replies_immediately_and_schedules_backgrou
 
     assert len(evolution._background_tasks) == 1
     await next(iter(evolution._background_tasks))
-    assert load_manifest(settings.deploy_dir).current_version == 1
+    assert _manifest(settings).current_version == 1
 
 
 @pytest.mark.asyncio
@@ -272,11 +343,11 @@ async def test_revert_appearance_rewrites_manifest_pointer_only(tmp_path, monkey
 
     await evolution._run_trigger_a("put on a hoodie")
     await evolution._run_trigger_a("put on a vest")
-    assert load_manifest(settings.deploy_dir).current_version == 2
+    assert _manifest(settings).current_version == 2
 
     reply = await evolution.revert_appearance()
     assert "hoodie" in reply.lower() or "back to how i looked" in reply.lower()
-    manifest = load_manifest(settings.deploy_dir)
+    manifest = _manifest(settings)
     assert manifest.current_version == 1
     assert len(manifest.versions) == 2  # revert doesn't delete history
 
@@ -304,10 +375,10 @@ async def test_trigger_b_stages_when_user_away_then_reveals_on_return(tmp_path, 
     # user returns -> Away/Idle -> Active transition
     await evolution.on_presence_transition(PresenceState.AWAY, PresenceState.ACTIVE)
 
-    manifest = load_manifest(settings.deploy_dir)
+    manifest = _manifest(settings)
     assert manifest is not None
     assert manifest.current_version == 1
-    assert manifest.current().look_spec["wardrobe"]["outfit"] == "lab_coat"
+    assert _current_entry(manifest).look_spec["wardrobe"]["outfit"] == "lab_coat"
     assert store.get_agent_state("staged_version") is None
     assert store.get_agent_state("last_redesign_timestamp") is not None
 
@@ -322,7 +393,7 @@ async def test_trigger_b_publishes_immediately_when_user_already_active(tmp_path
 
     await evolution.trigger_b_on_eligible()
 
-    manifest = load_manifest(settings.deploy_dir)
+    manifest = _manifest(settings)
     assert manifest.current_version == 1
     assert store.get_agent_state("staged_version") is None
     assert store.get_agent_state("last_redesign_timestamp") is not None
@@ -382,13 +453,13 @@ async def test_handle_asset_swap_failure_rolls_back_and_marks_corrupted(tmp_path
     )
     await evolution._run_trigger_a("put on a hoodie")
     await evolution._run_trigger_a("put on a vest")
-    assert load_manifest(settings.deploy_dir).current_version == 2
+    assert _manifest(settings).current_version == 2
 
     evolution.handle_asset_swap_failure(2)
 
-    manifest = load_manifest(settings.deploy_dir)
+    manifest = _manifest(settings)
     assert manifest.current_version == 1
-    assert manifest.get_version(2).status == "corrupted"
+    assert _version_entry(manifest, 2).status == "corrupted"
 
 
 def test_handle_asset_swap_failure_on_fresh_install_does_not_crash(tmp_path, monkeypatch, caplog):
@@ -402,9 +473,9 @@ def test_handle_asset_swap_failure_on_fresh_install_does_not_crash(tmp_path, mon
 
     evolution.handle_asset_swap_failure(1)  # no N-1 to fall back to
 
-    result_manifest = load_manifest(settings.deploy_dir)
+    result_manifest = _manifest(settings)
     assert result_manifest.current_version == 1  # unchanged, just marked
-    assert result_manifest.get_version(1).status == "corrupted"
+    assert _version_entry(result_manifest, 1).status == "corrupted"
 
 
 # --- full integration with reflect.py's real eligibility gate -----------------
@@ -431,8 +502,8 @@ async def test_full_trigger_b_wired_through_real_reflect_eligibility_gate(tmp_pa
     )
 
     assert fired is True
-    manifest = load_manifest(settings.deploy_dir)
-    assert manifest is not None and manifest.current().look_spec["wardrobe"]["outfit"] == "armor_light"
+    manifest = _manifest(settings)
+    assert manifest is not None and _current_entry(manifest).look_spec["wardrobe"]["outfit"] == "armor_light"
 
 
 # --- wiring into the real Router (replacing router.py's stubs) ----------------
@@ -450,6 +521,7 @@ async def test_wire_tools_replaces_router_stubs_end_to_end(tmp_path, monkeypatch
     delta_reply = json.dumps({"wardrobe": {"outfit": "hoodie"}})
     evolution = AvatarEvolution(settings, store, _pool(delta_reply))
 
+    settings.skills.enabled = False  # the keyword pre-filter only runs when the model can't call tools itself
     router = build_router(settings)
     evolution.wire_tools(router)
 
@@ -460,4 +532,42 @@ async def test_wire_tools_replaces_router_stubs_end_to_end(tmp_path, monkeypatch
     # the background compile scheduled by the real handler should still complete
     assert len(evolution._background_tasks) == 1
     await next(iter(evolution._background_tasks))
-    assert load_manifest(settings.deploy_dir).current_version == 1
+    assert _manifest(settings).current_version == 1
+
+
+def test_keyword_prefilter_is_off_when_skills_are_enabled(tmp_path):
+    settings = _settings(tmp_path)
+    settings.skills.enabled = True
+    assert build_router(settings)._match_tool_keyword("please change your look for me") is None
+
+
+@pytest.mark.asyncio
+async def test_unmet_note_is_recorded_and_the_closest_look_still_builds(tmp_path, monkeypatch):
+    _install_fake_compile_and_publish(monkeypatch)
+    store = _store(tmp_path)
+    delta_reply = json.dumps({"wardrobe": {"outfit": "hoodie"}, "unmet": "no jellyfish body"})
+    evolution = AvatarEvolution(_settings(tmp_path), store, _pool(delta_reply))
+
+    result = await evolution._run_trigger_a("become a jellyfish")
+
+    assert result is not None and result.outcome == "published"
+    assert any("become a jellyfish" in n.note and "no jellyfish body" in n.note for n in store.recent_memory_notes(limit=10))
+
+
+@pytest.mark.asyncio
+async def test_invented_option_fails_clearly_and_is_recorded_as_unmet(tmp_path, monkeypatch):
+    _install_fake_compile_and_publish(monkeypatch)
+    store = _store(tmp_path)
+    stages: list[dict] = []
+
+    async def hook(payload: dict) -> None:
+        stages.append(payload)
+
+    bad_reply = json.dumps({"base_template": "jellyfish"})
+    evolution = AvatarEvolution(_settings(tmp_path), store, _pool(bad_reply), on_progress=hook)
+
+    assert await evolution._run_trigger_a("become a jellyfish") is None
+
+    assert stages[-1]["stage"] == "failed"
+    assert "don't have the parts" in stages[-1]["error"]
+    assert any("jellyfish" in n.note for n in store.recent_memory_notes(limit=10))

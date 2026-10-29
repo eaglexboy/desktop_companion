@@ -55,6 +55,7 @@ qt_add_qml_module(deskmate_overlay
         qml/Avatar3D.qml
         qml/InteractionBar.qml
         qml/SpeechBubble.qml
+        qml/AppearanceStatus.qml
         qml/IdleBehaviors.qml
     RESOURCES
         assets/placeholder/look.glb

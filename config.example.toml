@@ -234,6 +234,8 @@ show_speech_bubble = true
 margin_px = 24
 display_affinity = "secondary"            # "primary", "secondary", "auto"
 idle_after_s = 600                        # Inactivity seconds to trigger User_Idle state
+greet_on_return = true                    # Greet (speech + wave) when you return from User_Away (unlock / login)
+greet_cooldown_s = 1800                   # Minimum seconds between greetings
 
 [shortcuts]
 toggle_interaction = "Meta+Alt+D"         # Opens / dismisses the floating input bar
@@ -257,6 +259,8 @@ keep_recent_versions = 3                  # Number of recent .glb build revision
 redesign_cooldown_hours_min = 12          # Minimum cooldown between autonomous redesigns
 redesign_cooldown_hours_max = 24          # Maximum cooldown between autonomous redesigns
 autonomous_redesign_probability = 0.5     # Chance of triggering redesign on eligible reflection cycle
+# Reserved for V2+ (docs/ADR_GENERATED_BODIES.md); not read by V1:
+# allow_generated_bodies = false          # Let the model write sandboxed Blender code for a body the catalogs lack
 
 # Standalone status page (separate process; see status_page/). Open
 # http://<host>:<port>/ in a browser. Keep host on 127.0.0.1: it shows chat history and logs.
