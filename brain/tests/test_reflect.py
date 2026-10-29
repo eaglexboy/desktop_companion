@@ -212,3 +212,25 @@ async def test_trigger_b_skipped_when_probability_roll_fails(tmp_path, monkeypat
 
     assert fired is False
     assert called == []
+
+
+@pytest.mark.asyncio
+async def test_trigger_b_reports_why_it_did_or_did_not_fire(tmp_path, monkeypatch):
+    from brain.events import bus
+
+    async def on_eligible():
+        return None
+
+    def outcomes() -> list[str]:
+        return [e["data"]["outcome"] for e in bus.since(0) if e["type"] == "autonomous.check"]
+
+    store = _store(tmp_path)
+    before = len(outcomes())
+    await maybe_trigger_autonomous_redesign(
+        store, on_eligible=on_eligible, **_gate_kwargs(is_user_interacting=lambda: True)
+    )
+    await maybe_trigger_autonomous_redesign(
+        store, on_eligible=on_eligible, **_gate_kwargs(autonomous_redesign_probability=0.0)
+    )
+    await maybe_trigger_autonomous_redesign(store, on_eligible=on_eligible, **_gate_kwargs())
+    assert outcomes()[before:] == ["user_interacting", "roll_failed", "triggered"]

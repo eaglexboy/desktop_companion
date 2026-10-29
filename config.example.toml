@@ -234,6 +234,8 @@ show_speech_bubble = true
 margin_px = 24
 display_affinity = "secondary"            # "primary", "secondary", "auto"
 idle_after_s = 600                        # Inactivity seconds to trigger User_Idle state
+greet_on_return = true                    # Greet (speech + wave) when you return from User_Away (unlock / login)
+greet_cooldown_s = 1800                   # Minimum seconds between greetings
 
 [shortcuts]
 toggle_interaction = "Meta+Alt+D"         # Opens / dismisses the floating input bar

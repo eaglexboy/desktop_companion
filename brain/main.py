@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 import time
 from contextlib import asynccontextmanager
@@ -479,12 +480,48 @@ async def _handle_presence_transition(state: AppState, old_state: PresenceState,
     await state.evolution.on_presence_transition(old_state, new_state)
     still_staged = state.store.get_agent_state("staged_version") is not None
 
-    if had_staged and not still_staged and new_state == PresenceState.ACTIVE:
+    revealed = had_staged and not still_staged and new_state == PresenceState.ACTIVE
+    if revealed:
         # A staged build was just revealed by the call above; reuse the
         # normal speech pipeline to deliver a verbal reveal greeting
         # rather than a separate one-off mechanism.
         await _broadcast_hot_reload(state)
-        await _speak(state, "Welcome back! While you were away, I decided to try out a new look. What do you think?")
+
+    returned = old_state == PresenceState.AWAY and new_state == PresenceState.ACTIVE
+    greeting = _return_greeting(state, revealed=revealed) if returned else None
+    emit(
+        "presence.transition",
+        {"from": old_state.value, "to": new_state.value, "greeted": greeting is not None, "revealed": revealed},
+    )
+    if greeting is None:
+        return
+    state.store.set_agent_state("last_greeting_timestamp", str(time.time()))
+    await state.hub.broadcast("play_gesture", {"name": "greet", "clip": "greet", "loop": False})
+    await _speak(state, greeting)
+
+
+def _return_greeting(state: AppState, *, revealed: bool) -> str | None:
+    """Text to greet the user with on returning from User_Away, or None when
+    greeting is disabled or still inside the cooldown. A just-revealed look
+    always gets its show-off line (it is news, not a pleasantry), but still
+    counts toward the cooldown."""
+    cfg = state.settings.presence
+    if not cfg.greet_on_return:
+        return None
+    last_raw = state.store.get_agent_state("last_greeting_timestamp")
+    if not revealed and last_raw is not None and time.time() - float(last_raw) < cfg.greet_cooldown_s:
+        return None
+    if revealed:
+        return "Welcome back! While you were away, I decided to try out a new look. What do you think?"
+    hour = time.localtime().tm_hour
+    part = "morning" if hour < 12 else "afternoon" if hour < 18 else "evening"
+    return random.choice(
+        [
+            f"Welcome back! Good {part}.",
+            "Hey, you're back!",
+            f"Good {part}! Ready when you are.",
+        ]
+    )
 
 
 # --- background loops -----------------------------------------------------------
