@@ -297,6 +297,20 @@ class PersonalityStore:
                 )
         return interaction_id
 
+    def recent_conversation(self, limit: int = 12, max_age_s: float = 3600.0) -> list[dict[str, str]]:
+        """The latest chat turns, oldest first, as LLM messages. Call before
+        logging the current user turn. Turns older than `max_age_s` are
+        dropped (a new conversation, not a continuation), and the window
+        always starts on a user turn since some providers reject otherwise."""
+        rows = self._conn.execute(
+            "SELECT role, text FROM interactions WHERE ts >= ? ORDER BY id DESC LIMIT ?",
+            (time.time() - max_age_s, limit),
+        ).fetchall()
+        messages = [{"role": r["role"], "content": r["text"]} for r in reversed(rows)]
+        while messages and messages[0]["role"] != "user":
+            messages.pop(0)
+        return messages
+
     def pending_interactions(self, limit: int = 200) -> list[sqlite3.Row]:
         return self._conn.execute(
             "SELECT * FROM interactions WHERE reflected = 0 ORDER BY ts ASC LIMIT ?", (limit,)
