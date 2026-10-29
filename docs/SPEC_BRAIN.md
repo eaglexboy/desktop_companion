@@ -34,6 +34,7 @@ The daemon exposes an asynchronous WebSocket IPC endpoint and an administrative 
 * **Multi-Client & Remote Access:** Local loopback only (`127.0.0.1:8765`), secured against browser-origin hijacking. Private mesh networking (Tailscale) and mobile PWA access are defined in [ADR_NETWORK_AND_MOBILE_STRATEGY.md](ADR_NETWORK_AND_MOBILE_STRATEGY.md).
 * **Autonomous Voice Selection & Cloning:** V1 implements baseline voice synthesis and interface accommodations; autonomous acoustic evolution is defined in [ADR_AUTONOMOUS_VOICE_SELECTION.md](ADR_AUTONOMOUS_VOICE_SELECTION.md).
 * **Skills & Sub-Agent Orchestration:** V1 reserves tool registration hooks, concurrency configuration keys (`max_parallel_slots`, `max_concurrency`, `max_script_workers`), and task state event schemas; deterministic script DAGs and cognitive sub-agents governed by the Inference Capacity Governor (ICG) are defined in [ADR_SKILLS_AND_AGENT_ORCHESTRATION.md](ADR_SKILLS_AND_AGENT_ORCHESTRATION.md). Third-party skills follow the open Agent Skills (`SKILL.md`) standard; V1 parses, vets and lists them (`brain/skills/agentskills.py`, `importer.py`, `safety.py`; `GET /api/skills` -> `installed`/`rejected`/`budget`) but never executes them or puts them in the prompt. Each skill is enabled/disabled and pinned through `python -m brain.skills.manage` or `POST /api/skills/state` (state in `skill_state`, `brain/skills/state.py`; imports start disabled; enabling needs a typed or clicked confirmation, a flagged skill its name typed; the model cannot reach either). `[llm.*] context_tokens` on every backend sizes the skills prompt budget (`brain/skills/context.py`). MCP tool servers are deferred: [ADR_MCP_INTEGRATION.md](ADR_MCP_INTEGRATION.md).
+* **Model-Written Body Scripts:** When the template/wardrobe catalogs cannot express a requested look, V1 records what was missing (`appearance.unmet` event and a memory note) and builds the closest catalog look. Having the model write sandboxed Blender code for a new body is defined in [ADR_GENERATED_BODIES.md](ADR_GENERATED_BODIES.md); the `generated:` template prefix is reserved.
 * **Dedicated Configuration GUI:** Direct editing of standard XDG TOML files (`config.toml`).
 
 ---
@@ -367,7 +368,7 @@ Governed by [DESIGN_AVATAR_EVOLUTION_FLOW.md](DESIGN_AVATAR_EVOLUTION_FLOW.md):
   * `org.freedesktop.login1.Session` (`LockedHint`, `IdleHint`).
 * State Machine:
   * **`User_Away`:** Screensaver active, session locked, or display sleeping.
-  * **`User_Idle`:** No window/pointer activity for $> \text{idle\_after\_s}$ (default 10m).
+  * **`User_Idle`:** No window/pointer activity for longer than `idle_after_s` (default 10m).
   * **`User_Active`:** Active window interaction and unlocked session.
 
 ### 2. Non-Intrusive Placement (`placement.py`)
@@ -439,6 +440,7 @@ Returns screen-local `Placement(x, y, screen_name, hidden)`:
 {"type": "chat_response", "timestamp": 1718000000.0, "payload": {"utterance_id": "utt_1", "text": "Hello!", "provider": "local", "escalated": false, "rationale": "chat"}}
 {"type": "set_position", "timestamp": 1718000000.0, "payload": {"x": 100, "y": 200, "screen_name": "DP-1", "duration_ms": 400, "hidden": false}}
 {"type": "status_update", "timestamp": 1718000000.0, "payload": {"state": "idle" | "thinking" | "rebuilding" | "listening" | "speaking"}}
+{"type": "appearance_progress", "timestamp": 1718000000.0, "payload": {"stage": "designing" | "building" | "done" | "staged" | "failed", "label": "Building the 3D model...", "source": "user" | "api" | "autonomous", "version": 4, "error": "..."}}
 {"type": "mood_update", "timestamp": 1718000000.0, "payload": {"energy": 60.0, "valence": 50.0, "stress": 20.0}}
 {"type": "play_gesture", "timestamp": 1718000000.0, "payload": {"clip": "greet", "loop": false}}
 {"type": "config_update", "timestamp": 1718000000.0, "payload": {"presence": {}, "shortcuts": {}}}

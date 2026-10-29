@@ -96,6 +96,10 @@ class LookSpec(_Strict):
     accessories: AccessoriesSpec = Field(default_factory=AccessoriesSpec)
 
 
+# Reserved for model-written body scripts (docs/ADR_GENERATED_BODIES.md, V2+).
+GENERATED_PREFIX = "generated:"
+
+
 class CatalogError(ValueError):
     """Raised when a LookSpec references a base_template/wardrobe/accessory
     value that no catalog or on-disk custom template declares."""
@@ -134,6 +138,17 @@ def _custom_template_exists(deploy_dir: Path, name: str) -> bool:
     return any((custom_dir / f"{name}{ext}").is_file() for ext in (".glb", ".blend"))
 
 
+def available_custom_templates(deploy_dir: Path) -> list[str]:
+    """`custom:<name>` ids for every model file the user has dropped under
+    `<deploy_dir>/assets/custom_templates/` -- offered to the designer
+    alongside the catalog templates."""
+    custom_dir = deploy_dir / "assets" / "custom_templates"
+    if not custom_dir.is_dir():
+        return []
+    names = {p.stem for p in custom_dir.iterdir() if p.suffix in (".glb", ".blend")}
+    return [f"custom:{name}" for name in sorted(names)]
+
+
 def validate_against_catalogs(look_spec: LookSpec, deploy_dir: Path) -> None:
     """Rejects a base_template/wardrobe/accessory value that no catalog (or,
     for Tier 1, no on-disk custom template file) declares -- entirely
@@ -143,6 +158,11 @@ def validate_against_catalogs(look_spec: LookSpec, deploy_dir: Path) -> None:
     wardrobe_catalog = load_wardrobe_catalog(deploy_dir / "assets" / "catalogs")
 
     base_template = look_spec.base_template
+    if base_template.startswith(GENERATED_PREFIX):
+        raise CatalogError(
+            f"base_template {base_template!r} uses the reserved {GENERATED_PREFIX!r} prefix, "
+            "which is not available yet (docs/ADR_GENERATED_BODIES.md)"
+        )
     if base_template.startswith("custom:"):
         custom_name = base_template[len("custom:") :]
         if not _custom_template_exists(deploy_dir, custom_name):

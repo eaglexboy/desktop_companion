@@ -253,7 +253,9 @@ async def compile_and_publish(
 
         try:
             build_json = await _run_blender(settings, spec_path, out_glb, build_dir)
-            _verify_build_output(out_glb, build_json, look_spec.has_face)
+            # the build's own has_face is authoritative: an imported model without
+            # visemes is built faceless even if the spec asked for a face
+            _verify_build_output(out_glb, build_json, build_json.get("has_face", look_spec.has_face))
 
             existing_manifest = load_manifest(settings.deploy_dir)
             if is_user_present():

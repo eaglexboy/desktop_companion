@@ -106,6 +106,7 @@ See [`docs/SPEC_OVERVIEW.md`](docs/SPEC_OVERVIEW.md) for the full target layout,
 * [`docs/ADR_AUTONOMOUS_VOICE_SELECTION.md`](docs/ADR_AUTONOMOUS_VOICE_SELECTION.md) — autonomous voice evolution and cloning roadmap.
 * [`docs/ADR_SKILLS_AND_AGENT_ORCHESTRATION.md`](docs/ADR_SKILLS_AND_AGENT_ORCHESTRATION.md) — skills and sub-agent orchestration roadmap (adopts the open Agent Skills standard).
 * [`docs/ADR_MCP_INTEGRATION.md`](docs/ADR_MCP_INTEGRATION.md) — Model Context Protocol client, deferred to V2+.
+* [`docs/ADR_GENERATED_BODIES.md`](docs/ADR_GENERATED_BODIES.md) — model-written Blender body scripts (sandboxed), deferred to V2+.
 
 ## License
 

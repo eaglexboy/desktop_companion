@@ -83,7 +83,7 @@ def test_unreadable_file_raises_and_is_unchanged(tmp_path):
     wav = tmp_path / "a.wav"
     wav.write_bytes(b"this is not a wav file")
 
-    with pytest.raises(Exception):
+    with pytest.raises(wave.Error):
         ensure_stereo_wav(wav)
 
     assert wav.read_bytes() == b"this is not a wav file"

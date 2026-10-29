@@ -58,7 +58,7 @@ class EventBus:
                     loop.call_soon_threadsafe(self._offer, queue, event)
                 except RuntimeError:  # that subscriber's loop is closed
                     pass
-        except Exception:  # noqa: BLE001 -- observation must never break the brain
+        except Exception:  # noqa: BLE001, S110 -- observation must never break the brain, and logging here could recurse
             pass
 
     @staticmethod

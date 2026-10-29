@@ -282,6 +282,11 @@ Window {
             }
         }
 
+        AppearanceStatus {
+            id: appearanceStatus
+            z: 10
+        }
+
         IdleBehaviors {
             id: idleBehaviors
             avatar: avatar3d.modelNode
@@ -437,6 +442,10 @@ Window {
 
         function onStatusUpdateReceived(payload) {
             idleBehaviors.thinking = payload.status === "thinking"
+        }
+
+        function onAppearanceProgressReceived(payload) {
+            appearanceStatus.update(payload)
         }
 
         function onMoodUpdateReceived(payload) {

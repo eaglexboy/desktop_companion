@@ -125,6 +125,7 @@ class Router:
         *,
         classifier: LLMClient | None = None,
         escalation_threshold: EscalationThreshold = "auto",
+        keyword_tools: bool = True,
     ) -> None:
         if local_pool.is_empty and cloud_pool.is_empty:
             raise RuntimeError("Router requires at least one local or cloud LLM provider")
@@ -133,6 +134,9 @@ class Router:
         self._classifier = classifier
         self._escalation_threshold = escalation_threshold
         self._tools: dict[str, ToolSpec] = {}
+        # False when the model can call the tools itself (skills enabled): the
+        # pre-filter would answer with a canned line and skip the model.
+        self._keyword_tools = keyword_tools
 
     def register_tool(
         self, name: str, description: str, parameters: dict[str, Any], handler: ToolHandler
@@ -144,6 +148,8 @@ class Router:
         return dict(self._tools)
 
     def _match_tool_keyword(self, user_text: str) -> str | None:
+        if not self._keyword_tools:
+            return None
         lowered = user_text.lower()
         if any(kw in lowered for kw in _CHANGE_APPEARANCE_KEYWORDS):
             return "change_appearance"
@@ -286,6 +292,7 @@ def build_router(settings: Settings) -> Router:
         cloud_pool,
         classifier=classifier_client,
         escalation_threshold=settings.llm.routing.escalation_threshold,
+        keyword_tools=not settings.skills.enabled,
     )
 
     async def _change_appearance(request: str) -> str:

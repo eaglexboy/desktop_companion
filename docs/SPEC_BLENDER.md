@@ -43,6 +43,11 @@ Key capabilities include:
 ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Tier 3: Zero-Dependency Procedural Math Fallback (Default Bootstrap)                        │
 │ Engine: Pure bpy procedural mesh synthesis in blender/generator.py                          │
+│ • primitive_blob, primitive_mechanical, and a procedural standard_humanoid_* (head, arms,   │
+│   legs, rig) -- so a humanoid is always buildable with no model installed.                  │
+│ • An installed Tier 1/2 model is used as the body (scaled to 2.5 m, own rig and visemes     │
+│   kept, wardrobe not layered on); a static mesh is bound to the canonical rig; a file that  │
+│   cannot be imported falls back to the procedural body with a build warning.                │
 │ • Generates blobs, polyhedra, abstract floating crystals, and mechanical hard-surface bots. │
 │ • Requires ZERO downloaded files; 100% synthesized via code and math primitives.            │
 └─────────────────────────────────────────────────────────────────────────────────────────────┘

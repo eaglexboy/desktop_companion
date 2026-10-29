@@ -383,6 +383,11 @@ class PresenceConfig(StrictModel):
     margin_px: int = 24
     display_affinity: Literal["primary", "secondary", "auto"] = "secondary"
     idle_after_s: int = 600
+    # Greet the user when they come back from User_Away (unlock / screensaver
+    # off / login). Idle -> Active is deliberately not a "return".
+    greet_on_return: bool = True
+    # Minimum gap between greetings, so a quick lock/unlock isn't greeted twice.
+    greet_cooldown_s: int = Field(default=1800, ge=0)
 
 
 class ShortcutsConfig(StrictModel):

@@ -47,14 +47,100 @@ _VOCAL_CUES: tuple[tuple[re.Pattern[str], str], ...] = tuple(
 # direction. Vocal cues ("*laughs*", "*sighs*") are caught earlier and become
 # sounds, so they are deliberately not here.
 _ACTION_VERBS = frozenset(
-    """smile grin nod wink wave blush beam shrug smirk bow pause blink tilt lean
-    nuzzle bounce wiggle twirl clap salute step turn look glance stare gaze frown
-    pout grimace wince shudder shiver tremble fidget squint perk flicker glow
-    pulse wag point gesture hug poke nudge tap snap spin hop jump dance sway
-    stretch cheer curtsy kneel sit stand rise blink bob shake lift raise lower
-    adjust straighten wring clasp fold cross uncross rub scratch tug fiddle
-    tinker peek peer squeal skip wander float drift settle relax stiffen
-    brighten dim sparkle twinkle light""".split()
+    [
+        "smile",
+        "grin",
+        "nod",
+        "wink",
+        "wave",
+        "blush",
+        "beam",
+        "shrug",
+        "smirk",
+        "bow",
+        "pause",
+        "blink",
+        "tilt",
+        "lean",
+        "nuzzle",
+        "bounce",
+        "wiggle",
+        "twirl",
+        "clap",
+        "salute",
+        "step",
+        "turn",
+        "look",
+        "glance",
+        "stare",
+        "gaze",
+        "frown",
+        "pout",
+        "grimace",
+        "wince",
+        "shudder",
+        "shiver",
+        "tremble",
+        "fidget",
+        "squint",
+        "perk",
+        "flicker",
+        "glow",
+        "pulse",
+        "wag",
+        "point",
+        "gesture",
+        "hug",
+        "poke",
+        "nudge",
+        "tap",
+        "snap",
+        "spin",
+        "hop",
+        "jump",
+        "dance",
+        "sway",
+        "stretch",
+        "cheer",
+        "curtsy",
+        "kneel",
+        "sit",
+        "stand",
+        "rise",
+        "blink",
+        "bob",
+        "shake",
+        "lift",
+        "raise",
+        "lower",
+        "adjust",
+        "straighten",
+        "wring",
+        "clasp",
+        "fold",
+        "cross",
+        "uncross",
+        "rub",
+        "scratch",
+        "tug",
+        "fiddle",
+        "tinker",
+        "peek",
+        "peer",
+        "squeal",
+        "skip",
+        "wander",
+        "float",
+        "drift",
+        "settle",
+        "relax",
+        "stiffen",
+        "brighten",
+        "dim",
+        "sparkle",
+        "twinkle",
+        "light",
+    ]
 )
 _ACTION_INFLECTIONS = ("s", "es", "ed", "d", "ing")
 
@@ -67,7 +153,11 @@ def _is_silent_action(word: str) -> bool:
         stem = word[: -len(suffix)]
         # smiles -> smile, nodded -> nod (doubled consonant), hopping -> hop,
         # waving -> wave (dropped e), curtsied -> curtsy.
-        candidates = {stem, stem + "e", stem[:-1] if len(stem) > 2 and stem[-1] == stem[-2] else stem}
+        candidates = {
+            stem,
+            stem + "e",
+            stem[:-1] if len(stem) > 2 and stem[-1] == stem[-2] else stem,
+        }
         if stem.endswith("i"):
             candidates.add(stem[:-1] + "y")
         if suffix in ("es", "ed") and stem.endswith("i"):
@@ -104,18 +194,20 @@ _BLOCKQUOTE = re.compile(r"^\s{0,3}>\s?", re.MULTILINE)
 _BULLET = re.compile(r"^\s*(?:[-*+•]|\d{1,2}[.)])\s+", re.MULTILINE)
 _RULE = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$", re.MULTILINE)
 _TABLE_PIPES = re.compile(r"^\s*\|?[\s:|-]+\|[\s:|-]*$", re.MULTILINE)
-_EMOTICON = re.compile(r"(?<!\w)[:;=8xX][-'^o]?[)(DPpOo3/\\|*$@]+(?!\w)|(?<!\w)<3(?!\w)|(?<!\w)\^_\^(?!\w)|(?<!\w)[oO]_[oO](?!\w)")
+_EMOTICON = re.compile(
+    r"(?<!\w)[:;=8xX][-'^o]?[)(DPpOo3/\\|*$@]+(?!\w)|(?<!\w)<3(?!\w)|(?<!\w)\^_\^(?!\w)|(?<!\w)[oO]_[oO](?!\w)"
+)
 _EMOJI = re.compile(
     "["
-    "\U0001F000-\U0001FAFF"  # pictographs, emoticons, transport, symbols, newer emoji
-    "\U00002600-\U000027BF"  # misc symbols, dingbats
-    "\U00002B00-\U00002BFF"  # arrows, stars
-    "\U0001F1E6-\U0001F1FF"  # flags
-    "\U00002190-\U000021FF"
-    "\U000025A0-\U000025FF"
-    "\U00002300-\U000023FF"
-    "\U0000FE00-\U0000FE0F"  # variation selectors
-    "\U0000200D\U000020E3\U000E0020-\U000E007F"
+    "\U0001f000-\U0001faff"  # pictographs, emoticons, transport, symbols, newer emoji
+    "\U00002600-\U000027bf"  # misc symbols, dingbats
+    "\U00002b00-\U00002bff"  # arrows, stars
+    "\U0001f1e6-\U0001f1ff"  # flags
+    "\U00002190-\U000021ff"
+    "\U000025a0-\U000025ff"
+    "\U00002300-\U000023ff"
+    "\U0000fe00-\U0000fe0f"  # variation selectors
+    "\U0000200d\U000020e3\U000e0020-\U000e007f"
     "]+"
 )
 _SENTENCE_END = (".", "!", "?", ":", ";", ",")

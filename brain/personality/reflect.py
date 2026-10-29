@@ -166,9 +166,17 @@ async def maybe_trigger_autonomous_redesign(
     *biasing* of what changes belongs in the delta-synthesis prompt, not
     here -- this function only gates *whether* a cycle fires.
     """
+    def _verdict(outcome: str, **detail: float) -> None:
+        # Every gate is silent by nature; without this a "decided not to"
+        # can't be told apart from "never checked".
+        logger.info("autonomous redesign check: %s %s", outcome, detail or "")
+        emit("autonomous.check", {"outcome": outcome, **detail})
+
     if is_build_running():
+        _verdict("build_running")
         return False
     if is_user_interacting():
+        _verdict("user_interacting")
         return False
 
     last_redesign_raw = store.get_agent_state("last_redesign_timestamp")
@@ -176,10 +184,14 @@ async def maybe_trigger_autonomous_redesign(
         elapsed_hours = (time.time() - float(last_redesign_raw)) / 3600.0
         threshold_hours = random.uniform(redesign_cooldown_hours_min, redesign_cooldown_hours_max)
         if elapsed_hours < threshold_hours:
+            _verdict("cooldown", elapsed_h=round(elapsed_hours, 2), threshold_h=round(threshold_hours, 2))
             return False
 
-    if random.random() >= autonomous_redesign_probability:
+    roll = random.random()
+    if roll >= autonomous_redesign_probability:
+        _verdict("roll_failed", roll=round(roll, 3), needed_below=autonomous_redesign_probability)
         return False
 
+    _verdict("triggered", roll=round(roll, 3))
     await on_eligible()
     return True

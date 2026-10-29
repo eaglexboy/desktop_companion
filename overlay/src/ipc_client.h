@@ -48,6 +48,8 @@ signals:
     void speechReceived(const QVariantMap &payload);
     void hotReloadAsset(const QVariantMap &manifest, const QString &glbUrl);
     void statusUpdateReceived(const QVariantMap &payload);
+    // stage: designing | building | done | staged | failed (see brain/evolution.py)
+    void appearanceProgressReceived(const QVariantMap &payload);
     void moodUpdateReceived(const QVariantMap &payload);
     void gestureReceived(const QVariantMap &payload);
     void configUpdateReceived(const QVariantMap &payload);
