@@ -210,3 +210,18 @@ def test_state_db_uses_wal(tmp_path):
     path = tmp_path / "state.db"
     PersonalityStore(path, ("a",), ("m",))
     assert sqlite3.connect(path).execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
+def test_recent_conversation_is_oldest_first_limited_and_starts_on_a_user_turn(tmp_path):
+    store = _store(tmp_path)
+    for role, text in [("user", "a"), ("assistant", "b"), ("user", "c"), ("assistant", "d")]:
+        store.log_interaction(role, text)
+    assert [m["content"] for m in store.recent_conversation()] == ["a", "b", "c", "d"]
+    # A limit that cuts mid-exchange drops the orphaned assistant turn.
+    assert [m["content"] for m in store.recent_conversation(limit=3)] == ["c", "d"]
+
+
+def test_recent_conversation_ignores_turns_older_than_the_max_age(tmp_path):
+    store = _store(tmp_path)
+    store.log_interaction("user", "old")
+    assert store.recent_conversation(max_age_s=-1) == []

@@ -317,6 +317,13 @@ async def _speak(state: AppState, text: str, *, utterance_id: str | None = None)
             logger.exception("broadcasting speech for utterance %r failed", utterance_id)
 
 
+# How much recent chat the model sees each turn: 6 exchanges is enough to
+# follow a thread ("yes, that one") without bloating the prompt of a small
+# local model; a gap longer than an hour starts a fresh conversation.
+CONVERSATION_HISTORY_MESSAGES = 12
+CONVERSATION_HISTORY_MAX_AGE_S = 3600.0
+
+
 async def _handle_chat_text(state: AppState, text: str, *, speak: bool = True) -> str:
     """Shared by POST /chat and any client->daemon text (typed
     user_text_input, or a finalized audio_stream_end transcription --
@@ -335,9 +342,17 @@ async def _handle_chat_text(state: AppState, text: str, *, speak: bool = True) -
         skills_block=skills_block,
     )
     emit("turn.prompt", {"system_prompt": system_prompt})
+    history = store.recent_conversation(CONVERSATION_HISTORY_MESSAGES, CONVERSATION_HISTORY_MAX_AGE_S)
     store.log_interaction("user", text)
     reply_format = ReplyFormat(FORMAT_REMINDER, REPAIR_PROMPT, is_structured) if skills_block else None
-    result = await state.router.handle(text, system_prompt=system_prompt, reply_format=reply_format)
+    if reply_format:
+        # Past replies are stored as plain dialogue; show them in the reply
+        # shape the model is asked to produce so it doesn't drift to plain text.
+        history = [
+            {"role": m["role"], "content": json.dumps({"say": m["content"], "do": []})} if m["role"] == "assistant" else m
+            for m in history
+        ]
+    result = await state.router.handle(text, system_prompt=system_prompt, history=history, reply_format=reply_format)
     # What the model actually returned, before it is parsed and cleaned for
     # speech -- kept (event + database) so the status page can show what the
     # cleanup changed.
