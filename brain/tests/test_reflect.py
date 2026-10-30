@@ -234,3 +234,18 @@ async def test_trigger_b_reports_why_it_did_or_did_not_fire(tmp_path, monkeypatc
     )
     await maybe_trigger_autonomous_redesign(store, on_eligible=on_eligible, **_gate_kwargs())
     assert outcomes()[before:] == ["user_interacting", "roll_failed", "triggered"]
+
+
+@pytest.mark.asyncio
+async def test_trigger_b_skipped_while_a_staged_look_is_waiting(tmp_path):
+    store = _store(tmp_path)
+    store.set_agent_state("staged_version", "7")
+    called = []
+
+    async def on_eligible():
+        called.append(True)
+
+    fired = await maybe_trigger_autonomous_redesign(store, on_eligible=on_eligible, **_gate_kwargs())
+
+    assert fired is False
+    assert called == []

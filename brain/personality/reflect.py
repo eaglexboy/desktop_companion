@@ -157,7 +157,7 @@ async def maybe_trigger_autonomous_redesign(
     autonomous_redesign_probability: float,
     on_eligible: Callable[[], Awaitable[None]],
 ) -> bool:
-    """Evaluate autonomous-redesign eligibility: cooldown elapsed (uniformly
+    """Evaluate autonomous-redesign eligibility: no look already staged, cooldown elapsed (uniformly
     sampled 12-24h, fresh each call rather than persisted -- statistically
     equivalent to sampling once per redesign and needs no extra
     agent_state key), no compile running, user not actively interacting,
@@ -177,6 +177,12 @@ async def maybe_trigger_autonomous_redesign(
         return False
     if is_user_interacting():
         _verdict("user_interacting")
+        return False
+
+    # A staged look is still waiting to be revealed; building another would
+    # just overwrite it (and its cooldown only starts at reveal time).
+    if store.get_agent_state("staged_version") is not None:
+        _verdict("staged_pending")
         return False
 
     last_redesign_raw = store.get_agent_state("last_redesign_timestamp")
