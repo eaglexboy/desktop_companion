@@ -35,23 +35,63 @@ Item {
 
     // Evasion motion. The baked `move` clip is stripped at load (see
     // Avatar3D.qml's GlbSanitizer), so while the surface slides across the
-    // screen the model hops and leans into the direction of travel.
+    // screen the model turns to face its heading and hops (or, with run
+    // targets, runs).
     property bool moving: false
+    // Height (m) the avatar node sits at so it rotates/scales about the waist
+    // (see Avatar3D.qml). position.y rests here rather than at 0.
+    property real pivotHeight: 0
+    onPivotHeightChanged: restoreRestHeight()
+    onAvatarChanged: restoreRestHeight()
+    function restoreRestHeight() {
+        if (root.avatar && !hopLoop.running)
+            root.avatar.position.y = root.pivotHeight
+    }
     property int travelDir: 1   // +1 right, -1 left
     SequentialAnimation {
         id: hopLoop
         loops: Animation.Infinite
         running: root.avatar !== null && root.moving
-        NumberAnimation { target: root.avatar; property: "position.y"; to: 0.14; duration: 110; easing.type: Easing.OutQuad }
-        NumberAnimation { target: root.avatar; property: "position.y"; to: 0; duration: 110; easing.type: Easing.InQuad }
-        onRunningChanged: if (!running && root.avatar) root.avatar.position.y = 0
+        NumberAnimation { target: root.avatar; property: "position.y"; to: root.pivotHeight + 0.14; duration: 110; easing.type: Easing.OutQuad }
+        NumberAnimation { target: root.avatar; property: "position.y"; to: root.pivotHeight; duration: 110; easing.type: Easing.InQuad }
+        onRunningChanged: if (!running) root.restoreRestHeight()
     }
+    // Facing. Before a run the avatar turns 90 degrees toward its heading
+    // (running sideways-on, sliding, looks wrong), and turns back to face the
+    // user once it arrives. Main.qml delays the slide by `turnMs` so the run
+    // starts after the turn. +90 on Y turns the front toward screen-right.
+    readonly property int turnMs: 220
+    property bool turned: false   // true from the start of the turn-away until the turn-back finishes
+
+    function turnToward(dir) {
+        if (!root.avatar)
+            return
+        cancelMicroIdle()
+        turnAnim.stop()   // before `turned = true`: its onStopped may clear it
+        root.turned = true
+        turnAnim.to = 90 * dir
+        turnAnim.start()
+    }
+
+    // Ends exactly at the sway's start angle (-amplitude), so the sway
+    // resumes without a jump.
+    function turnBack() {
+        if (!root.turned || !root.avatar)
+            return
+        turnAnim.stop()
+        turnAnim.to = -root.activePreset.amplitude
+        turnAnim.start()
+    }
+
     NumberAnimation {
-        id: leanAnim
+        id: turnAnim
         target: root.avatar
-        property: "eulerRotation.z"
-        duration: 120
+        property: "eulerRotation.y"
+        duration: root.turnMs
+        easing.type: Easing.InOutQuad
+        onStopped: if (to === -root.activePreset.amplitude) root.turned = false
     }
+
     // Running legs. Avatars with legs carry `run_a`/`run_b` morph targets
     // (the two mirrored extremes of a stride); cross-fading them in time with
     // the hop makes the body actually run. Avatars without them keep the
@@ -88,10 +128,8 @@ Item {
             root.canRun = root.controller !== null && root.controller.hasRunTargets()
         }
         root.runAmount = (moving && root.canRun) ? 1 : 0
-        if (!root.avatar || root.thinking)
-            return
-        leanAnim.to = root.moving ? -9 * root.travelDir : 0
-        leanAnim.restart()
+        if (!moving)
+            turnBack()
     }
 
     readonly property var moodPresets: ({
@@ -110,7 +148,7 @@ Item {
     SequentialAnimation {
         id: idleLoop
         loops: Animation.Infinite
-        running: root.avatar !== null && !root.thinking && !root.swayPaused
+        running: root.avatar !== null && !root.thinking && !root.swayPaused && !root.turned
         NumberAnimation {
             target: root.avatar
             property: "eulerRotation.y"
@@ -189,7 +227,7 @@ Item {
             root.avatar.scale.y = 1.0
     }
 
-    readonly property bool microBlocked: root.avatar === null || root.thinking || root.moving
+    readonly property bool microBlocked: root.avatar === null || root.thinking || root.moving || root.turned
         || root.pulsing || gestureAnim.running || root.microRunning
 
     onThinkingChanged: if (thinking) cancelMicroIdle()

@@ -48,17 +48,31 @@ Window {
     // on screen, a jump for the very first placement or a zero duration.
     function slideTo(localX, localY, durationMs, animate, easing) {
         slideAnim.stop()
+        slideStartTimer.stop()
         if (!animate || durationMs <= 0 || (localX === slideX && localY === slideY)) {
             slideX = localX
             slideY = localY
+            idleBehaviors.turnBack()
             return
         }
-        idleBehaviors.travelDir = localX >= slideX ? 1 : -1
+        const dx = localX - slideX
+        idleBehaviors.travelDir = dx >= 0 ? 1 : -1
+        // Turn to face the heading first (the slide starts once the turn is
+        // done); a mostly vertical trip keeps facing the user.
+        const turns = Math.abs(dx) >= 8
+        if (turns)
+            idleBehaviors.turnToward(idleBehaviors.travelDir)
+        slideStartTimer.interval = turns ? idleBehaviors.turnMs : 1
         slideAnim.durationMs = durationMs
         slideXAnim.easing.type = slideYAnim.easing.type = easing !== undefined ? easing : Easing.InOutQuad
         slideXAnim.to = localX
         slideYAnim.to = localY
-        slideAnim.start()
+        slideStartTimer.start()
+    }
+
+    Timer {
+        id: slideStartTimer
+        onTriggered: slideAnim.start()
     }
 
     property bool interactive: false
@@ -293,6 +307,7 @@ Window {
             id: idleBehaviors
             avatar: avatar3d.modelNode
             moving: root.moving
+            pivotHeight: avatar3d.pivotHeight
             controller: avatar3d.controller
         }
 
@@ -458,6 +473,7 @@ Window {
                 avatar3d.controller.shapeKeyNames = current.viseme_shape_keys || []
                 avatar3d.controller.blinkKeyNames = current.blink_shape_keys || []
                 avatar3d.controller.runKeyNames = current.run_shape_keys || []
+                avatar3d.pivotHeight = ((current.bounds && current.bounds.height_m) || 0) * 0.45
                 root.currentLookPath = "file://" + assetDir + "/" + current.glb_filename
             }
             if (config.shortcuts) {
@@ -529,6 +545,7 @@ Window {
                 avatar3d.controller.shapeKeyNames = current.viseme_shape_keys || []
                 avatar3d.controller.blinkKeyNames = current.blink_shape_keys || []
                 avatar3d.controller.runKeyNames = current.run_shape_keys || []
+                avatar3d.pivotHeight = ((current.bounds && current.bounds.height_m) || 0) * 0.45
                 root.currentLookPath = "file://" + root.deskmateDataDir + "/" + current.glb_filename
             }
         }

@@ -11,11 +11,15 @@ Item {
     id: root
     property string lookSource: ""
     property alias controller: avatarController
-    // The actual QQuick3DNode the loaded model lives at (RuntimeLoader's
-    // own prototype is QQuick3DNode) -- IdleBehaviors.qml animates this
-    // directly (eulerRotation/scale), since View3D itself is a 2D Item
-    // with no such 3D transform properties.
-    property alias modelNode: loader
+    // The QQuick3DNode IdleBehaviors.qml animates (eulerRotation/scale/
+    // position), since View3D itself is a 2D Item with no such 3D transform
+    // properties. It is a parent of the loaded model, sitting `pivotHeight`
+    // metres up, with the model offset back down by the same amount: so
+    // leaning, nodding and stretching pivot about the avatar's waist
+    // instead of its feet. Pivoting at the feet swung the head far toward
+    // the camera on a forward lean, enlarging it past the view's edge.
+    property alias modelNode: pivotNode
+    property real pivotHeight: 0
 
     // Emitted once per source change, after RuntimeLoader settles into
     // Success or Error -- Main.qml forwards this straight into an
@@ -62,20 +66,25 @@ Item {
             clipFar: 1000
         }
 
-        RuntimeLoader {
-            id: loader
-            source: glbSanitizer.sanitizedSource(root.lookSource)
-            onStatusChanged: {
-                if (status === RuntimeLoader.Status.Success) {
-                    avatarController.root = loader
-                    avatarController.resetMorphWeights()
-                    root.assetLoadResult(true, "")
-                } else if (status === RuntimeLoader.Status.Error) {
-                    // Keep running and keep the daemon connection open on
-                    // a bad asset -- avatarController.root is left pointing
-                    // at whatever previously loaded successfully (or null
-                    // on a failed initial bootstrap), never torn down here.
-                    root.assetLoadResult(false, loader.errorString)
+        Node {
+            id: pivotNode
+
+            RuntimeLoader {
+                id: loader
+                position: Qt.vector3d(0, -root.pivotHeight, 0)
+                source: glbSanitizer.sanitizedSource(root.lookSource)
+                onStatusChanged: {
+                    if (status === RuntimeLoader.Status.Success) {
+                        avatarController.root = loader
+                        avatarController.resetMorphWeights()
+                        root.assetLoadResult(true, "")
+                    } else if (status === RuntimeLoader.Status.Error) {
+                        // Keep running and keep the daemon connection open on
+                        // a bad asset -- avatarController.root is left pointing
+                        // at whatever previously loaded successfully (or null
+                        // on a failed initial bootstrap), never torn down here.
+                        root.assetLoadResult(false, loader.errorString)
+                    }
                 }
             }
         }
