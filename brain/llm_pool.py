@@ -73,6 +73,7 @@ class LocalLLMClient(LLMClient):
             {
                 "model": self._config.model,
                 "purpose": current_purpose(),
+                "messages": len(messages),
                 "ms": round((time.monotonic() - started) * 1000),
                 "prompt_tokens": usage.get("prompt_tokens"),
                 "completion_tokens": usage.get("completion_tokens"),

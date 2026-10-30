@@ -325,14 +325,26 @@ async def history(kind: str = "mood", hours: float = 24.0) -> dict:
     return await asyncio.to_thread(_history, _settings(), kind, min(max(hours, 0.1), 24 * 30))
 
 
+# "no-cache" still lets the browser keep a copy, but it must revalidate (ETag ->
+# cheap 304) on every load, so an edited script or stylesheet is never stale.
+NO_CACHE = {"Cache-Control": "no-cache"}
+
+
+class _RevalidatingStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 @app.get("/", response_class=HTMLResponse)
-async def index() -> str:
-    return (STATIC_DIR / "index.html").read_text()
+async def index() -> HTMLResponse:
+    return HTMLResponse((STATIC_DIR / "index.html").read_text(), headers=NO_CACHE)
 
 
 # css/ and js/ (ES modules). Mounted last so it never shadows an /api route; the
 # Host-header middleware above covers it too.
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/static", _RevalidatingStaticFiles(directory=STATIC_DIR), name="static")
 
 
 def main() -> None:

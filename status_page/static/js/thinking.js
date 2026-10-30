@@ -24,7 +24,7 @@ function stepHtml(ev, c) {
     case "router.route":
       return `<div class="step decision"><b>Sent to:</b> ${esc(d.pool)} pool${d.fell_back_to_local ? " — wanted cloud but none is configured, fell back to local" : ""}</div>`;
     case "llm.call":
-      return `<div class="step">LLM call ${chips([d.purpose, d.model, sec(d.ms), d.prompt_tokens != null ? `${d.prompt_tokens} → ${d.completion_tokens} tokens` : "", d.has_reasoning ? "reasoned" : ""])}</div>`;
+      return `<div class="step">LLM call ${chips([d.purpose, d.model, d.messages != null ? `${d.messages} msgs` : "", sec(d.ms), d.prompt_tokens != null ? `${d.prompt_tokens} → ${d.completion_tokens} tokens` : "", d.has_reasoning ? "reasoned" : ""])}</div>`;
     case "llm.error":
       return `<div class="step decision" style="border-color:var(--bad)">LLM call failed ${chips([d.purpose, d.model, d.error])}</div>`;
     case "llm.reasoning":
