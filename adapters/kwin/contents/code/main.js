@@ -33,6 +33,17 @@ function isOverlayWindow(win) {
     return false;
 }
 
+// The overlay re-creates its layer-shell surface to change monitors, and
+// KWin's close animation (fadingpopups) would keep the old copy fading out
+// after the new one has appeared on the other monitor. The companion runs
+// off one edge and in at the other, so the old surface must just vanish.
+function skipOverlayAnimation(win) {
+    if (win && isOverlayWindow(win))
+        win.skipsCloseAnimation = true;
+}
+workspace.windowAdded.connect(skipOverlayAnimation);
+workspace.windowList().forEach(skipOverlayAnimation);
+
 function sendState() {
     var active = workspace.activeWindow;
 
