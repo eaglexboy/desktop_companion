@@ -142,6 +142,22 @@ class TTSPool:
 
         raise RuntimeError(f"All TTS backends failed: {last_error}") from last_error
 
+    async def warm_up(self, scratch_wav_path: Path) -> None:
+        """Sends each remote a throwaway one-word request so an engine that went
+        cold (idle or swapped out across a sleep) loads before the first real
+        sentence needs it. Best effort: a failure is logged but never starts a
+        cooldown -- the real request decides whether a remote is down."""
+        for entry in self._remote:
+            started = time.monotonic()
+            try:
+                await entry.backend.synthesize("Hi.", scratch_wav_path)
+                logger.info("TTS remote %r warmed up in %.1fs", entry.name, time.monotonic() - started)
+            except Exception as exc:  # noqa: BLE001 -- warm-up must never raise
+                logger.info(
+                    "TTS remote %r warm-up failed after %.1fs (%s: %s)",
+                    entry.name, time.monotonic() - started, type(exc).__name__, exc,
+                )
+
     async def aclose(self) -> None:
         for entry in self._remote:
             await entry.backend.aclose()
