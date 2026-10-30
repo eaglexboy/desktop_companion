@@ -491,6 +491,15 @@ async def _handle_appearance_progress(state: AppState, payload: dict) -> None:
 
 
 async def _handle_presence_transition(state: AppState, old_state: PresenceState, new_state: PresenceState) -> None:
+    returned = old_state == PresenceState.AWAY and new_state == PresenceState.ACTIVE
+    # Pocket goes cold while the machine is away and its first request then
+    # timed out (the greeting fell back to Piper). Warm it in parallel with the
+    # transition work below; the greeting waits for it.
+    warm_task = (
+        asyncio.create_task(state.tts_pool.warm_up(state.settings.voice_cache_dir / "_warmup.wav"))
+        if returned and state.settings.presence.greet_on_return and state.tts_pool.has_remote
+        else None
+    )
     had_staged = state.store.get_agent_state("staged_version") is not None
     await state.evolution.on_presence_transition(old_state, new_state)
     still_staged = state.store.get_agent_state("staged_version") is not None
@@ -502,7 +511,6 @@ async def _handle_presence_transition(state: AppState, old_state: PresenceState,
         # rather than a separate one-off mechanism.
         await _broadcast_hot_reload(state)
 
-    returned = old_state == PresenceState.AWAY and new_state == PresenceState.ACTIVE
     greeting = _return_greeting(state, revealed=revealed) if returned else None
     emit(
         "presence.transition",
@@ -511,8 +519,18 @@ async def _handle_presence_transition(state: AppState, old_state: PresenceState,
     if greeting is None:
         return
     state.store.set_agent_state("last_greeting_timestamp", str(time.time()))
+    # Same delivery as a model reply: stored in the conversation (so chat and
+    # the model's history see it) and sent as chat_response before the voice.
+    state.store.log_interaction("assistant", greeting, provider="presence", escalated=False)
+    utterance_id = f"utt_{int(time.time() * 1000)}"
+    await state.hub.broadcast(
+        "chat_response",
+        {"utterance_id": utterance_id, "text": greeting, "provider": "presence", "escalated": False, "rationale": ""},
+    )
     await state.hub.broadcast("play_gesture", {"name": "greet", "clip": "greet", "loop": False})
-    await _speak(state, greeting)
+    if warm_task is not None:
+        await warm_task
+    await _speak(state, greeting, utterance_id=utterance_id)
 
 
 def _return_greeting(state: AppState, *, revealed: bool) -> str | None:

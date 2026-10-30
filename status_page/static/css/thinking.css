@@ -68,3 +68,5 @@
   color: var(--muted);
   font-size: 0.75rem;
 }
+
+#feed.hide-minor .turn.minor { display: none; }

@@ -24,7 +24,7 @@ function stepHtml(ev, c) {
     case "router.route":
       return `<div class="step decision"><b>Sent to:</b> ${esc(d.pool)} pool${d.fell_back_to_local ? " — wanted cloud but none is configured, fell back to local" : ""}</div>`;
     case "llm.call":
-      return `<div class="step">LLM call ${chips([d.purpose, d.model, sec(d.ms), d.prompt_tokens != null ? `${d.prompt_tokens} → ${d.completion_tokens} tokens` : "", d.has_reasoning ? "reasoned" : ""])}</div>`;
+      return `<div class="step">LLM call ${chips([d.purpose, d.model, d.messages != null ? `${d.messages} msgs` : "", sec(d.ms), d.prompt_tokens != null ? `${d.prompt_tokens} → ${d.completion_tokens} tokens` : "", d.has_reasoning ? "reasoned" : ""])}</div>`;
     case "llm.error":
       return `<div class="step decision" style="border-color:var(--bad)">LLM call failed ${chips([d.purpose, d.model, d.error])}</div>`;
     case "llm.reasoning":
@@ -54,10 +54,39 @@ function stepHtml(ev, c) {
       const fmt = (o) => Object.entries(o || {}).map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${(+v).toFixed(1)}`);
       return `<div class="step reasoning"><b>Reflection:</b> reviewed ${d.interactions_reviewed} messages ${chips([...fmt(d.mood_deltas), ...fmt(d.trait_deltas)])}${(d.memory_notes || []).map((n) => `<br>• ${esc(n)}`).join("")}</div>`;
     }
+    case "autonomous.check": {
+      const verdict = {
+        build_running: "a build is already running",
+        user_interacting: "you were talking to it",
+        staged_pending: "a new look is already built and waiting for you to come back",
+        cooldown: `still cooling down (${d.elapsed_h}h of ${d.threshold_h}h)`,
+        roll_failed: `rolled ${d.roll}, needed under ${d.needed_below} — decided not to this time`,
+        triggered: `rolled ${d.roll} — decided to try a new look`,
+      }[d.outcome] || esc(d.outcome);
+      return `<div class="step decision"><b>Look change check:</b> ${verdict}</div>`;
+    }
+    case "appearance.designing":
+    case "appearance.building":
+    case "appearance.done":
+    case "appearance.staged":
+    case "appearance.failed":
+      return `<div class="step ${ev.type === "appearance.failed" ? "decision" : "reply"}"${ev.type === "appearance.failed" ? ' style="border-color:var(--bad)"' : ""}><b>Look change (${esc(d.source)}):</b> ${esc(d.label)} ${chips([d.version != null && `v${d.version}`, d.error])}</div>`;
+    case "appearance.unmet":
+      return `<div class="step decision"><b>Look change:</b> couldn't build “${esc(d.request)}” — missing ${esc(d.missing)}</div>`;
+    case "presence.transition":
+      return `<div class="step decision"><b>You came back</b> (${esc(d.from)} → ${esc(d.to)}): ${d.greeted ? "greeted you" : "no greeting (cooldown or disabled)"}${d.revealed ? ", revealed the staged look" : ""}</div>`;
     default:
       return "";
   }
 }
+
+// Background decisions worth seeing without "Background events" switched on.
+// The routine hourly "not yet" outcomes stay behind that toggle.
+const QUIET_CHECKS = new Set(["build_running", "user_interacting", "staged_pending", "cooldown"]);
+const isNotable = (ev) =>
+  ev.type.startsWith("appearance.") ||
+  ev.type === "presence.transition" ||
+  (ev.type === "autonomous.check" && !QUIET_CHECKS.has(ev.data.outcome));
 
 function cardHtml(c) {
   const head = c.start ? esc(c.start.data.text) : "(background)";
@@ -73,14 +102,15 @@ function clearPlaceholder() {
 function trim() {
   const feed = $("feed");
   while (feed.children.length > MAX_CARDS) {
-    const first = feed.firstChild;
+    // Background cards go first so they can't push real conversations out.
+    const first = feed.querySelector(".minor") || feed.firstChild;
     for (const [k, v] of turns) if (v.el === first) turns.delete(k);
     feed.removeChild(first);
   }
 }
-function addCard(id, ev) {
+function addCard(id, ev, minor = false) {
   const c = { ts: ev.ts, events: [ev], el: document.createElement("div") };
-  c.el.className = "turn";
+  c.el.className = minor ? "turn minor" : "turn";
   c.el.innerHTML = cardHtml(c);
   turns.set(id, c);
   clearPlaceholder();
@@ -105,7 +135,7 @@ function noteReasoning(d) {
 function onStream(ev) {
   const t = ev.type;
   if (t === "personality.mood" || t === "personality.traits") {
-    if (showMinor && ev.data.cause !== "decay" && ev.data.cause !== "startup") {
+    if (ev.data.cause !== "decay" && ev.data.cause !== "startup") {
       const parts = Object.entries(ev.data.deltas || {}).map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${(+v).toFixed(1)}`).join(", ");
       addMinor(ev, `${t === "personality.mood" ? "mood" : "traits"} changed (${ev.data.cause}): ${parts}`);
     }
@@ -117,14 +147,13 @@ function onStream(ev) {
   const stick = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 60;
 
   if (t === "presence.placement") {
-    if (showMinor) {
-      const d = ev.data;
-      addMinor(ev, `Placed avatar at ${d.x}, ${d.y} on ${d.screen}${d.hidden ? " (hidden)" : ""}${d.window ? " — window " + d.window.w + "×" + d.window.h : ""}`);
-    }
+    const d = ev.data;
+    addMinor(ev, `Placed avatar at ${d.x}, ${d.y} on ${d.screen}${d.hidden ? " (hidden)" : ""}${d.window ? " — window " + d.window.w + "×" + d.window.h : ""}`);
     return;
   }
   if (!ev.turn) {
-    if (t === "reflection.result" || showMinor) addCard("bg" + ev.seq, ev);
+    if (t === "reflection.result" || isNotable(ev)) addCard("bg" + ev.seq, ev);
+    else if (stepHtml(ev, null)) addCard("bg" + ev.seq, ev, true);
     return;
   }
   let c = turns.get(ev.turn);
@@ -145,6 +174,14 @@ function onStream(ev) {
 export function initThinking() {
   on("stream", onStream);
   on("tab", (name) => { if (name === "thinking") $("feed").scrollTop = $("feed").scrollHeight; });
-  $("showMinor").onclick = () => { showMinor = !showMinor; $("showMinor").setAttribute("aria-pressed", showMinor); };
+  // Background cards are always recorded and only hidden, so the toggle
+  // works on what's already in the feed (and brings back what was missed).
+  const feed = $("feed");
+  feed.classList.add("hide-minor");
+  $("showMinor").onclick = () => {
+    showMinor = !showMinor;
+    $("showMinor").setAttribute("aria-pressed", showMinor);
+    feed.classList.toggle("hide-minor", !showMinor);
+  };
   $("clearFeed").onclick = () => { $("feed").innerHTML = '<div class="empty">Cleared.</div>'; turns.clear(); };
 }

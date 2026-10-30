@@ -497,3 +497,16 @@ def test_voice_sample_validation(tmp_path):
         f.write_bytes(b"x")
         TTSRemoteEntry(provider_type="generic_openai", base_url="http://t", voice_sample=str(f))
     TTSRemoteEntry(base_url="http://t", voice_sample=str(tmp_path / "missing.wav"), enabled=False)
+
+
+# --- TTSPool.warm_up -----------------------------------------------------------
+
+
+async def test_warm_up_pings_remotes_without_cooling_a_failing_one(tmp_path):
+    bad, local = _ScriptedBackend(fails=True), _ScriptedBackend()
+    pool = TTSPool([("bad", bad)], local)
+    await pool.warm_up(tmp_path / "warm.wav")
+    assert bad.calls == ["Hi."]
+    # A failed warm-up is not a verdict on the remote: it is still tried first.
+    await pool.synthesize("real", tmp_path / "o.wav")
+    assert bad.calls == ["Hi.", "real"] and local.calls == ["real"]

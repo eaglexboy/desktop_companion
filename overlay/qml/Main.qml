@@ -46,7 +46,7 @@ Window {
 
     // Moves the surface within its current output: a run when it is already
     // on screen, a jump for the very first placement or a zero duration.
-    function slideTo(localX, localY, durationMs, animate) {
+    function slideTo(localX, localY, durationMs, animate, easing) {
         slideAnim.stop()
         if (!animate || durationMs <= 0 || (localX === slideX && localY === slideY)) {
             slideX = localX
@@ -55,6 +55,7 @@ Window {
         }
         idleBehaviors.travelDir = localX >= slideX ? 1 : -1
         slideAnim.durationMs = durationMs
+        slideXAnim.easing.type = slideYAnim.easing.type = easing !== undefined ? easing : Easing.InOutQuad
         slideXAnim.to = localX
         slideYAnim.to = localY
         slideAnim.start()
@@ -267,7 +268,8 @@ Window {
         id: content
         anchors.fill: parent
         opacity: root.hidden ? 0 : 1
-        Behavior on opacity { NumberAnimation { duration: 200 } }
+        // No fade while crossing monitors: the run itself is the transition.
+        Behavior on opacity { enabled: !root.crossing && !root.crossEntering; NumberAnimation { duration: 200 } }
 
         Avatar3D {
             id: avatar3d
@@ -340,6 +342,75 @@ Window {
         }
     }
 
+    // Crossing to another monitor: a layer-shell surface can't straddle two
+    // outputs, so the companion runs off the edge of the current one (fading
+    // as it goes), is re-homed while invisible, then runs in from the matching
+    // edge of the new one -- the same trip the eye would expect from a walk
+    // between side-by-side (or stacked) monitors, instead of a teleport.
+    readonly property int crossRunMs: 260
+    property bool crossing: false
+    property bool crossEntering: false
+    property var crossTarget: null   // { x, y, screen, entryX, entryY } -- output-local entry edge
+
+    function screenByName(name) {
+        const screens = Qt.application.screens
+        for (let i = 0; i < screens.length; ++i)
+            if (screens[i].name === name)
+                return screens[i]
+        return null
+    }
+
+    // Returns false when the run can't be staged (first placement, hidden,
+    // unknown screen), so the caller falls back to the plain fade.
+    function crossTo(x, y, screenName, hiddenFlag) {
+        const from = screenByName(root.anchoredScreenName)
+        const to = screenByName(screenName)
+        if (!from || !to || hiddenFlag || root.hidden || root.lastPlacement === null)
+            return false
+        const dx = (to.virtualX + to.width / 2) - (from.virtualX + from.width / 2)
+        const dy = (to.virtualY + to.height / 2) - (from.virtualY + from.height / 2)
+        const horizontal = Math.abs(dx) >= Math.abs(dy)
+        const localY = Math.max(0, Math.min(y - to.virtualY, to.height - root.avatarHeight))
+        const localX = Math.max(0, Math.min(x - to.virtualX, to.width - root.avatarWidth))
+        let exitX = root.slideX, exitY = root.slideY, entryX = localX, entryY = localY
+        if (horizontal) {
+            exitX = dx > 0 ? from.width - root.avatarWidth : 0
+            entryX = dx > 0 ? 0 : to.width - root.avatarWidth
+        } else {
+            exitY = dy > 0 ? from.height - root.avatarHeight : 0
+            entryY = dy > 0 ? 0 : to.height - root.avatarHeight
+        }
+        root.crossTarget = { x: x, y: y, screen: screenName, entryX: entryX + to.virtualX, entryY: entryY + to.virtualY }
+        root.crossing = true
+        root.slideTo(exitX, exitY, root.crossRunMs, true, Easing.InQuad)
+        crossTimer.restart()
+        return true
+    }
+
+    Timer {
+        id: crossTimer
+        // Swap once the exit run has reached the edge. It ends at full speed
+        // (ease-in), so the re-home reads as leaving the screen, not a stop.
+        interval: root.crossRunMs
+        onTriggered: {
+            const t = root.crossTarget
+            root.crossing = false
+            root.crossTarget = null
+            if (!t)
+                return
+            // Re-home at the entry edge (a jump while invisible), then run in.
+            root.crossEntering = true
+            root.hidden = true
+            root.applyPosition(t.entryX, t.entryY, t.screen, false, 0)
+            const to = root.screenByName(t.screen)
+            if (to) {
+                root.slideTo(t.x - to.virtualX, t.y - to.virtualY, root.crossRunMs, true, Easing.OutQuad)
+                root.lastPlacement = { x: t.x, y: t.y, screen: t.screen }
+            }
+            root.crossEntering = false
+        }
+    }
+
     Timer {
         id: migrateTimer
         interval: 200
@@ -401,7 +472,24 @@ Window {
             // Moving across monitors triggers a 200ms fade-out, re-anchor,
             // 200ms fade-in sequence to avoid compositor re-map flicker.
             // Same-screen moves slide over duration_ms.
+            if (root.crossing) {
+                // Mid-run: retarget. Same destination keeps its entry edge;
+                // a different one just appears at its target.
+                const t = root.crossTarget
+                const to = root.screenByName(screenName)
+                if (t && to) {
+                    const sameDest = screenName === t.screen
+                    root.crossTarget = {
+                        x: x, y: y, screen: screenName,
+                        entryX: sameDest ? t.entryX : x,
+                        entryY: sameDest ? t.entryY : y
+                    }
+                }
+                return
+            }
             if (root.currentScreenName !== "" && screenName !== root.currentScreenName) {
+                if (root.crossTo(x, y, screenName, hiddenFlag))
+                    return
                 root.hidden = true
                 migrateTimer.targetX = x
                 migrateTimer.targetY = y

@@ -316,6 +316,7 @@ While the `agent_state` table uses a generic key-value schema (which requires ze
 * **Microphone Wire Format:** Ingestion expects 16 kHz mono PCM16LE audio chunks transmitted as raw binary WebSocket messages, paired with JSON `audio_stream_chunk` sequence headers.
 * **TTS (`tts.py`):** Dispatches synthesis requests to `TTSBackend.synthesize(text, out_path, voice_id=..., params=...)`. Voice ID precedence: `agent_state.current_voice_id` $\to$ `config.toml`. Failover redirects remote HTTP errors to local Piper `default.onnx`.
 * **Viseme Extraction (`lipsync.py`):** Invokes the headless `rhubarb` CLI tool (`-f json -r phonetic <wav_path>`) to extract time-stamped phonetic letter sequences (`A`–`H`, `X`) from generated `.wav` audio. Outputs are mapped to Deskmate's canonical 3D mesh morph targets (`viseme_A`–`viseme_X`) via `blender/viseme_shapekeys.py` (pure Python module). Extraction is bypassed completely if `has_face == false`.
+* **Cold-Engine Warm-Up (`TTSPool.warm_up`):** A remote engine that sat idle (or was swapped out across a sleep) can blow its request timeout on the first sentence after a long gap, which sends that sentence to Piper (`voice fallback`, ~12 s) and puts the engine on cooldown. On a `User_Away -> User_Active` transition the daemon therefore sends every remote a throwaway one-word request (`"Hi."`, scratch file `<voice_cache_dir>/_warmup.wav`) *concurrently* with the transition work, and the return greeting waits for it before synthesizing. Best effort: a failed warm-up is logged at info level (`TTS remote '<name>' warmed up in X s` / `warm-up failed after X s`) and never starts a cooldown; only the real request decides a remote is down. It runs only when `greet_on_return` is on and a remote is configured.
 * **Latency & Chunking:** Generates `speech` envelopes per sentence boundary for streaming dialogue, delivering `{utterance_id, chunk_seq, final, wav_path, audio_url, delivery, visemes}`.
 * **Prosody & Delivery Mapping:** Deterministically maps traits and mood to delivery gestures (`deadpan` if sarcasm $\ge 70$, `animated` if energy $\ge 70$, `subdued` if energy $\le 30$, `explanatory` for code/lengthy explanations).
 
@@ -370,6 +371,10 @@ Governed by [DESIGN_AVATAR_EVOLUTION_FLOW.md](DESIGN_AVATAR_EVOLUTION_FLOW.md):
   * **`User_Away`:** Screensaver active, session locked, or display sleeping.
   * **`User_Idle`:** No window/pointer activity for longer than `idle_after_s` (default 10m).
   * **`User_Active`:** Active window interaction and unlocked session.
+
+### 1a. Return Greeting (`_handle_presence_transition`)
+* On `User_Away -> User_Active`, unless `greet_on_return` is off or `greet_cooldown_s` has not elapsed (a just-revealed look always greets), the greeting is delivered exactly like a model reply, in this order: store it as an `assistant` interaction (`provider = "presence"`), broadcast `chat_response`, broadcast `play_gesture` (`greet`), then speak it (after the TTS warm-up above). The text must reach chat and history even if the voice is slow, falls back, or the overlay is not connected when the speech envelopes are sent.
+* The `presence.transition` event's `greeted` flag means the greeting text was chosen and delivered, not that audio played; audio outcome is the separate `speech.chunk` event (`backend`, `synth_s`).
 
 ### 2. Non-Intrusive Placement (`placement.py`)
 Returns screen-local `Placement(x, y, screen_name, hidden)`:
