@@ -299,6 +299,8 @@ Declares all allowable outfits, footwear options, and socket-mounted accessories
     "speech_indicator_mode": "viseme_shapekeys",
     "capabilities": {"has_head": true, "has_arms": true, "has_legs": true, "has_face": true},
     "viseme_shape_keys": ["viseme_A", "..."],
+    "blink_shape_keys": ["blink"],
+    "run_shape_keys": [],
     "animation_clips": [{"name": "idle_lookaround", "loop": true, "duration_s": 4.0}],
     "bounds": {"height_m": 1.65, "width_m": 0.55, "depth_m": 0.32},
     "warnings": []

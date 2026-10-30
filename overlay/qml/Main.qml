@@ -293,6 +293,7 @@ Window {
             id: idleBehaviors
             avatar: avatar3d.modelNode
             moving: root.moving
+            controller: avatar3d.controller
         }
 
         InteractionBar {
@@ -455,6 +456,8 @@ Window {
                 root.pendingManifestVersion = current.version
                 root.hasFace = current.has_face
                 avatar3d.controller.shapeKeyNames = current.viseme_shape_keys || []
+                avatar3d.controller.blinkKeyNames = current.blink_shape_keys || []
+                avatar3d.controller.runKeyNames = current.run_shape_keys || []
                 root.currentLookPath = "file://" + assetDir + "/" + current.glb_filename
             }
             if (config.shortcuts) {
@@ -524,6 +527,8 @@ Window {
                 root.pendingManifestVersion = current.version
                 root.hasFace = current.has_face
                 avatar3d.controller.shapeKeyNames = current.viseme_shape_keys || []
+                avatar3d.controller.blinkKeyNames = current.blink_shape_keys || []
+                avatar3d.controller.runKeyNames = current.run_shape_keys || []
                 root.currentLookPath = "file://" + root.deskmateDataDir + "/" + current.glb_filename
             }
         }

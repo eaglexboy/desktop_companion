@@ -88,6 +88,39 @@ def test_tier3_generation(tmp_path):
     assert build_json["evaluated_triangles"] > 0
 
 
+def test_generated_eyes_carry_a_blink_morph_target(tmp_path):
+    import json
+    import struct
+
+    _, out_path, build_json = _compile(_minimal_spec(), tmp_path)
+    assert build_json["blink_shape_keys"] == ["blink"]
+    data = out_path.read_bytes()
+    gltf = json.loads(data[20 : 20 + struct.unpack("<I", data[12:16])[0]])
+    by_name = {n["name"]: n for n in gltf["nodes"] if "mesh" in n}
+    for eye in ("Eye_L", "Eye_R"):
+        mesh = gltf["meshes"][by_name[eye]["mesh"]]
+        assert len(mesh["primitives"][0]["targets"]) == 1  # one morph target: blink
+    # the mouth keeps its nine visemes; blink must not leak into it
+    mouth = gltf["meshes"][by_name["Mouth"]["mesh"]]
+    assert len(mouth["primitives"][0]["targets"]) == 9
+
+
+def test_legged_avatars_get_run_pose_morph_targets(tmp_path):
+    import json
+    import struct
+
+    _, out_path, build_json = _compile(_minimal_spec(base_template="standard_humanoid_male"), tmp_path)
+    assert build_json["run_shape_keys"] == ["run_a", "run_b"]
+    data = out_path.read_bytes()
+    gltf = json.loads(data[20 : 20 + struct.unpack("<I", data[12:16])[0]])
+    body = next(n for n in gltf["nodes"] if n.get("name") == "Body")
+    assert len(gltf["meshes"][body["mesh"]]["primitives"][0]["targets"]) == 2
+
+    # legless avatars keep the plain hop: no run keys
+    _, _, blob = _compile(_minimal_spec(), tmp_path, "blob")
+    assert blob["run_shape_keys"] == []
+
+
 def test_humanoid_base_templates_build_a_procedural_humanoid_when_no_model_exists(tmp_path):
     """With no standard_humanoid_{female,male}.glb installed, the generator
     builds its own humanoid: a head, two arms and two legs, rigged -- not the
@@ -120,6 +153,7 @@ def test_installed_model_is_used_not_discarded(tmp_path):
     assert build_json["status"] == "ok"
     assert build_json["capabilities"] == {"has_head": True, "has_arms": True, "has_legs": True, "has_face": True}
     assert len(build_json["viseme_shape_keys"]) == 9
+    assert build_json["blink_shape_keys"] == []  # an imported model has no generated eye meshes
     assert build_json["bounds"]["height_m"] == pytest.approx(2.5, abs=0.01)
     assert not any("procedurally" in w for w in build_json["warnings"])
 

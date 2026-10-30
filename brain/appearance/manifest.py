@@ -47,6 +47,8 @@ class AssetVersionEntry(_Strict):
     speech_indicator_mode: Literal["viseme_shapekeys", "talk_pulse"]
     capabilities: dict[str, bool]
     viseme_shape_keys: list[str]
+    blink_shape_keys: list[str] = []
+    run_shape_keys: list[str] = []
     animation_clips: list[AnimationClipEntry]
     bounds: dict[str, float]
     warnings: list[str] = []

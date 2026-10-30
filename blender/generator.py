@@ -257,7 +257,16 @@ def build_body_humanoid(proportions: dict, palette: dict, surface_material: str)
     bpy.ops.object.origin_set(type="ORIGIN_GEOMETRY", center="BOUNDS")
     body.select_set(False)
     head_loc = (0.0, 0.0, 2.05 * h)
-    layout = {"arm_x": arm_x, "shoulder_z": shoulder_z, "hand_z": hand_z, "leg_x": leg_x, "hip_z": 0.9 * h}
+    layout = {
+        "arm_x": arm_x,
+        "shoulder_z": shoulder_z,
+        "hand_z": hand_z,
+        "leg_x": leg_x,
+        "hip_z": 0.9 * h,
+        "arm_r": arm_r,
+        "leg_r": 0.15 * b,
+        "height": h,
+    }
     return body, head_loc, True, True, layout
 
 
@@ -270,7 +279,14 @@ def build_head(head_loc) -> bpy.types.Object:
     return head
 
 
+BLINK_SHAPE_KEY = "blink"
+
+
 def build_eyes(head_loc, color: tuple[float, float, float, float]):
+    """Two eyeball spheres, each with a Basis plus a `blink` shape key that
+    squashes the eye flat along its vertical (local Z) axis about its own
+    centre. The overlay drives that key's weight to blink; it is not a
+    viseme and is reported separately as `blink_shape_keys`."""
     eyes = []
     for side, x in (("L", -0.22), ("R", 0.22)):
         bpy.ops.mesh.primitive_uv_sphere_add(
@@ -279,6 +295,12 @@ def build_eyes(head_loc, color: tuple[float, float, float, float]):
         eye = bpy.context.active_object
         eye.name = f"Eye_{side}"
         eye.data.materials.append(make_material(f"EyeMat_{side}", (0.05, 0.05, 0.05, 1.0)))
+        eye.shape_key_add(name="Basis")
+        blink = eye.shape_key_add(name=BLINK_SHAPE_KEY)
+        for i, v in enumerate(eye.data.vertices):
+            blink.data[i].co.x = v.co.x
+            blink.data[i].co.y = v.co.y
+            blink.data[i].co.z = v.co.z * 0.08
         eyes.append(eye)
     return eyes
 
@@ -768,6 +790,88 @@ def build_socket_accessory(socket_name: str, item: str, head_loc, palette: dict,
 
 
 # --- armature / rigging --------------------------------------------------------
+
+
+RUN_SHAPE_KEYS = ("run_a", "run_b")
+
+# Run-cycle extremes, in degrees: swing about the hip/shoulder, plus how far
+# the knee folds (heel kicked up on the trailing leg). Positive rotation about
+# +X carries a point hanging below the pivot toward +Y, i.e. backwards, since
+# avatars face -Y; so forward swing is negative.
+_RUN_LEG_SWING = (-38.0, 32.0)  # (leading leg, trailing leg)
+_RUN_KNEE_BEND = (20.0, 70.0)
+_RUN_ARM_SWING = (-40.0, 40.0)  # arm on the side of the leading leg swings back
+
+
+def _smooth01(t: float) -> float:
+    t = max(0.0, min(1.0, t))
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _rot_x(co, pivot_yz: tuple[float, float], angle: float):
+    """Rotate `co` about the X axis through (any x, pivot_y, pivot_z)."""
+    c, s = math.cos(angle), math.sin(angle)
+    y, z = co.y - pivot_yz[0], co.z - pivot_yz[1]
+    return mathutils.Vector((co.x, pivot_yz[0] + y * c - z * s, pivot_yz[1] + y * s + z * c))
+
+
+def _run_pose(co, layout: dict, lead_side: int):
+    """World-space `co` deformed into one extreme of the run cycle. `lead_side`
+    is the sign of the x of the leg that is forward (-1 or +1). Pure geometry,
+    keyed off the humanoid `layout`, so it also fits clothes and shoes built
+    around the same body."""
+    h = layout["height"]
+    leg_x, leg_r, hip_z = layout["leg_x"], layout["leg_r"], layout["hip_z"]
+    arm_x, arm_r, shoulder_z = layout["arm_x"], layout["arm_r"], layout["shoulder_z"]
+    out = co.copy()
+
+    # Legs. Weight fades out sideways toward the body centreline (so there is
+    # no tear between the legs) and upward into the hips.
+    leg_side = -1 if co.x < 0 else 1
+    off = abs(abs(co.x) - leg_x)
+    w_side = 1.0 - _smooth01((off - 1.5 * leg_r) / (0.5 * leg_r))
+    w_hip = _smooth01((hip_z - co.z) / (0.25 * h))
+    w_leg = w_side * w_hip
+    if w_leg > 0.0:
+        leading = leg_side == lead_side
+        swing = math.radians(_RUN_LEG_SWING[0 if leading else 1])
+        bend = math.radians(_RUN_KNEE_BEND[0 if leading else 1])
+        knee_z = hip_z * 0.5
+        w_knee = _smooth01((knee_z - co.z) / (0.18 * h))
+        out = _rot_x(out, (0.0, knee_z), bend * w_knee * w_leg)
+        out = _rot_x(out, (0.0, hip_z), swing * w_leg)
+
+    # Arms swing against the leg on the same side.
+    off = abs(abs(co.x) - arm_x)
+    w_side = 1.0 - _smooth01((off - 1.45 * arm_r) / (0.55 * arm_r))
+    w_sh = _smooth01((shoulder_z - co.z) / (0.2 * h))
+    w_arm = w_side * w_sh if abs(co.x) > arm_x - 2.0 * arm_r and co.z > hip_z * 0.7 else 0.0
+    if w_arm > 0.0:
+        arm_side = -1 if co.x < 0 else 1
+        swing = math.radians(_RUN_ARM_SWING[1 if arm_side == lead_side else 0])
+        out = _rot_x(out, (0.0, shoulder_z), swing * w_arm)
+    return out
+
+
+def add_run_shape_keys(objs: list, layout: dict) -> list[str]:
+    """Adds `run_a`/`run_b` (the two mirrored extremes of a run cycle: legs
+    and arms swinging, knees folding) to each humanoid mesh. The overlay
+    cross-fades between them while the avatar travels, which stands in for a
+    run clip it cannot play. Returns the key names, or [] if nothing took."""
+    added = False
+    for obj in objs:
+        if obj is None or obj.type != "MESH" or not obj.data.vertices:
+            continue
+        mw, inv = obj.matrix_world, obj.matrix_world.inverted()
+        if obj.data.shape_keys is None:
+            obj.shape_key_add(name="Basis")
+        for key_name, lead_side in zip(RUN_SHAPE_KEYS, (-1, 1)):
+            sk = obj.shape_key_add(name=key_name)
+            for i, v in enumerate(obj.data.vertices):
+                new_co = inv @ _run_pose(mw @ v.co, layout, lead_side)
+                sk.data[i].co.x, sk.data[i].co.y, sk.data[i].co.z = new_co.x, new_co.y, new_co.z
+        added = True
+    return list(RUN_SHAPE_KEYS) if added else []
 
 
 def build_armature(has_arms: bool, head_loc, *, has_legs: bool = False, layout: dict | None = None) -> bpy.types.Object:
@@ -1343,6 +1447,7 @@ def main() -> None:
             reset_scene()
             bpy.context.scene.render.fps = 30
 
+    run_keys: list[str] = []
     if imported is not None:
         body = imported["body"]
         head_loc, has_arms, has_legs = imported["head_loc"], imported["has_arms"], imported["has_legs"]
@@ -1404,6 +1509,8 @@ def main() -> None:
             if item:
                 accessory_objs += build_socket_accessory(socket_name, item, head_loc, palette, DEPLOY_DIR)
 
+        if has_legs and layout is not None:
+            run_keys = add_run_shape_keys([body, *outfit_objs, *footwear_objs], layout)
         arm_obj = build_armature(has_arms, head_loc, has_legs=has_legs, layout=layout)
         meshes = [body, head, *eyes, mouth, teeth, *outfit_objs, *footwear_objs, *accessory_objs]
         parent_to_armature(arm_obj, meshes)
@@ -1451,6 +1558,8 @@ def main() -> None:
         "speech_indicator_mode": speech_indicator_mode,
         "capabilities": {"has_head": True, "has_arms": has_arms, "has_legs": has_legs, "has_face": has_face},
         "viseme_shape_keys": viseme_keys,
+        "blink_shape_keys": [BLINK_SHAPE_KEY] if eyes else [],
+        "run_shape_keys": run_keys,
         "animation_clips": clip_metadata(baked_clips),
         "bounds": bounds,
         "warnings": warnings,
