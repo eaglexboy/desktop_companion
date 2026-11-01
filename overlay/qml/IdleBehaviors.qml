@@ -185,7 +185,7 @@ Item {
     })
 
     readonly property bool microRunning: lookAroundAnim.running || stretchAnim.running
-        || peekAnim.running || nodAnim.running || fidgetAnim.running
+        || peekAnim.running || nodAnim.running || fidgetAnim.running || clipBusy
 
     function pickMicroIdle() {
         const weights = microWeights[mood] || microWeights["neutral"]
@@ -201,7 +201,31 @@ Item {
         return "lookaround"
     }
 
+    // The baked clip standing in for each micro-idle (see the generator's
+    // CORE_IDLE_CLIPS / MOOD_IDLE_CLIPS). When the loaded avatar has the
+    // clip it is played instead of the transform-based stand-in below, so
+    // imported models bring their own idle motion.
+    readonly property var bakedIdleClips: ({
+        "lookaround": "idle_lookaround",
+        "stretch": "idle_stretch",
+        "peek": "idle_peek",
+        "nod": "idle_sleepy",
+        "fidget": "idle_fidget"
+    })
+    property bool clipBusy: false
+    Timer {
+        id: clipBusyTimer
+        onTriggered: root.clipBusy = false
+    }
+
     function playMicroIdle(name) {
+        const clip = bakedIdleClips[name]
+        if (clip && root.controller && root.controller.playClip(clip, 1)) {
+            root.clipBusy = true
+            clipBusyTimer.interval = root.controller.clipDurationMs(clip) + 100
+            clipBusyTimer.restart()
+            return
+        }
         if (name === "lookaround") lookAroundAnim.start()
         else if (name === "stretch") stretchAnim.start()
         else if (name === "peek") peekAnim.start()
@@ -213,6 +237,10 @@ Item {
     // neutral. Called when a higher tier (thinking, moving, speech,
     // gesture) takes over the transform.
     function cancelMicroIdle() {
+        if (root.clipBusy && root.controller)
+            root.controller.stopAllClips()
+        root.clipBusy = false
+        clipBusyTimer.stop()
         lookAroundAnim.stop()
         stretchAnim.stop()
         peekAnim.stop()

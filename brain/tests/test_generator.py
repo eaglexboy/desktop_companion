@@ -121,6 +121,13 @@ def test_legged_avatars_get_run_pose_morph_targets(tmp_path):
     assert blob["run_shape_keys"] == []
 
 
+def test_male_and_female_humanoids_are_visibly_different(tmp_path):
+    _, _, male = _compile(_minimal_spec(base_template="standard_humanoid_male"), tmp_path, "male")
+    _, _, female = _compile(_minimal_spec(base_template="standard_humanoid_female"), tmp_path, "female")
+    # broad shoulders vs narrow ones: the figure's overall width differs by well over 10%
+    assert male["bounds"]["width_m"] > female["bounds"]["width_m"] * 1.1
+
+
 def test_humanoid_base_templates_build_a_procedural_humanoid_when_no_model_exists(tmp_path):
     """With no standard_humanoid_{female,male}.glb installed, the generator
     builds its own humanoid: a head, two arms and two legs, rigged -- not the

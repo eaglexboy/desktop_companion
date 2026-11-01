@@ -28,6 +28,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from brain.appearance.blender_gen import is_build_running
+from brain.appearance.thumbnails import ensure_thumbnails
 from brain.appearance.manifest import load_manifest
 from brain.appearance.spec import CatalogError, LookSpec, validate_against_catalogs
 from brain.config import (
@@ -147,7 +148,9 @@ def build_app_state(settings: Settings | None = None) -> AppState:
         state_holder["state"].interaction_active = interaction_state == "active"
 
     async def _on_asset_swap_result(ok: bool, version: int, error: str | None) -> None:
-        if not ok:
+        if ok:
+            logger.info("overlay reported asset_swap_result ok for version %s", version)
+        else:
             logger.warning("overlay reported asset_swap_result failure for version %s: %s", version, error)
             state_holder["state"].evolution.handle_asset_swap_failure(version)
 
@@ -625,6 +628,15 @@ async def _apply_reloaded_settings(state: AppState, new_settings: Settings) -> N
         await state.hub.broadcast("config_update", welcome_config_subset(new_settings))
 
 
+async def _render_missing_look_thumbnails(state: AppState) -> None:
+    """Gives every look version a picture for the status page's Looks tab,
+    including ones whose .glb is long pruned (rebuilt from the stored spec)."""
+    try:
+        await ensure_thumbnails(state.settings)
+    except Exception:
+        logger.exception("look thumbnail backfill failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state = build_app_state()
@@ -646,6 +658,7 @@ async def lifespan(app: FastAPI):
     state.evolution.reconcile_staged_on_boot()
 
     background = [
+        asyncio.create_task(_render_missing_look_thumbnails(state)),
         asyncio.create_task(_reflection_loop(state)),
         asyncio.create_task(_mood_decay_loop(state)),
         asyncio.create_task(_gc_loop(state)),

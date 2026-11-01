@@ -191,3 +191,32 @@ def test_db_rows_still_reads_a_database_without_the_reply_raw_table(settings):
     rows = status_app._db_rows(settings)
 
     assert rows["available"] and [m["text"] for m in rows["interactions"]] == ["hello"]
+
+
+def test_looks_lists_versions_newest_first_with_picture_flag(settings):
+    import json
+
+    def entry(version, outfit):
+        return {
+            "version": version, "glb_filename": f"look-v{version}.glb", "created_at": 1000.0 + version, "status": "ok",
+            "look_spec": {"base_template": "standard_humanoid_female", "wardrobe": {"outfit": outfit, "footwear": None},
+                          "accessories": {"socket_eyes": "glasses", "socket_head_top": None}},
+        }
+
+    (settings.deploy_dir / "manifest.json").write_text(
+        json.dumps({"current_version": 2, "versions": [entry(1, "hoodie"), entry(2, "vest")]})
+    )
+    (settings.deploy_dir / "looks").mkdir()
+    (settings.deploy_dir / "looks" / "look-v2.png").write_bytes(b"\x89PNG")
+
+    data = _client().get("/api/looks").json()
+    assert data["current"] == 2
+    assert [look["version"] for look in data["looks"]] == [2, 1]
+    assert data["looks"][0]["has_picture"] and not data["looks"][1]["has_picture"]
+    assert data["looks"][0]["summary"] == "standard humanoid female, vest, glasses"
+    assert _client().get("/api/looks/2.png").status_code == 200
+    assert _client().get("/api/looks/1.png").status_code == 404
+
+
+def test_looks_empty_without_manifest(settings):
+    assert _client().get("/api/looks").json() == {"current": None, "looks": []}

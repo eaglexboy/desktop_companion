@@ -104,6 +104,24 @@ public:
     // load, including hot reloads -- those reuse the same loader object.
     Q_INVOKABLE void resetMorphWeights();
 
+    // Baked glTF clips. RuntimeLoader turns every clip into a Qt Quick
+    // Timeline animation object (objectName = the clip's name) and starts it
+    // looping, with no API to prevent that. These helpers find those objects
+    // under `root` so the overlay can stop them all after a load and then
+    // play one clip at a time by name.
+    // Names of the clips present (unique; per-node object clips such as
+    // "idle_blink.Eye_L" are skipped).
+    Q_INVOKABLE QStringList clipNames() const;
+    // Stops every clip and rewinds it to frame 0 (the rest pose in our
+    // generated clips). Returns how many animation objects were touched.
+    Q_INVOKABLE int stopAllClips();
+    // Plays clip `name` (stopping any other first): `loops` times, or
+    // forever when -1. Returns false when no such clip exists. A finite
+    // clip rewinds itself when done.
+    Q_INVOKABLE bool playClip(const QString &name, int loops = 1);
+    // Duration in ms of one pass of clip `name`, or 0 if unknown.
+    Q_INVOKABLE int clipDurationMs(const QString &name) const;
+
 signals:
     void rootChanged();
     void shapeKeyNamesChanged();
@@ -113,6 +131,9 @@ signals:
 private:
     void applyWeights(const QHash<QString, float> &desired);
     int zeroAllMorphWeights();
+    QList<QObject *> clipAnimations(const QString &name = QString()) const;
+    static QObject *timelineOf(QObject *anim);
+    void rewindClip(QObject *anim);
     bool isBlinkModel(int targetCount) const;
     bool isRunModel(int targetCount) const;
     // Models whose morph targets are not visemes (see blink/run key names).
@@ -126,4 +147,5 @@ private:
     QStringList m_blinkKeyNames;
     QStringList m_runKeyNames;
     int m_resetGeneration = 0;
+    int m_clipGeneration = 0;
 };

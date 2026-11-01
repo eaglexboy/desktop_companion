@@ -7,6 +7,7 @@ export const TABS = [
   "thinking",
   "skills",
   "timeline",
+  "looks",
   "chat",
   "logs",
 ];

@@ -111,6 +111,10 @@ _REVERT_APPEARANCE_KEYWORDS = (
     "change back",
     "old appearance",
     "previous look",
+    "back to version",
+    "restore version",
+    "revert to version",
+    "roll back to version",
 )
 
 

@@ -158,12 +158,98 @@ void AvatarController::resetStep(int generation, int attempt, int passesAfterFou
     if (generation != m_resetGeneration)
         return;
     const int found = zeroAllMorphWeights();
+    // New clip objects may appear late too, each starting out looping.
+    stopAllClips();
     const bool done = (found > 0 && passesAfterFound >= 5) || attempt >= 50;
     if (done)
         return;
     QTimer::singleShot(100, this, [this, generation, attempt, found, passesAfterFound]() {
         resetStep(generation, attempt + 1, found > 0 ? passesAfterFound + 1 : 0);
     });
+}
+
+// QQuickTimelineAnimation / QQuickTimeline are private types, so they are
+// found by class name and driven through their properties.
+QList<QObject *> AvatarController::clipAnimations(const QString &name) const
+{
+    QList<QObject *> found;
+    if (!m_root)
+        return found;
+    QList<QObject *> stack;
+    stack.append(m_root);
+    while (!stack.isEmpty()) {
+        QObject *node = stack.takeLast();
+        if (!qstrcmp(node->metaObject()->className(), "QQuickTimelineAnimation")
+            && (name.isEmpty() || node->objectName() == name))
+            found.append(node);
+        stack.append(node->children());
+    }
+    return found;
+}
+
+QStringList AvatarController::clipNames() const
+{
+    QStringList names;
+    for (QObject *anim : clipAnimations()) {
+        const QString n = anim->objectName();
+        if (!n.isEmpty() && !n.contains(QLatin1Char('.')) && !names.contains(n))
+            names << n;
+    }
+    return names;
+}
+
+QObject *AvatarController::timelineOf(QObject *anim)
+{
+    QObject *parent = anim->parent();
+    return parent && !qstrcmp(parent->metaObject()->className(), "QQuickTimeline") ? parent : nullptr;
+}
+
+void AvatarController::rewindClip(QObject *anim)
+{
+    anim->setProperty("running", false);
+    // The animation is a child of the Timeline it drives (its `timeline`
+    // property is not readable as a QObject* from here).
+    if (QObject *timeline = timelineOf(anim))
+        timeline->setProperty("currentFrame", anim->property("from"));
+}
+
+int AvatarController::stopAllClips()
+{
+    ++m_clipGeneration;
+    const QList<QObject *> anims = clipAnimations();
+    for (QObject *anim : anims)
+        rewindClip(anim);
+    return int(anims.size());
+}
+
+int AvatarController::clipDurationMs(const QString &name) const
+{
+    const QList<QObject *> anims = clipAnimations(name);
+    return anims.isEmpty() ? 0 : anims.first()->property("duration").toInt();
+}
+
+bool AvatarController::playClip(const QString &name, int loops)
+{
+    const QList<QObject *> anims = clipAnimations(name);
+    if (anims.isEmpty())
+        return false;
+    stopAllClips();
+    const int generation = m_clipGeneration;
+    for (QObject *anim : anims) {
+        anim->setProperty("loops", loops);
+        anim->setProperty("running", true);
+    }
+    if (loops > 0) {
+        const int totalMs = clipDurationMs(name) * loops + 50;
+        QTimer::singleShot(totalMs, this, [this, generation, name]() {
+            // Only if nothing else has been played/stopped since.
+            if (generation != m_clipGeneration)
+                return;
+            for (QObject *anim : clipAnimations(name))
+                rewindClip(anim);
+        });
+    }
+    return true;
 }
 
 void AvatarController::setVisemeTimeline(const QVariantList &visemes)

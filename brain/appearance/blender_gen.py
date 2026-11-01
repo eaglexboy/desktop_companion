@@ -268,7 +268,13 @@ async def compile_and_publish(
             if on_status:
                 on_status("idle")
 
-        return result
+    if result.outcome == "published":
+        # Outside the build lock: the picture is a nicety, a user's next look
+        # request should not wait for it.
+        from brain.appearance.thumbnails import render_thumbnail
+
+        await render_thumbnail(settings, result.glb_path, result.version)
+    return result
 
 
 def reveal_staged(settings: Settings, version: int) -> CompileResult:

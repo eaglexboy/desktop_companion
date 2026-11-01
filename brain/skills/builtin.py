@@ -26,8 +26,9 @@ async def _change_look(args: dict[str, Any], state: Any) -> str:
     return await state.evolution.change_appearance(args["request"])
 
 
-async def _revert_look(_args: dict[str, Any], state: Any) -> str:
-    return await state.evolution.revert_appearance()
+async def _revert_look(args: dict[str, Any], state: Any) -> str:
+    version = str(args.get("version", "")).strip()
+    return await state.evolution.revert_appearance(f"version {version}" if version.isdigit() else "")
 
 
 def register_builtin(registry: SkillRegistry) -> None:
@@ -55,4 +56,11 @@ def register_builtin(registry: SkillRegistry) -> None:
             (Param("request", "the look the user asked for"),),
         )
     )
-    registry.register(Skill("revert_look", "go back to your previous appearance", _revert_look))
+    registry.register(
+        Skill(
+            "revert_look",
+            "go back to your previous appearance, or to a numbered look from the status page's Looks tab",
+            _revert_look,
+            (Param("version", "the look number to go back to; leave out for the previous look", required=False),),
+        )
+    )

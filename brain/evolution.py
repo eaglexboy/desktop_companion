@@ -27,6 +27,7 @@ from brain.appearance.blender_gen import (
     reveal_staged,
 )
 from brain.appearance.manifest import (
+    AssetManifest,
     load_manifest,
     mark_version_status,
     revert_to_version,
@@ -44,6 +45,7 @@ from brain.appearance.spec import (
     merge_delta,
     validate_against_catalogs,
 )
+from brain.appearance.thumbnails import ensure_thumbnails
 from brain.config import Settings
 from brain.events import emit, llm_purpose
 from brain.llm_pool import LLMPool
@@ -100,6 +102,7 @@ _PROGRESS_LABELS = {
     "done": "New look ready!",
     "staged": "New look built, revealing it when you're back",
     "failed": "Couldn't change my look",
+    "unchanged": "I already look like that",
 }
 ProgressHook = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -178,6 +181,15 @@ def trigger_b_bias_lines(traits: dict[str, float], mood: dict[str, float]) -> li
     if mood.get("stress", 50.0) >= 70:
         lines.append("Elevated stress mood: lean toward cozy, relaxed attire.")
     return lines
+
+
+_VERSION_IN_REQUEST = re.compile(r"(?:\bversion|\bv|\blook|#)\s*(?:number\s*|no\.?\s*)?#?\s*(\d+)\b", re.IGNORECASE)
+
+
+def _requested_version(request: str) -> int | None:
+    """The look number a user named ("go back to version 12", "restore look #7"), or None."""
+    match = _VERSION_IN_REQUEST.search(request or "")
+    return int(match.group(1)) if match else None
 
 
 class AvatarEvolution:
@@ -379,6 +391,12 @@ class AvatarEvolution:
             self._record_unmet(request, self._unmet)
 
         merged = merge_delta(current, delta)
+        if merged == current:
+            # The design came back identical to what is already worn; a
+            # rebuild would publish a new version that looks exactly the same.
+            logger.info("Trigger A: design for request=%r matches the current look, not rebuilding", request)
+            await self._progress("unchanged", "user", request=request)
+            return None
         await self._progress("building", "user", summary=look_summary(merged))
         try:
             result = await compile_and_publish(self._settings, merged, is_user_present=lambda: True)
@@ -428,10 +446,17 @@ class AvatarEvolution:
 
     # --- Trigger A: revert --------------------------------------------------
 
-    async def revert_appearance(self, _request: str = "") -> str:
-        """The real `revert_appearance` tool handler. Zero Blender
-        recompilation -- a manifest pointer rewrite only."""
+    async def revert_appearance(self, request: str = "") -> str:
+        """The real `revert_appearance` tool handler. Without a version in the
+        request it steps back one version; "go back to version 12" goes to that
+        one. A look whose file is still kept is a manifest pointer rewrite;
+        an older one is rebuilt from the LookSpec the manifest keeps for every
+        version (published as a new version, so numbers never go backwards)."""
         manifest = load_manifest(self._settings.deploy_dir)
+        requested = _requested_version(request)
+        if requested is not None:
+            return await self._restore_version(manifest, requested)
+
         if manifest is None or manifest.current_version <= 1:
             return "There's no previous look for me to revert to yet."
 
@@ -444,6 +469,36 @@ class AvatarEvolution:
         save_manifest(self._settings.deploy_dir, reverted)
         self._store.set_agent_state("last_redesign_timestamp", str(self._clock()))
         return f"Done -- back to how I looked before: {look_summary(LookSpec.model_validate(target_entry.look_spec))}."
+
+    async def _restore_version(self, manifest: AssetManifest | None, version: int) -> str:
+        entry = manifest.get_version(version) if manifest is not None else None
+        if manifest is None or entry is None:
+            return f"I don't have a look numbered {version}."
+        if manifest.current_version == version:
+            return f"I already look like version {version}."
+        spec = LookSpec.model_validate(entry.look_spec)
+        if (self._settings.current_dir / entry.glb_filename).is_file():
+            save_manifest(self._settings.deploy_dir, revert_to_version(manifest, version))
+            self._store.set_agent_state("last_redesign_timestamp", str(self._clock()))
+            return f"Done -- back to version {version}: {look_summary(spec)}."
+        cancel_running_build()
+        self._schedule_background(self._rebuild_version(version, spec))
+        return f"Version {version} isn't kept around, but I remember how it went. Let me put it back together..."
+
+    async def _rebuild_version(self, version: int, spec: LookSpec) -> CompileResult | None:
+        current = self.current_look_spec()
+        await self._progress("building", "user", summary=look_summary(spec))
+        try:
+            result = await compile_and_publish(self._settings, spec, is_user_present=lambda: True)
+        except Exception as exc:
+            logger.exception("rebuilding look version %d failed", version)
+            await self._progress("failed", "user", error=str(exc)[:200])
+            return None
+        await self._finish(result, "user")
+        if result.outcome == "published":
+            self._stamp_redesign_metadata(current, spec)
+            self._store.add_memory_note(f"Went back to the look of version {version}: {look_summary(spec)}.")
+        return result
 
     # --- Trigger B: autonomous evolution ------------------------------------
 
@@ -534,6 +589,7 @@ class AvatarEvolution:
             self._store.add_memory_note(
                 f"Revealed an appearance change that was staged while away: {look_summary(new_look)}."
             )
+            self._schedule_background(ensure_thumbnails(self._settings, result.manifest))
 
     def reconcile_staged_on_boot(self) -> None:
         """Boot-time crash reconciliation: if `staged_version` is set but

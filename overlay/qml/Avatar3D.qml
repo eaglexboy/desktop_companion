@@ -72,7 +72,7 @@ Item {
             RuntimeLoader {
                 id: loader
                 position: Qt.vector3d(0, -root.pivotHeight, 0)
-                source: glbSanitizer.sanitizedSource(root.lookSource)
+                source: root.lookSource
                 onStatusChanged: {
                     if (status === RuntimeLoader.Status.Success) {
                         avatarController.root = loader

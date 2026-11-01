@@ -189,7 +189,7 @@ mood_half_life_s = 1800                   # Half-life for mood axes to decay tow
 [appearance]
 blender_bin = "blender"                   # Path to Blender executable (Target: 5.0.1, Floor: 4.5 LTS+)
 default_look_spec = "examples/sample_look.json"  # Initial bootstrap LookSpec template
-keep_recent_versions = 3                  # Number of recent .glb build revisions to retain in storage
+keep_recent_versions = 3                  # Number of recent .glb build revisions to retain in storage (thumbnails in <deploy_dir>/looks/ are kept for every version)
 redesign_cooldown_hours_min = 12          # Minimum cooldown between autonomous redesigns
 redesign_cooldown_hours_max = 24          # Maximum cooldown between autonomous redesigns
 autonomous_redesign_probability = 0.5     # Chance of triggering redesign on eligible reflection cycle
@@ -229,7 +229,7 @@ class LLMClient(ABC):
 2. **Provider Selection:** Queries matching capability tags (`code`, `complex_reasoning`, `large_context`) when escalation is warranted.
 3. **Extensible Tool Registry (V1 Accommodation for V2 Skills):**
    * Exposes an open registration method `register_tool(name: str, description: str, parameters: dict, handler: Callable)` in `router.py`, allowing V2 skills to plug in dynamically alongside V1's hardcoded `change_appearance` and `revert_appearance`.
-   * Built-in V1 tools: `change_appearance(request: str)` and `revert_appearance()`.
+   * Built-in V1 tools: `change_appearance(request: str)` and `revert_appearance(request: str = "")`. With no version in the request it steps back one version; "version N" / "look #N" restores that version (pointer rewrite if its `.glb` is kept, else a rebuild from the stored `look_spec` published as a new version; see [ADR_LOOK_HISTORY.md](ADR_LOOK_HISTORY.md)). The `revert_look` skill takes an optional `version` argument.
    * Models lacking native tool calling are supported via a lightweight intent classifier and keyword pre-filter.
 4. **Return Envelope:** Yields `{text, provider, escalated, rationale}`.
 
@@ -333,6 +333,7 @@ Governed by [DESIGN_AVATAR_EVOLUTION_FLOW.md](DESIGN_AVATAR_EVOLUTION_FLOW.md):
    ```
 3. **Subprocess Sandboxing Standard (Accommodation for V2 Skills):** Background script execution utilities standardize on Bubblewrap (`bwrap`) isolation on Linux. If `bwrap` is missing on a host attempting to run sandboxed subprocesses, the execution utility fails fast with `RuntimeError("Bubblewrap ('bwrap') is required for sandboxed skills. Install 'bubblewrap' via your system package manager.")`.
 4. **Option B Staging & Atomic Reveal:**
+   * At start-up the daemon renders a thumbnail for every manifest version that lacks one (`brain/appearance/thumbnails.py`), rebuilding pruned versions from their `look_spec` into scratch; see [ADR_LOOK_HISTORY.md](ADR_LOOK_HISTORY.md).
    * If compiled while `User_Away`, asset is staged in `<deploy_dir>/assets/staged/look-v{N}.glb` with `staged_version` recorded in `agent_state`. Live `manifest.json` is untouched.
    * Upon transition to `User_Active`, asset is moved to `<deploy_dir>/assets/look-v{N}.glb`, hardlinked to `data/current/`, committed atomically via `manifest.json`, and revealed conversationally.
 5. **AssetManifest Schema (`manifest.json`):**
@@ -527,6 +528,8 @@ The primary administrative endpoints and concrete wire payloads include:
   ```
 
 #### `POST /appearance/revert`
+Steps back exactly one version (the tool's no-version form). Restoring a numbered look is a tool/skill request to the companion.
+
 * **Status:** `200 OK`
 * **Response Body:**
   ```json

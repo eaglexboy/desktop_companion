@@ -34,9 +34,9 @@ import sys
 import time
 from pathlib import Path
 
-import bmesh
-import bpy
-import mathutils
+import bmesh  # pyright: ignore[reportMissingImports]
+import bpy  # pyright: ignore[reportMissingImports]
+import mathutils  # pyright: ignore[reportMissingImports]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root, for blender.viseme_shapekeys
 from blender.viseme_shapekeys import (
@@ -217,7 +217,17 @@ def build_body_tier3(base_template: str, proportions: dict, palette: dict, surfa
     return body, head_loc, has_arms, has_legs
 
 
-def build_body_humanoid(proportions: dict, palette: dict, surface_material: str):
+# Per-template body character, applied on top of the user's proportions so
+# the two humanoid bases read as clearly different figures even at the
+# overlay's small size: female = narrower shoulders, wider hips, slimmer
+# limbs and neck; male = broad shoulders, narrower hips, heavier limbs/neck.
+_HUMANOID_CHARACTER = {
+    "standard_humanoid_female": {"shoulder": 0.84, "hip": 1.30, "limb": 0.86, "neck": 0.85},
+    "standard_humanoid_male": {"shoulder": 1.12, "hip": 0.90, "limb": 1.10, "neck": 1.15},
+}
+
+
+def build_body_humanoid(proportions: dict, palette: dict, surface_material: str, base_template: str = ""):
     """Procedural stand-in for a standard_humanoid_* model: pelvis, torso, two
     legs, two arms with hands, feet on the ground (z=0) and the head sitting
     on top, facing -Y. Returns (body_obj, head_location, has_arms, has_legs,
@@ -230,21 +240,24 @@ def build_body_humanoid(proportions: dict, palette: dict, surface_material: str)
     mus = proportions.get("muscularity", 0.5)
     fem = proportions.get("femininity", 0.5)
 
-    shoulder = 0.46 * b * (1.0 + 0.30 * (mus - 0.5) - 0.20 * (fem - 0.5))
-    hip = 0.40 * b * (1.0 + 0.25 * (fem - 0.5))
-    leg_x = 0.30 * b
+    char = _HUMANOID_CHARACTER.get(base_template, {"shoulder": 1.0, "hip": 1.0, "limb": 1.0, "neck": 1.0})
+
+    shoulder = 0.46 * b * (1.0 + 0.30 * (mus - 0.5) - 0.20 * (fem - 0.5)) * char["shoulder"]
+    hip = 0.40 * b * (1.0 + 0.25 * (fem - 0.5)) * char["hip"]
+    leg_r = 0.15 * b * char["limb"]
+    leg_x = 0.30 * b * math.sqrt(char["hip"])  # legs sit under the pelvis
     arm_x = shoulder + 0.14
     shoulder_z, hand_z = 1.5 * h, 0.85 * h
-    arm_r = 0.11 * b * (1.0 + 0.4 * (mus - 0.5))
+    arm_r = 0.11 * b * (1.0 + 0.4 * (mus - 0.5)) * char["limb"]
     mat = make_material("BodyMat", primary, material=surface_material)
 
     parts = [
         (_prim("sphere", (0, 0, 0.95 * h), scale=(hip, 0.30 * b, 0.28 * h)), mat),  # pelvis
         (_prim("sphere", (0, 0, 1.22 * h), scale=(shoulder, 0.32 * b, 0.46 * h)), mat),  # torso
-        (_prim("cylinder", (0, 0, 1.66 * h), r=0.13 * b, depth=0.2 * h), mat),  # neck
+        (_prim("cylinder", (0, 0, 1.66 * h), r=0.13 * b * char["neck"], depth=0.2 * h), mat),  # neck
     ]
     for x in (-leg_x, leg_x):
-        parts.append((_prim("cylinder", (x, 0, 0.45 * h), r=0.15 * b, depth=0.9 * h), mat))
+        parts.append((_prim("cylinder", (x, 0, 0.45 * h), r=leg_r, depth=0.9 * h), mat))
     for x in (-arm_x, arm_x):
         parts.append((_prim("cylinder", (x, 0, (shoulder_z + hand_z) / 2), r=arm_r, depth=shoulder_z - hand_z), mat))
         parts.append((_prim("sphere", (x, 0, hand_z), r=arm_r * 1.3), mat))  # hand
@@ -264,7 +277,7 @@ def build_body_humanoid(proportions: dict, palette: dict, surface_material: str)
         "leg_x": leg_x,
         "hip_z": 0.9 * h,
         "arm_r": arm_r,
-        "leg_r": 0.15 * b,
+        "leg_r": leg_r,
         "height": h,
     }
     return body, head_loc, True, True, layout
@@ -1482,7 +1495,9 @@ def main() -> None:
     else:
         layout = None
         if base_template in ("standard_humanoid_female", "standard_humanoid_male"):
-            body, head_loc, has_arms, has_legs, layout = build_body_humanoid(proportions, palette, surface_material)
+            body, head_loc, has_arms, has_legs, layout = build_body_humanoid(
+                proportions, palette, surface_material, base_template
+            )
         else:
             procedural_template = base_template if base_template == "primitive_mechanical" else "primitive_blob"
             body, head_loc, has_arms, has_legs = build_body_tier3(procedural_template, proportions, palette, surface_material)

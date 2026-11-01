@@ -73,7 +73,7 @@ In local V1, passing filesystem paths (`wav_path`, `<deploy_dir>/data/current/<g
 * **Storage Tiering & Garbage Collection:**
   * Ephemeral audio lives strictly in `workspace_dir` (fast scratch tier), never persistent `deploy_dir`.
   * Audio files have a $600\,\text{s}$ (10 minute) expiration. A background task in `brain/main.py` scans `workspace_dir` every $300\,\text{s}$ (5 minutes) and unlinks files with `ctime > 600s`.
-  * 3D models (`.glb`) in `deploy_dir/assets/` follow the LRU version-retention policy (`keep_recent_versions = 3`) rather than a time-based TTL.
+  * 3D models (`.glb`) in `deploy_dir/assets/` follow the LRU version-retention policy (`keep_recent_versions = 3`) rather than a time-based TTL. The per-version thumbnails in `deploy_dir/looks/` are small, derived, and kept for every version ([ADR_LOOK_HISTORY.md](ADR_LOOK_HISTORY.md)).
 
 ---
 

@@ -9,6 +9,7 @@ lifecycle.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -261,6 +262,24 @@ async def test_trigger_a_reports_failure_when_no_valid_delta(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_trigger_a_does_not_rebuild_an_identical_look(tmp_path, monkeypatch):
+    _install_fake_compile_and_publish(monkeypatch)
+    stages: list[dict] = []
+
+    async def hook(payload: dict) -> None:
+        stages.append(payload)
+
+    settings = _settings(tmp_path)
+    evolution = AvatarEvolution(settings, _store(tmp_path), None, on_progress=hook)
+    same = json.dumps({"seed": evolution.current_look_spec().seed})
+    evolution = AvatarEvolution(settings, _store(tmp_path), _pool(same), on_progress=hook)
+
+    assert await evolution._run_trigger_a("be what you already are") is None
+    assert [p["stage"] for p in stages] == ["designing", "unchanged"]
+    assert load_manifest(settings.deploy_dir) is None  # nothing was published
+
+
+@pytest.mark.asyncio
 async def test_a_raising_progress_hook_never_breaks_the_redesign(tmp_path, monkeypatch):
     _install_fake_compile_and_publish(monkeypatch)
 
@@ -350,6 +369,60 @@ async def test_revert_appearance_rewrites_manifest_pointer_only(tmp_path, monkey
     manifest = _manifest(settings)
     assert manifest.current_version == 1
     assert len(manifest.versions) == 2  # revert doesn't delete history
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("go back to version 12", 12),
+        ("restore look #7 please", 7),
+        ("revert to v3", 3),
+        ("Version number 5", 5),
+        ("change back", None),
+        ("go back 5 minutes", None),
+    ],
+)
+def test_requested_version_parsing(text, expected):
+    assert evolution_module._requested_version(text) == expected
+
+
+@pytest.mark.asyncio
+async def test_revert_to_named_version_rewrites_pointer_when_file_kept(tmp_path, monkeypatch):
+    _install_fake_compile_and_publish(monkeypatch)
+    settings = _settings(tmp_path)
+    evolution = AvatarEvolution(
+        settings,
+        _store(tmp_path),
+        _pool(*(json.dumps({"wardrobe": {"outfit": o}}) for o in ("hoodie", "vest", "tshirt_jeans"))),
+    )
+    for request in ("a", "b", "c"):
+        await evolution._run_trigger_a(request)
+    assert _manifest(settings).current_version == 3
+
+    reply = await evolution.revert_appearance("go back to version 1")
+    assert "version 1" in reply
+    assert _manifest(settings).current_version == 1
+    assert "already" in (await evolution.revert_appearance("version 1")).lower()
+    assert "numbered 99" in await evolution.revert_appearance("version 99")
+
+
+@pytest.mark.asyncio
+async def test_revert_to_pruned_version_rebuilds_it_as_a_new_version(tmp_path, monkeypatch):
+    _install_fake_compile_and_publish(monkeypatch)
+    settings = _settings(tmp_path)
+    evolution = AvatarEvolution(
+        settings, _store(tmp_path), _pool(json.dumps({"wardrobe": {"outfit": "hoodie"}}), json.dumps({"wardrobe": {"outfit": "vest"}}))
+    )
+    await evolution._run_trigger_a("a")
+    await evolution._run_trigger_a("b")
+    (settings.current_dir / "look-v1.glb").unlink()
+
+    reply = await evolution.revert_appearance("restore version 1")
+    assert "put it back together" in reply
+    await asyncio.gather(*evolution._background_tasks)
+    manifest = _manifest(settings)
+    assert manifest.current_version == 3  # numbers never go backwards
+    assert manifest.get_version(3).look_spec == manifest.get_version(1).look_spec
 
 
 # --- Trigger B: synthetic stage -> reveal cycle --------------------------------
