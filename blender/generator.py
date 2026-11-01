@@ -1269,14 +1269,78 @@ def _import_objects(path: Path) -> list:
 
 
 def _world_bounds(objs) -> tuple:
+    """World-space extent of the *deformed* meshes: a skinned mesh's own
+    vertices and bound_box are its bind shape, which for a converted model can
+    be lying down or splayed while the posed figure stands."""
+    depsgraph = bpy.context.evaluated_depsgraph_get()
     lo = mathutils.Vector((math.inf, math.inf, math.inf))
     hi = mathutils.Vector((-math.inf, -math.inf, -math.inf))
     for obj in objs:
-        for corner in obj.bound_box:
-            co = obj.matrix_world @ mathutils.Vector(corner)
+        evaluated = obj.evaluated_get(depsgraph)
+        mesh = evaluated.to_mesh()
+        for vertex in mesh.vertices:
+            co = evaluated.matrix_world @ vertex.co
             lo = mathutils.Vector((min(lo.x, co.x), min(lo.y, co.y), min(lo.z, co.z)))
             hi = mathutils.Vector((max(hi.x, co.x), max(hi.y, co.y), max(hi.z, co.z)))
+        evaluated.to_mesh_clear()
     return lo, hi
+
+
+def _flatten_static_meshes(meshes, objs) -> list:
+    """A model with no rig of its own is bound to ours below, and a skinned
+    mesh is exported without its node's transform. Models exported from other
+    tools (Sketchfab's FBX conversions, for one) carry their size, rotation and
+    axis flip on parent empties, so binding them as-is loses that and the
+    figure comes out stretched or flat. Bake each mesh's world transform into
+    its vertices and unparent it; the now-empty parents are dropped."""
+    bpy.context.view_layer.update()
+    for mesh in meshes:
+        world = mesh.matrix_world.copy()
+        mesh.parent = None
+        mesh.matrix_world = world
+    bpy.ops.object.select_all(action="DESELECT")
+    for mesh in meshes:
+        mesh.select_set(True)
+    bpy.context.view_layer.objects.active = meshes[0]
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    kept = [obj for obj in objs if obj.type != "EMPTY"]
+    for obj in objs:
+        if obj.type == "EMPTY":
+            bpy.data.objects.remove(obj, do_unlink=True)
+    return kept
+
+
+def _bake_import_pose(armature, meshes, warnings: list[str]) -> None:
+    """Makes the model's pose as imported its rest pose. Converted files often
+    store a bind shape that is not the standing figure (lying down, say) and
+    put the difference in the joints' node transforms; Blender shows that as a
+    pose. The exporter writes the rest pose, so without this the avatar would
+    come out in its bind shape. Applies the armature to each skinned mesh,
+    commits the pose as rest, and re-attaches the armature. A mesh with shape
+    keys cannot have its armature applied, so such a model is left as it is."""
+    posed = any(not pb.matrix_basis.is_identity for pb in armature.pose.bones)
+    if not posed:
+        return
+    skinned = [m for m in meshes if any(md.type == "ARMATURE" and md.object == armature for md in m.modifiers)]
+    if any(m.data.shape_keys is not None for m in skinned):
+        warnings.append("model is posed differently from its rest shape and has shape keys; kept as imported")
+        return
+    for mesh in skinned:
+        bpy.ops.object.select_all(action="DESELECT")
+        mesh.select_set(True)
+        bpy.context.view_layer.objects.active = mesh
+        for mod in [md for md in mesh.modifiers if md.type == "ARMATURE" and md.object == armature]:
+            bpy.ops.object.modifier_apply(modifier=mod.name)
+    bpy.ops.object.select_all(action="DESELECT")
+    armature.select_set(True)
+    bpy.context.view_layer.objects.active = armature
+    bpy.ops.object.mode_set(mode="POSE")
+    bpy.ops.pose.armature_apply(selected=False)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for mesh in skinned:
+        mod = mesh.modifiers.new("Armature", "ARMATURE")
+        mod.object = armature
+    bpy.context.view_layer.update()
 
 
 def build_imported_model(path: Path, warnings: list[str]) -> dict:
@@ -1288,14 +1352,24 @@ def build_imported_model(path: Path, warnings: list[str]) -> dict:
     armature gets the canonical rig (the caller parents it); one with its own
     armature keeps it. Raises if the file holds no mesh at all."""
     objs = _import_objects(path)
-    for obj in objs:
-        if obj.type in ("CAMERA", "LIGHT"):
-            bpy.data.objects.remove(obj, do_unlink=True)
-    objs = [obj for obj in objs if obj.name in bpy.data.objects]
+    # The glTF importer adds a sphere mesh as the display shape of the rig's
+    # bones. It is not part of the model, and left in it inflates the size
+    # and triangle count.
+    bone_shapes = {
+        pb.custom_shape for obj in objs if obj.type == "ARMATURE" for pb in obj.pose.bones if pb.custom_shape is not None
+    }
+    discard = [obj for obj in objs if obj.type in ("CAMERA", "LIGHT") or obj in bone_shapes]
+    objs = [obj for obj in objs if obj not in discard]  # before removing: a removed object cannot be compared
+    for obj in discard:
+        bpy.data.objects.remove(obj, do_unlink=True)
     meshes = [obj for obj in objs if obj.type == "MESH"]
     if not meshes:
         raise ValueError(f"{path.name} contains no mesh")
     armatures = [obj for obj in objs if obj.type == "ARMATURE"]
+    if not armatures:
+        objs = _flatten_static_meshes(meshes, objs)
+    else:
+        _bake_import_pose(armatures[0], meshes, warnings)
 
     bpy.context.view_layer.update()
     lo, hi = _world_bounds(meshes)
@@ -1345,7 +1419,246 @@ def build_imported_model(path: Path, warnings: list[str]) -> dict:
         "has_legs": any("leg" in n or "thigh" in n for n in bone_names),
         "viseme_keys": sorted(viseme_keys, key=lambda n: VISEME_CODES.index(n[len(SHAPE_KEY_PREFIX) :])),
         "body": largest,
+        "bounds": (lo, hi),
     }
+
+
+# --- face overlay for painted-on faces -----------------------------------------
+#
+# A model whose face is a texture has no eyelids or mouth to move. A sidecar
+# `<model>.face.json` next to it says where its eyes and mouth are, as fractions
+# of the model's front bounding box (x across, z up; w/h are fractions of the
+# width/height too), plus the colours to match:
+#
+#   {"skin": "#D37454", "mouth_color": "#101010", "teeth_color": "#C4C4C4",
+#    "eye_l": {"x": .444, "z": .709, "w": .128, "h": .225}, "eye_r": {...},
+#    "mouth": {"x": .545, "z": .523, "w": .237, "h": .104}, "smile": 0.5}
+#
+# The generator lays its own parts over the painted ones: a skin-coloured lid
+# per eye that closes from the top (the `blink` shape key), and a skin-coloured
+# patch hiding the painted mouth with the nine-viseme mouth and teeth on top.
+# The skin is the model's own material sampled at a plain spot (`skin_at`, default
+# between the eyes), so the parts are lit like the painted skin; `skin` is only
+# the fallback for a model with no texture coordinates.
+
+
+def _face_sidecar(model_path: Path) -> dict | None:
+    path = model_path.with_name(model_path.stem + ".face.json")
+    if not path.is_file():
+        return None
+    try:
+        face = json.loads(path.read_text())
+        for key in ("eye_l", "eye_r", "mouth"):
+            if not {"x", "z", "w", "h"} <= set(face[key]):
+                raise ValueError(f"{key} needs x, z, w and h")
+        return face
+    except (ValueError, KeyError, OSError) as exc:
+        print(f"DESKMATE_WARN could not read {path.name}: {exc}")
+        return None
+
+
+def _hex_linear(hex_color: str) -> tuple[float, float, float, float]:
+    """sRGB hex -> the linear colour a Blender material wants, so a patch
+    matches a painted texture of the same hex."""
+    r, g, b, _ = hex_to_rgba(hex_color)
+    lin = lambda c: c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4  # noqa: E731
+    return (lin(r), lin(g), lin(b), 1.0)
+
+
+def _flat_material(name: str, hex_color: str) -> bpy.types.Material:
+    mat = make_material(name, _hex_linear(hex_color))
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    if bsdf:
+        bsdf.inputs["Roughness"].default_value = 1.0
+        if "Specular IOR Level" in bsdf.inputs:
+            bsdf.inputs["Specular IOR Level"].default_value = 0.0
+    return mat
+
+
+def _skin_texel(meshes, x: float, z: float):
+    """(material, uv) of the model's own skin at world (x, z): the material and
+    texture coordinate of the front-most triangle there. Overlay parts that use
+    them are lit and coloured exactly like the painted skin around them, which a
+    flat colour matched by eye never quite is. None if the model has no UVs."""
+    best = None
+    for mesh in meshes:
+        data = mesh.data
+        if not data.uv_layers or not mesh.material_slots:
+            continue
+        data.calc_loop_triangles()
+        uv_data = data.uv_layers.active.data
+        world = mesh.matrix_world
+        for tri in data.loop_triangles:
+            (ax, ay, az), (bx, by, bz), (cx, cy, cz) = (tuple(world @ data.vertices[i].co) for i in tri.vertices)
+            det = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz)
+            if abs(det) < 1e-12:
+                continue
+            l1 = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / det
+            l2 = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / det
+            l3 = 1.0 - l1 - l2
+            if min(l1, l2, l3) < -1e-6:
+                continue
+            y = l1 * ay + l2 * by + l3 * cy
+            if best is None or y < best[0]:
+                uvs = [uv_data[loop].uv for loop in tri.loops]
+                uv = (sum(w * c.x for w, c in zip((l1, l2, l3), uvs)), sum(w * c.y for w, c in zip((l1, l2, l3), uvs)))
+                slot = mesh.material_slots[tri.material_index] if tri.material_index < len(mesh.material_slots) else None
+                if slot is not None and slot.material is not None:
+                    best = (y, slot.material, uv)
+    return (best[1], best[2]) if best else None
+
+
+def _point_uvs_at(obj, uv, spread: float = 0.004) -> None:
+    """Every vertex of `obj` samples a texel of plain skin around `uv`. The
+    coordinates must not all be identical: a renderer that builds tangents from
+    them gets nothing from a degenerate map and shades the part black. The spread
+    (a few pixels of the texture) stays inside the skin."""
+    layer = obj.data.uv_layers.active or obj.data.uv_layers.new(name="UVMap")  # primitives come with their own
+    for polygon in obj.data.polygons:
+        for loop_index in polygon.loop_indices:
+            co = obj.data.vertices[obj.data.loops[loop_index].vertex_index].co
+            layer.data[loop_index].uv = (uv[0] + co.x * spread, uv[1] + co.y * spread)
+
+
+def _ellipse(name: str, centre, w: float, h: float, material) -> bpy.types.Object:
+    """A flat ellipse facing the camera (-Y). Local circle radius 0.5 scaled to
+    w x h, so local coordinates stay in -0.5..0.5 for the shape keys."""
+    bpy.ops.mesh.primitive_circle_add(vertices=32, radius=0.5, fill_type="TRIFAN", location=centre)
+    obj = bpy.context.active_object
+    obj.name = name
+    obj.rotation_euler = (math.radians(90), 0, 0)
+    obj.scale = (w, h, 1.0)
+    obj.data.materials.append(material)
+    return obj
+
+
+def _face_bone(meshes, point) -> str | None:
+    """The bone that moves the model's skin nearest `point`."""
+    best, best_d = None, math.inf
+    for mesh in meshes:
+        for vertex in mesh.data.vertices:
+            if not vertex.groups:
+                continue
+            d = (mesh.matrix_world @ vertex.co - point).length
+            if d < best_d:
+                group = max(vertex.groups, key=lambda g: g.weight)
+                best, best_d = mesh.vertex_groups[group.group].name, d
+    return best
+
+
+def _bind_rigid(obj, armature, bone: str) -> None:
+    """Skin an overlay part wholly to one bone, so it travels with the face
+    and never deforms the way automatic weights on a flat shape might."""
+    # The exporter drops the scale of a skinned object, so bake it into the
+    # vertices (and shape keys) first.
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    group = obj.vertex_groups.new(name=bone)
+    group.add(list(range(len(obj.data.vertices))), 1.0, "REPLACE")
+    modifier = obj.modifiers.new("Armature", "ARMATURE")
+    modifier.object = armature
+    obj.parent = armature
+    obj.matrix_parent_inverse = armature.matrix_world.inverted()
+
+
+def build_face_overlay(face: dict, imported_meshes, lo, hi, armature, bone: str | None):
+    """Returns (lids, parts, viseme_keys): the two eyelid objects (blink),
+    every other overlay object, and the viseme shape key names."""
+    width, height = hi.x - lo.x, hi.z - lo.z
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    verts = []
+    for mesh in imported_meshes:
+        evaluated = mesh.evaluated_get(depsgraph)
+        data = evaluated.to_mesh()
+        verts += [evaluated.matrix_world @ v.co for v in data.vertices]
+        evaluated.to_mesh_clear()
+
+    def landmark(key):
+        m = face[key]
+        return lo.x + m["x"] * width, lo.z + m["z"] * height, m["w"] * width, m["h"] * height
+
+    def surface_y(x, z, w, h) -> float:
+        ys = [v.y for v in verts if abs(v.x - x) <= w / 2 and abs(v.z - z) <= h / 2]
+        return min(ys) if ys else lo.y
+
+    # Skin: the model's own material at a plain spot between the eyes if it has
+    # one, else a flat colour from the sidecar.
+    ex = (face["eye_l"]["x"] + face["eye_r"]["x"]) / 2
+    ez = (face["eye_l"]["z"] + face["eye_r"]["z"]) / 2
+    skin_at = face.get("skin_at", {"x": ex, "z": ez})
+    texel = _skin_texel(imported_meshes, lo.x + skin_at["x"] * width, lo.z + skin_at["z"] * height)
+    skin_mat = texel[0] if texel else _flat_material("FaceSkin", face.get("skin", "#D37454"))
+    layer = 0.004  # each overlay layer sits this much nearer the camera than the last
+
+    lids = []
+    for side, key in (("L", "eye_l"), ("R", "eye_r")):
+        x, z, w, h = landmark(key)
+        y = surface_y(x, z, w, h) - 2 * layer
+        lid = _ellipse(f"Eye_{side}", (x, y, z), w, h, skin_mat)
+        if texel:
+            _point_uvs_at(lid, texel[1])
+        full = [v.co.copy() for v in lid.data.vertices]
+        for v in lid.data.vertices:  # open: a hairline at the top edge
+            v.co.y = 0.5 + (v.co.y - 0.5) * 0.002
+        lid.shape_key_add(name="Basis")
+        closed = lid.shape_key_add(name=BLINK_SHAPE_KEY)
+        for i, co in enumerate(full):
+            closed.data[i].co = co
+        lids.append(lid)
+
+    mx, mz, mw, mh = landmark("mouth")
+    my = surface_y(mx, mz, mw, mh)
+    patch = _ellipse("MouthPatch", (mx, my - layer, mz), mw * 1.14, mh * 1.35, skin_mat)
+    if texel:
+        _point_uvs_at(patch, texel[1])
+    parts = [patch]
+
+    smile = float(face.get("smile", 0.0))
+
+    def mouth_deform(code):
+        open_, width_k, round_, _teeth = VISEME_MOUTH_MATRIX[code]
+
+        def fn(co):
+            xn = co.x / 0.5  # -1..1 across the mouth
+            x = co.x * width_k * (1.0 - round_ * 0.25)
+            y = co.y * (0.15 + open_ * 0.85) + smile * 0.25 * (xn * xn - 0.5)
+            return (x, y, co.z + round_ * 0.04)
+
+        return fn
+
+    def fill_deform(code):
+        # The light inside of the mouth: the same shape inset from the black
+        # outline, thin at rest, so a closed mouth is just the line.
+        open_, width_k, round_, _teeth = VISEME_MOUTH_MATRIX[code]
+
+        def fn(co):
+            xn = co.x / 0.5
+            x = co.x * width_k * (1.0 - round_ * 0.25) * 0.88
+            # A hairline at rest, never zero: a collapsed rest shape has no defined facing, and the
+            # normals pass flips it so it is culled once it opens.
+            y = co.y * (0.02 + open_ * 0.85 * 0.72) + smile * 0.25 * (xn * xn - 0.5)
+            return (x, y, co.z + round_ * 0.04)
+
+        return fn
+
+    # The planes are built unit-sized and stretched by object scale, like the lids.
+    mouth, viseme_keys = _build_shape_keyed_plane(
+        "Mouth", 1.0, (mx, my - 2 * layer, mz), (math.radians(90), 0, 0),
+        _flat_material("MouthMat", face.get("mouth_color", "#101010")), {c: mouth_deform(c) for c in VISEME_CODES},
+    )
+    mouth.scale = (mw * 0.92, mh * 1.15, 1.0)
+    teeth, _ = _build_shape_keyed_plane(  # named Teeth: the second viseme-driven mesh the overlay expects
+        "Teeth", 1.0, (mx, my - 3 * layer, mz), (math.radians(90), 0, 0),
+        _flat_material("TeethMat", face.get("teeth_color", "#C4C4C4")), {c: fill_deform(c) for c in VISEME_CODES},
+    )
+    teeth.scale = (mw * 0.92, mh * 1.15, 1.0)
+    parts += [mouth, teeth]
+
+    for obj in [*lids, *parts]:
+        _bind_rigid(obj, armature, bone or "head")
+    return lids, parts, viseme_keys
 
 
 # --- --inspect mode -------------------------------------------------------------
@@ -1481,7 +1794,8 @@ def main() -> None:
         body = imported["body"]
         head_loc, has_arms, has_legs = imported["head_loc"], imported["has_arms"], imported["has_legs"]
         viseme_keys = imported["viseme_keys"]
-        if has_face and not viseme_keys:
+        has_face_requested = has_face
+        if has_face and not viseme_keys and _face_sidecar(resolution["path"]) is None:
             warnings.append("model has no viseme shape keys; building it without a face (talk_pulse speech indicator)")
         has_face = bool(viseme_keys)
         eyes: list = []
@@ -1508,6 +1822,16 @@ def main() -> None:
         if imported["armature"] is None:
             bake_proportions(arm_obj, proportions)
         bake_morphological_proportions(body, proportions)
+
+        face_map = _face_sidecar(resolution["path"])
+        if face_map is not None and has_face_requested and not viseme_keys:
+            lo, hi = imported["bounds"]
+            centre = mathutils.Vector(
+                (lo.x + face_map["mouth"]["x"] * (hi.x - lo.x), (lo.y + hi.y) / 2, lo.z + face_map["mouth"]["z"] * (hi.z - lo.z))
+            )
+            bone = _face_bone(imported["meshes"], centre) if imported["armature"] is not None else "head"
+            eyes, overlay_parts, viseme_keys = build_face_overlay(face_map, imported["meshes"], lo, hi, arm_obj, bone)
+            has_face = True
     else:
         layout = None
         if base_template in ("standard_humanoid_female", "standard_humanoid_male"):

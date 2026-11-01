@@ -16,6 +16,7 @@ bounds) rather than a raw SHA256 match.
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import struct
 import subprocess
@@ -163,6 +164,104 @@ def test_installed_model_is_used_not_discarded(tmp_path):
     assert build_json["blink_shape_keys"] == []  # an imported model has no generated eye meshes
     assert build_json["bounds"]["height_m"] == pytest.approx(2.5, abs=0.01)
     assert not any("procedurally" in w for w in build_json["warnings"])
+
+
+def _box_glb_under_rotated_parent(path: Path) -> None:
+    """A rigless 1 x 2 x 1 box (tall in glTF's Y) whose mesh node hangs under a
+    parent rotated 90 degrees about X -- how converted models often carry their
+    orientation. In the world the box lies down: 2 units deep, 1 high."""
+    positions = [(x, y, z) for x in (-0.5, 0.5) for y in (-1.0, 1.0) for z in (-0.5, 0.5)]
+    indices = [0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 4, 5, 0, 5, 1, 2, 3, 7, 2, 7, 6, 0, 2, 6, 0, 6, 4, 1, 5, 7, 1, 7, 3]
+    pos_bytes = b"".join(struct.pack("<3f", *p) for p in positions)
+    idx_bytes = struct.pack(f"<{len(indices)}H", *indices)
+    idx_bytes += b"\x00" * ((-len(idx_bytes)) % 4)
+    blob = pos_bytes + idx_bytes
+    quarter_turn = math.sin(math.pi / 4)
+    doc = {
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [
+            {"name": "Parent", "rotation": [quarter_turn, 0, 0, quarter_turn], "children": [1]},
+            {"name": "Box", "mesh": 0},
+        ],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 8, "type": "VEC3", "min": [-0.5, -1, -0.5], "max": [0.5, 1, 0.5]},
+            {"bufferView": 1, "componentType": 5123, "count": len(indices), "type": "SCALAR"},
+        ],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": len(pos_bytes)},
+            {"buffer": 0, "byteOffset": len(pos_bytes), "byteLength": len(indices) * 2},
+        ],
+        "buffers": [{"byteLength": len(blob)}],
+    }
+    json_chunk = json.dumps(doc).encode()
+    json_chunk += b" " * ((-len(json_chunk)) % 4)
+    total = 12 + 8 + len(json_chunk) + 8 + len(blob)
+    path.write_bytes(
+        b"glTF" + struct.pack("<II", 2, total)
+        + struct.pack("<I", len(json_chunk)) + b"JSON" + json_chunk
+        + struct.pack("<I", len(blob)) + b"BIN\x00" + blob
+    )
+
+
+def test_rigless_model_keeps_the_orientation_its_parent_nodes_carry(tmp_path):
+    """The model's world shape, not its raw vertices, is what gets scaled and
+    bound to the rig; losing a parent's rotation stood this box up instead of
+    laying it down (and flattened real models: Miss Minutes came out a disc)."""
+    custom_dir = tmp_path / "deploy" / "assets" / "custom_templates"
+    custom_dir.mkdir(parents=True)
+    _box_glb_under_rotated_parent(custom_dir / "box.glb")
+
+    result, _, build_json = _compile(_minimal_spec(base_template="custom:box", has_face=False), tmp_path, "box")
+    assert result.returncode == 0, result.stderr
+    assert build_json["warnings"] == []
+    assert build_json["bounds"]["height_m"] == pytest.approx(2.5, abs=0.02)
+    assert build_json["bounds"]["depth_m"] == pytest.approx(5.0, abs=0.05)  # lying down: twice as deep as high
+    assert build_json["bounds"]["width_m"] == pytest.approx(2.5, abs=0.02)
+
+
+def test_model_with_a_face_map_gets_blink_and_lip_sync_overlays(tmp_path):
+    """A model whose face is painted on has nothing to move. A `.face.json`
+    beside it says where the eyes and mouth are, and the generator adds its
+    own eyelids (blink) and nine-viseme mouth over them."""
+    custom_dir = tmp_path / "deploy" / "assets" / "custom_templates"
+    custom_dir.mkdir(parents=True)
+    _box_glb_under_rotated_parent(custom_dir / "painted.glb")
+    (custom_dir / "painted.face.json").write_text(
+        json.dumps(
+            {
+                "skin": "#D37454",
+                "eye_l": {"x": 0.3, "z": 0.7, "w": 0.15, "h": 0.2},
+                "eye_r": {"x": 0.7, "z": 0.7, "w": 0.15, "h": 0.2},
+                "mouth": {"x": 0.5, "z": 0.4, "w": 0.3, "h": 0.1},
+            }
+        )
+    )
+    result, out_path, build_json = _compile(_minimal_spec(base_template="custom:painted", has_face=True), tmp_path, "painted")
+    assert result.returncode == 0, result.stderr
+    assert build_json["has_face"] is True
+    assert build_json["speech_indicator_mode"] == "viseme_shapekeys"
+    assert len(build_json["viseme_shape_keys"]) == 9
+    assert build_json["blink_shape_keys"] == ["blink"]
+    assert build_json["warnings"] == []
+
+    data = out_path.read_bytes()
+    gltf = json.loads(data[20 : 20 + struct.unpack("<I", data[12:16])[0]])
+    by_name = {n.get("name"): n for n in gltf["nodes"]}
+    for eye in ("Eye_L", "Eye_R"):
+        assert len(gltf["meshes"][by_name[eye]["mesh"]]["primitives"][0]["targets"]) == 1
+    assert len(gltf["meshes"][by_name["Mouth"]["mesh"]]["primitives"][0]["targets"]) == 9
+
+
+def test_model_without_a_face_map_still_builds_faceless(tmp_path):
+    custom_dir = tmp_path / "deploy" / "assets" / "custom_templates"
+    custom_dir.mkdir(parents=True)
+    _box_glb_under_rotated_parent(custom_dir / "plain.glb")
+    _, _, build_json = _compile(_minimal_spec(base_template="custom:plain", has_face=True), tmp_path, "plain")
+    assert build_json["has_face"] is False
+    assert build_json["blink_shape_keys"] == []
 
 
 def test_installed_model_without_a_face_builds_faceless(tmp_path):
