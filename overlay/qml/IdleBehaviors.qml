@@ -61,16 +61,25 @@ Item {
     // user once it arrives. Main.qml delays the slide by `turnMs` so the run
     // starts after the turn. +90 on Y turns the front toward screen-right.
     readonly property int turnMs: 220
+    // Set by Main.qml for the whole trip between monitors, so the stop at the
+    // edge of one screen does not turn the companion back before the run in.
+    property bool holdTurn: false
     property bool turned: false   // true from the start of the turn-away until the turn-back finishes
 
+    // True when it started a turn (the caller waits `turnMs` before running);
+    // false when already side-on that way, as on the second leg of a trip
+    // between monitors.
     function turnToward(dir) {
         if (!root.avatar)
-            return
+            return false
+        if (root.turned && !turnAnim.running && Math.abs(root.avatar.eulerRotation.y - 90 * dir) < 1)
+            return false
         cancelMicroIdle()
         turnAnim.stop()   // before `turned = true`: its onStopped may clear it
         root.turned = true
         turnAnim.to = 90 * dir
         turnAnim.start()
+        return true
     }
 
     // Ends exactly at the sway's start angle (-amplitude), so the sway
@@ -128,7 +137,7 @@ Item {
             root.canRun = root.controller !== null && root.controller.hasRunTargets()
         }
         root.runAmount = (moving && root.canRun) ? 1 : 0
-        if (!moving)
+        if (!moving && !holdTurn)
             turnBack()
     }
 
@@ -212,6 +221,11 @@ Item {
         "nod": "idle_sleepy",
         "fidget": "idle_fidget"
     })
+    // Off: played through Qt's glTF import, the generator's idle clips move
+    // nothing visible on a skinned avatar (checked frame by frame), so using
+    // them replaced the working transform idles below with a motionless one.
+    // Turn on for models whose own clips are known to play.
+    property bool preferBakedClips: false
     property bool clipBusy: false
     Timer {
         id: clipBusyTimer
@@ -220,7 +234,7 @@ Item {
 
     function playMicroIdle(name) {
         const clip = bakedIdleClips[name]
-        if (clip && root.controller && root.controller.playClip(clip, 1)) {
+        if (root.preferBakedClips && clip && root.controller && root.controller.playClip(clip, 1)) {
             root.clipBusy = true
             clipBusyTimer.interval = root.controller.clipDurationMs(clip) + 100
             clipBusyTimer.restart()

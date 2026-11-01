@@ -295,7 +295,23 @@ def build_head(head_loc) -> bpy.types.Object:
 BLINK_SHAPE_KEY = "blink"
 
 
-def build_eyes(head_loc, color: tuple[float, float, float, float]):
+def _eye_material(name: str, head_color: tuple[float, float, float, float]) -> bpy.types.Material:
+    """Dark eyes on a light head; light, self-lit eyes on a dark one. A dark
+    eye on a dark head is only visible as a specular glint, which swings from
+    one eye to the other as the avatar sways and makes a blink look uneven."""
+    luminance = 0.2126 * head_color[0] + 0.7152 * head_color[1] + 0.0722 * head_color[2]
+    if luminance >= 0.35:
+        return make_material(name, (0.05, 0.05, 0.05, 1.0))
+    glow = (0.92, 0.94, 1.0, 1.0)
+    mat = make_material(name, glow)
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    if bsdf and "Emission Color" in bsdf.inputs:
+        bsdf.inputs["Emission Color"].default_value = glow
+        bsdf.inputs["Emission Strength"].default_value = 1.0  # <= 1 stays a plain glTF emissiveFactor
+    return mat
+
+
+def build_eyes(head_loc, head_color: tuple[float, float, float, float]):
     """Two eyeball spheres, each with a Basis plus a `blink` shape key that
     squashes the eye flat along its vertical (local Z) axis about its own
     centre. The overlay drives that key's weight to blink; it is not a
@@ -307,7 +323,7 @@ def build_eyes(head_loc, color: tuple[float, float, float, float]):
         )
         eye = bpy.context.active_object
         eye.name = f"Eye_{side}"
-        eye.data.materials.append(make_material(f"EyeMat_{side}", (0.05, 0.05, 0.05, 1.0)))
+        eye.data.materials.append(_eye_material(f"EyeMat_{side}", head_color))
         eye.shape_key_add(name="Basis")
         blink = eye.shape_key_add(name=BLINK_SHAPE_KEY)
         for i, v in enumerate(eye.data.vertices):
@@ -1502,7 +1518,7 @@ def main() -> None:
             procedural_template = base_template if base_template == "primitive_mechanical" else "primitive_blob"
             body, head_loc, has_arms, has_legs = build_body_tier3(procedural_template, proportions, palette, surface_material)
         head = build_head(head_loc)
-        eyes = build_eyes(head_loc, hex_to_rgba(palette["secondary"]))
+        eyes = build_eyes(head_loc, hex_to_rgba(palette["primary"]))
         mouth, teeth, viseme_keys = build_mouth(head_loc, has_face)
 
         bpy.context.view_layer.update()

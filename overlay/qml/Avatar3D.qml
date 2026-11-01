@@ -21,6 +21,15 @@ Item {
     property alias modelNode: pivotNode
     property real pivotHeight: 0
 
+    // Extra view height above the avatar, in px, so a turned or leaning body
+    // (parts swing toward the camera and grow) is not cut off at the top. The
+    // avatar keeps exactly the size and bottom edge it has at `baseHeight`:
+    // the view grows upward and the camera widens to match.
+    property real baseHeight: height
+    readonly property real _scale: baseHeight > 0 ? height / baseHeight : 1
+    // Half the visible height at the camera's distance, for the 50-degree base framing.
+    readonly property real _baseHalf: 4.0 * Math.tan(25 * Math.PI / 180)
+
     // Emitted once per source change, after RuntimeLoader settles into
     // Success or Error -- Main.qml forwards this straight into an
     // asset_swap_result event back to the daemon.
@@ -60,8 +69,9 @@ Item {
         // sane geometry.
         PerspectiveCamera {
             id: camera
-            position: Qt.vector3d(0, 1.0, 4.0)
-            fieldOfView: 50
+            // y: the view's bottom edge stays at the base framing's (1.0 - half).
+            position: Qt.vector3d(0, 1.0 - root._baseHalf + root._baseHalf * root._scale, 4.0)
+            fieldOfView: 2 * Math.atan(Math.tan(25 * Math.PI / 180) * root._scale) * 180 / Math.PI
             clipNear: 0.1
             clipFar: 1000
         }

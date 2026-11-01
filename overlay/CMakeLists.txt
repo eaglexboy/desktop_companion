@@ -4,6 +4,8 @@ project(deskmate_overlay LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
+# Lets editors (clangd, the C/C++ extension) find the Qt include paths: build/compile_commands.json.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Qml Quick Quick3D Quick3DAssetUtils QuickControls2 WebSockets Multimedia Test)
 # The LayerShellQt CMake package provides the target LayerShellQt::Interface.
