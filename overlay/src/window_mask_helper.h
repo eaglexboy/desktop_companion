@@ -16,5 +16,5 @@ class WindowMaskHelper : public QObject
 public:
     explicit WindowMaskHelper(QObject *parent = nullptr);
 
-    Q_INVOKABLE void applyMask(QQuickWindow *window, int width, int height);
+    Q_INVOKABLE void applyMask(QQuickWindow *window, int width, int height, int y = 0);
 };

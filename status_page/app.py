@@ -22,7 +22,7 @@ from pathlib import Path
 import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from brain.config import Settings, get_settings
@@ -32,6 +32,10 @@ logger = logging.getLogger("deskmate.status")
 STATIC_DIR = Path(__file__).with_name("static")
 PROBE_TIMEOUT_S = 2.0
 LOG_BACKLOG_LINES = 200
+
+# "no-cache" still lets the browser keep a copy, but it must revalidate (ETag ->
+# cheap 304) on every load, so an edited script or stylesheet is never stale.
+NO_CACHE = {"Cache-Control": "no-cache"}
 
 app = FastAPI(title="Deskmate status", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -281,6 +285,59 @@ async def proxy_events(request: Request, since: int = 0):
     return StreamingResponse(relay(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
 
 
+# --- looks -----------------------------------------------------------------------
+
+
+def _looks(settings: Settings) -> dict:
+    """Every look version in the manifest, newest first, with whether its picture
+    exists. Read straight from manifest.json; nothing here can change it."""
+    path = settings.deploy_dir / "manifest.json"
+    try:
+        manifest = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {"current": None, "looks": []}
+    looks = []
+    for entry in manifest.get("versions", []):
+        version = entry["version"]
+        spec = entry.get("look_spec", {})
+        looks.append(
+            {
+                "version": version,
+                "created_at": entry.get("created_at"),
+                "status": entry.get("status"),
+                "has_picture": (settings.deploy_dir / "looks" / f"look-v{version}.png").is_file(),
+                "kept": (settings.assets_dir / entry.get("glb_filename", "")).is_file(),
+                "base_template": spec.get("base_template"),
+                "summary": _look_summary(spec),
+                "palette": spec.get("palette"),
+            }
+        )
+    looks.sort(key=lambda look: look["version"], reverse=True)
+    return {"current": manifest.get("current_version"), "looks": looks}
+
+
+def _look_summary(spec: dict) -> str:
+    """A short human line: template, outfit, footwear and worn accessories.
+    Tolerant of missing fields, since this is display only."""
+    wardrobe = spec.get("wardrobe") or {}
+    parts = [spec.get("base_template"), wardrobe.get("outfit"), wardrobe.get("footwear")]
+    parts.extend((spec.get("accessories") or {}).values())
+    return ", ".join(str(p).replace("_", " ") for p in parts if p and p != "none")
+
+
+@app.get("/api/looks")
+async def looks() -> dict:
+    return await asyncio.to_thread(_looks, _settings())
+
+
+@app.get("/api/looks/{version}.png")
+async def look_picture(version: int):
+    path = _settings().deploy_dir / "looks" / f"look-v{version}.png"
+    if not path.is_file():
+        raise HTTPException(404, "no picture for that version")
+    return FileResponse(path, media_type="image/png", headers=NO_CACHE)
+
+
 # --- mood / trait history ----------------------------------------------------------
 
 MAX_POINTS_PER_SERIES = 600
@@ -325,9 +382,6 @@ async def history(kind: str = "mood", hours: float = 24.0) -> dict:
     return await asyncio.to_thread(_history, _settings(), kind, min(max(hours, 0.1), 24 * 30))
 
 
-# "no-cache" still lets the browser keep a copy, but it must revalidate (ETag ->
-# cheap 304) on every load, so an edited script or stylesheet is never stale.
-NO_CACHE = {"Cache-Control": "no-cache"}
 
 
 class _RevalidatingStaticFiles(StaticFiles):

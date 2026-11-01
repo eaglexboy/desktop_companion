@@ -34,9 +34,9 @@ import sys
 import time
 from pathlib import Path
 
-import bmesh
-import bpy
-import mathutils
+import bmesh  # pyright: ignore[reportMissingImports]
+import bpy  # pyright: ignore[reportMissingImports]
+import mathutils  # pyright: ignore[reportMissingImports]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root, for blender.viseme_shapekeys
 from blender.viseme_shapekeys import (
@@ -217,7 +217,17 @@ def build_body_tier3(base_template: str, proportions: dict, palette: dict, surfa
     return body, head_loc, has_arms, has_legs
 
 
-def build_body_humanoid(proportions: dict, palette: dict, surface_material: str):
+# Per-template body character, applied on top of the user's proportions so
+# the two humanoid bases read as clearly different figures even at the
+# overlay's small size: female = narrower shoulders, wider hips, slimmer
+# limbs and neck; male = broad shoulders, narrower hips, heavier limbs/neck.
+_HUMANOID_CHARACTER = {
+    "standard_humanoid_female": {"shoulder": 0.84, "hip": 1.30, "limb": 0.86, "neck": 0.85},
+    "standard_humanoid_male": {"shoulder": 1.12, "hip": 0.90, "limb": 1.10, "neck": 1.15},
+}
+
+
+def build_body_humanoid(proportions: dict, palette: dict, surface_material: str, base_template: str = ""):
     """Procedural stand-in for a standard_humanoid_* model: pelvis, torso, two
     legs, two arms with hands, feet on the ground (z=0) and the head sitting
     on top, facing -Y. Returns (body_obj, head_location, has_arms, has_legs,
@@ -230,21 +240,24 @@ def build_body_humanoid(proportions: dict, palette: dict, surface_material: str)
     mus = proportions.get("muscularity", 0.5)
     fem = proportions.get("femininity", 0.5)
 
-    shoulder = 0.46 * b * (1.0 + 0.30 * (mus - 0.5) - 0.20 * (fem - 0.5))
-    hip = 0.40 * b * (1.0 + 0.25 * (fem - 0.5))
-    leg_x = 0.30 * b
+    char = _HUMANOID_CHARACTER.get(base_template, {"shoulder": 1.0, "hip": 1.0, "limb": 1.0, "neck": 1.0})
+
+    shoulder = 0.46 * b * (1.0 + 0.30 * (mus - 0.5) - 0.20 * (fem - 0.5)) * char["shoulder"]
+    hip = 0.40 * b * (1.0 + 0.25 * (fem - 0.5)) * char["hip"]
+    leg_r = 0.15 * b * char["limb"]
+    leg_x = 0.30 * b * math.sqrt(char["hip"])  # legs sit under the pelvis
     arm_x = shoulder + 0.14
     shoulder_z, hand_z = 1.5 * h, 0.85 * h
-    arm_r = 0.11 * b * (1.0 + 0.4 * (mus - 0.5))
+    arm_r = 0.11 * b * (1.0 + 0.4 * (mus - 0.5)) * char["limb"]
     mat = make_material("BodyMat", primary, material=surface_material)
 
     parts = [
         (_prim("sphere", (0, 0, 0.95 * h), scale=(hip, 0.30 * b, 0.28 * h)), mat),  # pelvis
         (_prim("sphere", (0, 0, 1.22 * h), scale=(shoulder, 0.32 * b, 0.46 * h)), mat),  # torso
-        (_prim("cylinder", (0, 0, 1.66 * h), r=0.13 * b, depth=0.2 * h), mat),  # neck
+        (_prim("cylinder", (0, 0, 1.66 * h), r=0.13 * b * char["neck"], depth=0.2 * h), mat),  # neck
     ]
     for x in (-leg_x, leg_x):
-        parts.append((_prim("cylinder", (x, 0, 0.45 * h), r=0.15 * b, depth=0.9 * h), mat))
+        parts.append((_prim("cylinder", (x, 0, 0.45 * h), r=leg_r, depth=0.9 * h), mat))
     for x in (-arm_x, arm_x):
         parts.append((_prim("cylinder", (x, 0, (shoulder_z + hand_z) / 2), r=arm_r, depth=shoulder_z - hand_z), mat))
         parts.append((_prim("sphere", (x, 0, hand_z), r=arm_r * 1.3), mat))  # hand
@@ -257,7 +270,16 @@ def build_body_humanoid(proportions: dict, palette: dict, surface_material: str)
     bpy.ops.object.origin_set(type="ORIGIN_GEOMETRY", center="BOUNDS")
     body.select_set(False)
     head_loc = (0.0, 0.0, 2.05 * h)
-    layout = {"arm_x": arm_x, "shoulder_z": shoulder_z, "hand_z": hand_z, "leg_x": leg_x, "hip_z": 0.9 * h}
+    layout = {
+        "arm_x": arm_x,
+        "shoulder_z": shoulder_z,
+        "hand_z": hand_z,
+        "leg_x": leg_x,
+        "hip_z": 0.9 * h,
+        "arm_r": arm_r,
+        "leg_r": leg_r,
+        "height": h,
+    }
     return body, head_loc, True, True, layout
 
 
@@ -270,7 +292,30 @@ def build_head(head_loc) -> bpy.types.Object:
     return head
 
 
-def build_eyes(head_loc, color: tuple[float, float, float, float]):
+BLINK_SHAPE_KEY = "blink"
+
+
+def _eye_material(name: str, head_color: tuple[float, float, float, float]) -> bpy.types.Material:
+    """Dark eyes on a light head; light, self-lit eyes on a dark one. A dark
+    eye on a dark head is only visible as a specular glint, which swings from
+    one eye to the other as the avatar sways and makes a blink look uneven."""
+    luminance = 0.2126 * head_color[0] + 0.7152 * head_color[1] + 0.0722 * head_color[2]
+    if luminance >= 0.35:
+        return make_material(name, (0.05, 0.05, 0.05, 1.0))
+    glow = (0.92, 0.94, 1.0, 1.0)
+    mat = make_material(name, glow)
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    if bsdf and "Emission Color" in bsdf.inputs:
+        bsdf.inputs["Emission Color"].default_value = glow
+        bsdf.inputs["Emission Strength"].default_value = 1.0  # <= 1 stays a plain glTF emissiveFactor
+    return mat
+
+
+def build_eyes(head_loc, head_color: tuple[float, float, float, float]):
+    """Two eyeball spheres, each with a Basis plus a `blink` shape key that
+    squashes the eye flat along its vertical (local Z) axis about its own
+    centre. The overlay drives that key's weight to blink; it is not a
+    viseme and is reported separately as `blink_shape_keys`."""
     eyes = []
     for side, x in (("L", -0.22), ("R", 0.22)):
         bpy.ops.mesh.primitive_uv_sphere_add(
@@ -278,7 +323,13 @@ def build_eyes(head_loc, color: tuple[float, float, float, float]):
         )
         eye = bpy.context.active_object
         eye.name = f"Eye_{side}"
-        eye.data.materials.append(make_material(f"EyeMat_{side}", (0.05, 0.05, 0.05, 1.0)))
+        eye.data.materials.append(_eye_material(f"EyeMat_{side}", head_color))
+        eye.shape_key_add(name="Basis")
+        blink = eye.shape_key_add(name=BLINK_SHAPE_KEY)
+        for i, v in enumerate(eye.data.vertices):
+            blink.data[i].co.x = v.co.x
+            blink.data[i].co.y = v.co.y
+            blink.data[i].co.z = v.co.z * 0.08
         eyes.append(eye)
     return eyes
 
@@ -768,6 +819,88 @@ def build_socket_accessory(socket_name: str, item: str, head_loc, palette: dict,
 
 
 # --- armature / rigging --------------------------------------------------------
+
+
+RUN_SHAPE_KEYS = ("run_a", "run_b")
+
+# Run-cycle extremes, in degrees: swing about the hip/shoulder, plus how far
+# the knee folds (heel kicked up on the trailing leg). Positive rotation about
+# +X carries a point hanging below the pivot toward +Y, i.e. backwards, since
+# avatars face -Y; so forward swing is negative.
+_RUN_LEG_SWING = (-38.0, 32.0)  # (leading leg, trailing leg)
+_RUN_KNEE_BEND = (20.0, 70.0)
+_RUN_ARM_SWING = (-40.0, 40.0)  # arm on the side of the leading leg swings back
+
+
+def _smooth01(t: float) -> float:
+    t = max(0.0, min(1.0, t))
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _rot_x(co, pivot_yz: tuple[float, float], angle: float):
+    """Rotate `co` about the X axis through (any x, pivot_y, pivot_z)."""
+    c, s = math.cos(angle), math.sin(angle)
+    y, z = co.y - pivot_yz[0], co.z - pivot_yz[1]
+    return mathutils.Vector((co.x, pivot_yz[0] + y * c - z * s, pivot_yz[1] + y * s + z * c))
+
+
+def _run_pose(co, layout: dict, lead_side: int):
+    """World-space `co` deformed into one extreme of the run cycle. `lead_side`
+    is the sign of the x of the leg that is forward (-1 or +1). Pure geometry,
+    keyed off the humanoid `layout`, so it also fits clothes and shoes built
+    around the same body."""
+    h = layout["height"]
+    leg_x, leg_r, hip_z = layout["leg_x"], layout["leg_r"], layout["hip_z"]
+    arm_x, arm_r, shoulder_z = layout["arm_x"], layout["arm_r"], layout["shoulder_z"]
+    out = co.copy()
+
+    # Legs. Weight fades out sideways toward the body centreline (so there is
+    # no tear between the legs) and upward into the hips.
+    leg_side = -1 if co.x < 0 else 1
+    off = abs(abs(co.x) - leg_x)
+    w_side = 1.0 - _smooth01((off - 1.5 * leg_r) / (0.5 * leg_r))
+    w_hip = _smooth01((hip_z - co.z) / (0.25 * h))
+    w_leg = w_side * w_hip
+    if w_leg > 0.0:
+        leading = leg_side == lead_side
+        swing = math.radians(_RUN_LEG_SWING[0 if leading else 1])
+        bend = math.radians(_RUN_KNEE_BEND[0 if leading else 1])
+        knee_z = hip_z * 0.5
+        w_knee = _smooth01((knee_z - co.z) / (0.18 * h))
+        out = _rot_x(out, (0.0, knee_z), bend * w_knee * w_leg)
+        out = _rot_x(out, (0.0, hip_z), swing * w_leg)
+
+    # Arms swing against the leg on the same side.
+    off = abs(abs(co.x) - arm_x)
+    w_side = 1.0 - _smooth01((off - 1.45 * arm_r) / (0.55 * arm_r))
+    w_sh = _smooth01((shoulder_z - co.z) / (0.2 * h))
+    w_arm = w_side * w_sh if abs(co.x) > arm_x - 2.0 * arm_r and co.z > hip_z * 0.7 else 0.0
+    if w_arm > 0.0:
+        arm_side = -1 if co.x < 0 else 1
+        swing = math.radians(_RUN_ARM_SWING[1 if arm_side == lead_side else 0])
+        out = _rot_x(out, (0.0, shoulder_z), swing * w_arm)
+    return out
+
+
+def add_run_shape_keys(objs: list, layout: dict) -> list[str]:
+    """Adds `run_a`/`run_b` (the two mirrored extremes of a run cycle: legs
+    and arms swinging, knees folding) to each humanoid mesh. The overlay
+    cross-fades between them while the avatar travels, which stands in for a
+    run clip it cannot play. Returns the key names, or [] if nothing took."""
+    added = False
+    for obj in objs:
+        if obj is None or obj.type != "MESH" or not obj.data.vertices:
+            continue
+        mw, inv = obj.matrix_world, obj.matrix_world.inverted()
+        if obj.data.shape_keys is None:
+            obj.shape_key_add(name="Basis")
+        for key_name, lead_side in zip(RUN_SHAPE_KEYS, (-1, 1)):
+            sk = obj.shape_key_add(name=key_name)
+            for i, v in enumerate(obj.data.vertices):
+                new_co = inv @ _run_pose(mw @ v.co, layout, lead_side)
+                sk.data[i].co.x, sk.data[i].co.y, sk.data[i].co.z = new_co.x, new_co.y, new_co.z
+        added = True
+    return list(RUN_SHAPE_KEYS) if added else []
 
 
 def build_armature(has_arms: bool, head_loc, *, has_legs: bool = False, layout: dict | None = None) -> bpy.types.Object:
@@ -1343,6 +1476,7 @@ def main() -> None:
             reset_scene()
             bpy.context.scene.render.fps = 30
 
+    run_keys: list[str] = []
     if imported is not None:
         body = imported["body"]
         head_loc, has_arms, has_legs = imported["head_loc"], imported["has_arms"], imported["has_legs"]
@@ -1377,12 +1511,14 @@ def main() -> None:
     else:
         layout = None
         if base_template in ("standard_humanoid_female", "standard_humanoid_male"):
-            body, head_loc, has_arms, has_legs, layout = build_body_humanoid(proportions, palette, surface_material)
+            body, head_loc, has_arms, has_legs, layout = build_body_humanoid(
+                proportions, palette, surface_material, base_template
+            )
         else:
             procedural_template = base_template if base_template == "primitive_mechanical" else "primitive_blob"
             body, head_loc, has_arms, has_legs = build_body_tier3(procedural_template, proportions, palette, surface_material)
         head = build_head(head_loc)
-        eyes = build_eyes(head_loc, hex_to_rgba(palette["secondary"]))
+        eyes = build_eyes(head_loc, hex_to_rgba(palette["primary"]))
         mouth, teeth, viseme_keys = build_mouth(head_loc, has_face)
 
         bpy.context.view_layer.update()
@@ -1404,6 +1540,8 @@ def main() -> None:
             if item:
                 accessory_objs += build_socket_accessory(socket_name, item, head_loc, palette, DEPLOY_DIR)
 
+        if has_legs and layout is not None:
+            run_keys = add_run_shape_keys([body, *outfit_objs, *footwear_objs], layout)
         arm_obj = build_armature(has_arms, head_loc, has_legs=has_legs, layout=layout)
         meshes = [body, head, *eyes, mouth, teeth, *outfit_objs, *footwear_objs, *accessory_objs]
         parent_to_armature(arm_obj, meshes)
@@ -1451,6 +1589,8 @@ def main() -> None:
         "speech_indicator_mode": speech_indicator_mode,
         "capabilities": {"has_head": True, "has_arms": has_arms, "has_legs": has_legs, "has_face": has_face},
         "viseme_shape_keys": viseme_keys,
+        "blink_shape_keys": [BLINK_SHAPE_KEY] if eyes else [],
+        "run_shape_keys": run_keys,
         "animation_clips": clip_metadata(baked_clips),
         "bounds": bounds,
         "warnings": warnings,

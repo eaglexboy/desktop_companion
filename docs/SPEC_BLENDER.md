@@ -67,6 +67,14 @@ blender --background --factory-startup --python blender/generator.py -- --spec <
 * `--spec <path> --out <path>`: Compiles a `LookSpec` JSON into a `.glb` container and `<out>.build.json`.
 * `--inspect <path> --out <path>`: Analyzes bone hierarchy, morph targets, and facial capabilities of a custom asset without compiling a scene, outputting metadata conforming to the template inspection schema.
 
+### Thumbnail renderer (`blender/thumbnail.py`)
+A second, separate headless script, run by `brain/appearance/thumbnails.py` and never imported:
+
+```bash
+blender --background --factory-startup --python blender/thumbnail.py -- <in.glb> <out.png> [size]
+```
+Imports the `.glb`, clears animation and forces the rest pose, frames an orthographic camera from the rest-pose vertex bounds of the model's meshes (ignoring the glTF importer's `Icosphere` bone-display helper, and not trusting a skinned mesh's `bound_box`), and renders a transparent `size` x `size` PNG (default 320) with the Workbench engine. Prints `THUMB_OK` on success. The picture is the Looks tab's per-version image ([ADR_LOOK_HISTORY.md](ADR_LOOK_HISTORY.md)); it is derived and never part of the manifest.
+
 ### Subprocess Execution Rules
 1. **Isolated Execution:** Relies exclusively on Blender's bundled `bpy` and Python standard library.
 2. **Environment Sanitization:** Strips all host virtual environment variables (`VIRTUAL_ENV`, `PYTHONPATH`, `PYTHONHOME`) and removes the active venv path from `PATH`.
@@ -299,12 +307,14 @@ Declares all allowable outfits, footwear options, and socket-mounted accessories
     "speech_indicator_mode": "viseme_shapekeys",
     "capabilities": {"has_head": true, "has_arms": true, "has_legs": true, "has_face": true},
     "viseme_shape_keys": ["viseme_A", "..."],
+    "blink_shape_keys": ["blink"],
+    "run_shape_keys": [],
     "animation_clips": [{"name": "idle_lookaround", "loop": true, "duration_s": 4.0}],
     "bounds": {"height_m": 1.65, "width_m": 0.55, "depth_m": 0.32},
     "warnings": []
   }
   ```
-* **In `manifest.json` (`versions[]` entry):** Mirrors `<out>.build.json` with the addition of `version: N` and the full serialized `look_spec: {...}` (used to guarantee zero-recompile rollback).
+* **In `manifest.json` (`versions[]` entry):** Mirrors `<out>.build.json` with the addition of `version: N` and the full serialized `look_spec: {...}` (used to guarantee zero-recompile rollback for kept versions, and to rebuild a pruned version on request or for its thumbnail; builds are deterministic from `seed`).
 * **Over WebSocket IPC (`hot_reload_asset` & `welcome`):** The daemon broadcasts the active version entry **stripped of `look_spec` and `warnings`** to minimize payload overhead.
 
 ---

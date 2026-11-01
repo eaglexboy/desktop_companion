@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="/static/css/timeline.css">
   <link rel="stylesheet" href="/static/css/chat.css">
   <link rel="stylesheet" href="/static/css/logs.css">
+  <link rel="stylesheet" href="/static/css/looks.css">
 </head>
 
 <body>
@@ -23,6 +24,7 @@
       <button role="tab" data-tab="thinking">Thinking</button>
       <button role="tab" data-tab="skills">Skills</button>
       <button role="tab" data-tab="timeline">Mood timeline</button>
+      <button role="tab" data-tab="looks">Looks</button>
       <button role="tab" data-tab="chat">Chat &amp; memory</button>
       <button role="tab" data-tab="logs">Logs</button>
     </nav>
@@ -133,6 +135,17 @@
         </div>
         <div class="legend" id="tlFeelings" aria-label="Feelings along the bottom strip"></div>
         <div id="tlTableWrap" style="display:none"></div>
+      </section>
+    </div>
+
+    <div class="tab" id="tab-looks">
+      <section class="wide">
+        <h2>Looks <span class="sp"></span><span class="muted" id="looksSummary"></span></h2>
+        <p class="reasoning-note">Every look the companion has had, newest first. This page is read-only: tell the companion
+          "go back to version N" and it restores that one (rebuilding it if the file is no longer kept).</p>
+        <div class="looks" id="looksGrid">
+          <div class="empty">Loading…</div>
+        </div>
       </section>
     </div>
 

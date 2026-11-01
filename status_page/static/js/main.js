@@ -7,6 +7,7 @@ import { initOverview } from "./overview.js";
 import { initSkills } from "./skills.js";
 import { initThinking } from "./thinking.js";
 import { initTimeline } from "./timeline.js";
+import { initLooks } from "./looks.js";
 import { initLogs } from "./logs.js";
 import { connectStream } from "./stream.js";
 
@@ -16,6 +17,7 @@ initSkills();
 initThinking();
 initTimeline();
 initLogs();
+initLooks();
 initTabs(); // after the listeners above, so the first "tab" event reaches them
 initOverview(); // starts polling; the first result fans out to every panel
 connectStream();

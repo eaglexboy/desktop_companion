@@ -5,9 +5,9 @@
 
 WindowMaskHelper::WindowMaskHelper(QObject *parent) : QObject(parent) {}
 
-void WindowMaskHelper::applyMask(QQuickWindow *window, int width, int height)
+void WindowMaskHelper::applyMask(QQuickWindow *window, int width, int height, int y)
 {
     if (!window)
         return;
-    window->setMask(QRegion(0, 0, width, height));
+    window->setMask(QRegion(0, y, width, height));
 }

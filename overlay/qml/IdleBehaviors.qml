@@ -10,13 +10,20 @@ Item {
     id: root
     property Node avatar: null
     property string mood: "neutral"
+    // AvatarController: drives the eye blink morph targets.
+    property var controller: null
     property bool thinking: false
     // Faceless-mode (has_face:false) speech indicator: a fixed ~4.5Hz
     // scale pulse, gated by playback state rather than true real-time
     // audio RMS -- Qt Multimedia's QMediaPlayer exposes no RMS/amplitude
     // tap without a lower-level QAudioSink pipeline.
     property bool pulsing: false
-    onPulsingChanged: if (!pulsing && root.avatar) root.avatar.scale.y = 1.0
+    onPulsingChanged: {
+        if (pulsing)
+            cancelMicroIdle()
+        else if (root.avatar)
+            root.avatar.scale.y = 1.0
+    }
 
     SequentialAnimation {
         id: pulseLoop
@@ -28,28 +35,110 @@ Item {
 
     // Evasion motion. The baked `move` clip is stripped at load (see
     // Avatar3D.qml's GlbSanitizer), so while the surface slides across the
-    // screen the model hops and leans into the direction of travel.
+    // screen the model turns to face its heading and hops (or, with run
+    // targets, runs).
     property bool moving: false
+    // Height (m) the avatar node sits at so it rotates/scales about the waist
+    // (see Avatar3D.qml). position.y rests here rather than at 0.
+    property real pivotHeight: 0
+    onPivotHeightChanged: restoreRestHeight()
+    onAvatarChanged: restoreRestHeight()
+    function restoreRestHeight() {
+        if (root.avatar && !hopLoop.running)
+            root.avatar.position.y = root.pivotHeight
+    }
     property int travelDir: 1   // +1 right, -1 left
     SequentialAnimation {
         id: hopLoop
         loops: Animation.Infinite
         running: root.avatar !== null && root.moving
-        NumberAnimation { target: root.avatar; property: "position.y"; to: 0.14; duration: 110; easing.type: Easing.OutQuad }
-        NumberAnimation { target: root.avatar; property: "position.y"; to: 0; duration: 110; easing.type: Easing.InQuad }
-        onRunningChanged: if (!running && root.avatar) root.avatar.position.y = 0
+        NumberAnimation { target: root.avatar; property: "position.y"; to: root.pivotHeight + 0.14; duration: 110; easing.type: Easing.OutQuad }
+        NumberAnimation { target: root.avatar; property: "position.y"; to: root.pivotHeight; duration: 110; easing.type: Easing.InQuad }
+        onRunningChanged: if (!running) root.restoreRestHeight()
     }
-    NumberAnimation {
-        id: leanAnim
-        target: root.avatar
-        property: "eulerRotation.z"
-        duration: 120
+    // Facing. Before a run the avatar turns 90 degrees toward its heading
+    // (running sideways-on, sliding, looks wrong), and turns back to face the
+    // user once it arrives. Main.qml delays the slide by `turnMs` so the run
+    // starts after the turn. +90 on Y turns the front toward screen-right.
+    readonly property int turnMs: 220
+    // Set by Main.qml for the whole trip between monitors, so the stop at the
+    // edge of one screen does not turn the companion back before the run in.
+    property bool holdTurn: false
+    property bool turned: false   // true from the start of the turn-away until the turn-back finishes
+
+    // True when it started a turn (the caller waits `turnMs` before running);
+    // false when already side-on that way, as on the second leg of a trip
+    // between monitors.
+    function turnToward(dir) {
+        if (!root.avatar)
+            return false
+        if (root.turned && !turnAnim.running && Math.abs(root.avatar.eulerRotation.y - 90 * dir) < 1)
+            return false
+        cancelMicroIdle()
+        turnAnim.stop()   // before `turned = true`: its onStopped may clear it
+        root.turned = true
+        turnAnim.to = 90 * dir
+        turnAnim.start()
+        return true
     }
-    onMovingChanged: {
-        if (!root.avatar || root.thinking)
+
+    // Ends exactly at the sway's start angle (-amplitude), so the sway
+    // resumes without a jump.
+    function turnBack() {
+        if (!root.turned || !root.avatar)
             return
-        leanAnim.to = root.moving ? -9 * root.travelDir : 0
-        leanAnim.restart()
+        turnAnim.stop()
+        turnAnim.to = -root.activePreset.amplitude
+        turnAnim.start()
+    }
+
+    NumberAnimation {
+        id: turnAnim
+        target: root.avatar
+        property: "eulerRotation.y"
+        duration: root.turnMs
+        easing.type: Easing.InOutQuad
+        onStopped: if (to === -root.activePreset.amplitude) root.turned = false
+    }
+
+    // Running legs. Avatars with legs carry `run_a`/`run_b` morph targets
+    // (the two mirrored extremes of a stride); cross-fading them in time with
+    // the hop makes the body actually run. Avatars without them keep the
+    // plain hop-and-lean above.
+    property bool canRun: false
+    property real runAmount: 0     // 0 = standing, 1 = full stride
+    property real runPhase: 0      // 0..1 across one two-step cycle
+    Behavior on runAmount { NumberAnimation { duration: 140 } }
+    function applyRunPose() {
+        if (!root.controller)
+            return
+        // Extremes land at phase 0.25 / 0.75 = the top of each hop, which is
+        // when a runner's stride is widest (the flight phase).
+        const k = 0.5 + 0.5 * Math.sin(2 * Math.PI * root.runPhase)
+        root.controller.setRunWeights(root.runAmount * k, root.runAmount * (1 - k))
+    }
+    onRunAmountChanged: applyRunPose()
+    onRunPhaseChanged: applyRunPose()
+    NumberAnimation {
+        id: runCycle
+        target: root
+        property: "runPhase"
+        from: 0
+        to: 1
+        duration: 440   // two hops (110ms up + 110ms down each)
+        loops: Animation.Infinite
+        running: root.avatar !== null && (root.moving && root.canRun || root.runAmount > 0)
+    }
+
+    onMovingChanged: {
+        if (moving) {
+            cancelMicroIdle()
+            // Checked per trip: a hot-reloaded look replaces the nodes.
+            root.canRun = root.controller !== null && root.controller.hasRunTargets()
+        }
+        root.runAmount = (moving && root.canRun) ? 1 : 0
+        if (!moving && !holdTurn)
+            turnBack()
     }
 
     readonly property var moodPresets: ({
@@ -68,7 +157,7 @@ Item {
     SequentialAnimation {
         id: idleLoop
         loops: Animation.Infinite
-        running: root.avatar !== null && !root.thinking
+        running: root.avatar !== null && !root.thinking && !root.swayPaused && !root.turned
         NumberAnimation {
             target: root.avatar
             property: "eulerRotation.y"
@@ -84,6 +173,199 @@ Item {
             to: -root.activePreset.amplitude
             duration: root.activePreset.periodMs
             easing.type: Easing.InOutSine
+        }
+    }
+
+
+    // --- Tier 1/2 idle variety ------------------------------------------
+    // Every so often the avatar performs one short, randomly chosen idle
+    // (look around, stretch, peek, sleepy nod, fidget) on top of the
+    // continuous sway so it doesn't look like a single looping motion. Which
+    // ones are likely depends on `mood`. These are transform-based stand-ins
+    // for the baked idle_* clips, which the overlay never plays.
+    property bool swayPaused: false   // look-around owns eulerRotation.y while it runs
+
+    readonly property var microWeights: ({
+        "neutral": { lookaround: 3, stretch: 2, peek: 2, nod: 1, fidget: 1 },
+        "bored": { lookaround: 3, stretch: 3, peek: 1, nod: 3, fidget: 1 },
+        "curious": { lookaround: 4, stretch: 1, peek: 4, nod: 0, fidget: 1 },
+        "fidget": { lookaround: 2, stretch: 1, peek: 1, nod: 0, fidget: 5 },
+        "content": { lookaround: 2, stretch: 3, peek: 2, nod: 2, fidget: 0 }
+    })
+
+    readonly property bool microRunning: lookAroundAnim.running || stretchAnim.running
+        || peekAnim.running || nodAnim.running || fidgetAnim.running || clipBusy
+
+    function pickMicroIdle() {
+        const weights = microWeights[mood] || microWeights["neutral"]
+        let total = 0
+        for (const k in weights)
+            total += weights[k]
+        let r = Math.random() * total
+        for (const k in weights) {
+            r -= weights[k]
+            if (r < 0)
+                return k
+        }
+        return "lookaround"
+    }
+
+    // The baked clip standing in for each micro-idle (see the generator's
+    // CORE_IDLE_CLIPS / MOOD_IDLE_CLIPS). When the loaded avatar has the
+    // clip it is played instead of the transform-based stand-in below, so
+    // imported models bring their own idle motion.
+    readonly property var bakedIdleClips: ({
+        "lookaround": "idle_lookaround",
+        "stretch": "idle_stretch",
+        "peek": "idle_peek",
+        "nod": "idle_sleepy",
+        "fidget": "idle_fidget"
+    })
+    // Off: played through Qt's glTF import, the generator's idle clips move
+    // nothing visible on a skinned avatar (checked frame by frame), so using
+    // them replaced the working transform idles below with a motionless one.
+    // Turn on for models whose own clips are known to play.
+    property bool preferBakedClips: false
+    property bool clipBusy: false
+    Timer {
+        id: clipBusyTimer
+        onTriggered: root.clipBusy = false
+    }
+
+    function playMicroIdle(name) {
+        const clip = bakedIdleClips[name]
+        if (root.preferBakedClips && clip && root.controller && root.controller.playClip(clip, 1)) {
+            root.clipBusy = true
+            clipBusyTimer.interval = root.controller.clipDurationMs(clip) + 100
+            clipBusyTimer.restart()
+            return
+        }
+        if (name === "lookaround") lookAroundAnim.start()
+        else if (name === "stretch") stretchAnim.start()
+        else if (name === "peek") peekAnim.start()
+        else if (name === "nod") nodAnim.start()
+        else if (name === "fidget") fidgetAnim.start()
+    }
+
+    // Aborts any running micro-idle and returns the axes it touched to
+    // neutral. Called when a higher tier (thinking, moving, speech,
+    // gesture) takes over the transform.
+    function cancelMicroIdle() {
+        if (root.clipBusy && root.controller)
+            root.controller.stopAllClips()
+        root.clipBusy = false
+        clipBusyTimer.stop()
+        lookAroundAnim.stop()
+        stretchAnim.stop()
+        peekAnim.stop()
+        nodAnim.stop()
+        fidgetAnim.stop()
+        root.swayPaused = false
+        if (!root.avatar)
+            return
+        root.avatar.eulerRotation.x = 0
+        root.avatar.eulerRotation.z = 0
+        if (!root.pulsing)
+            root.avatar.scale.y = 1.0
+    }
+
+    readonly property bool microBlocked: root.avatar === null || root.thinking || root.moving || root.turned
+        || root.pulsing || gestureAnim.running || root.microRunning
+
+    onThinkingChanged: if (thinking) cancelMicroIdle()
+
+    Timer {
+        id: microTimer
+        running: root.avatar !== null
+        repeat: true
+        interval: 6000
+        onTriggered: {
+            interval = 6000 + Math.random() * 9000
+            if (!root.microBlocked)
+                root.playMicroIdle(root.pickMicroIdle())
+        }
+    }
+
+    // idle_lookaround: sweep right, then left, then settle exactly where
+    // the sway loop begins (-amplitude) so it resumes without a jump.
+    SequentialAnimation {
+        id: lookAroundAnim
+        onStarted: root.swayPaused = true
+        onStopped: root.swayPaused = false
+        NumberAnimation { target: root.avatar; property: "eulerRotation.y"; to: 25; duration: 650; easing.type: Easing.InOutSine }
+        PauseAnimation { duration: 250 }
+        NumberAnimation { target: root.avatar; property: "eulerRotation.y"; to: -25; duration: 1100; easing.type: Easing.InOutSine }
+        PauseAnimation { duration: 250 }
+        NumberAnimation { target: root.avatar; property: "eulerRotation.y"; to: -root.activePreset.amplitude; duration: 650; easing.type: Easing.InOutSine }
+    }
+
+    // idle_stretch: a slow vertical stretch.
+    SequentialAnimation {
+        id: stretchAnim
+        NumberAnimation { target: root.avatar; property: "scale.y"; to: 1.07; duration: 900; easing.type: Easing.InOutSine }
+        PauseAnimation { duration: 300 }
+        NumberAnimation { target: root.avatar; property: "scale.y"; to: 1.0; duration: 1000; easing.type: Easing.InOutSine }
+    }
+
+    // idle_peek: tilt and lean toward the viewer, hold, return.
+    SequentialAnimation {
+        id: peekAnim
+        ParallelAnimation {
+            NumberAnimation { target: root.avatar; property: "eulerRotation.x"; to: 10; duration: 350; easing.type: Easing.OutQuad }
+            NumberAnimation { target: root.avatar; property: "eulerRotation.z"; to: 14; duration: 350; easing.type: Easing.OutQuad }
+        }
+        PauseAnimation { duration: 700 }
+        ParallelAnimation {
+            NumberAnimation { target: root.avatar; property: "eulerRotation.x"; to: 0; duration: 450; easing.type: Easing.InOutQuad }
+            NumberAnimation { target: root.avatar; property: "eulerRotation.z"; to: 0; duration: 450; easing.type: Easing.InOutQuad }
+        }
+    }
+
+    // idle_sleepy: head droops forward and slowly comes back up.
+    SequentialAnimation {
+        id: nodAnim
+        NumberAnimation { target: root.avatar; property: "eulerRotation.x"; to: 14; duration: 1200; easing.type: Easing.InOutSine }
+        PauseAnimation { duration: 400 }
+        NumberAnimation { target: root.avatar; property: "eulerRotation.x"; to: 0; duration: 700; easing.type: Easing.OutBack }
+    }
+
+    // idle_fidget: quick side-to-side shuffle.
+    SequentialAnimation {
+        id: fidgetAnim
+        loops: 2
+        NumberAnimation { target: root.avatar; property: "eulerRotation.z"; to: 6; duration: 140; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: root.avatar; property: "eulerRotation.z"; to: -6; duration: 220; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: root.avatar; property: "eulerRotation.z"; to: 0; duration: 140; easing.type: Easing.InOutQuad }
+        PauseAnimation { duration: 120 }
+    }
+
+
+
+    // --- idle_blink -------------------------------------------------------
+    // Drives the eye meshes' `blink` morph target (see the manifest's
+    // blink_shape_keys). Avatars without eye targets never blink. Runs
+    // independently of the micro-idles, since it touches only the eyes.
+    property real blinkAmount: 0   // 0 = open, 1 = closed
+    onBlinkAmountChanged: if (root.controller) root.controller.setBlinkWeight(blinkAmount)
+
+    SequentialAnimation {
+        id: blinkAnim
+        NumberAnimation { target: root; property: "blinkAmount"; to: 1; duration: 70; easing.type: Easing.OutQuad }
+        PauseAnimation { duration: 40 }
+        NumberAnimation { target: root; property: "blinkAmount"; to: 0; duration: 110; easing.type: Easing.InQuad }
+    }
+
+    Timer {
+        id: blinkTimer
+        running: root.avatar !== null && root.controller !== null
+        repeat: true
+        interval: 3000
+        onTriggered: {
+            // Mostly 2.5-6.5s apart, occasionally a quick double blink.
+            interval = Math.random() < 0.2 ? 260 : 2500 + Math.random() * 4000
+            // Checked each time: a hot-reloaded look replaces the nodes.
+            if (!blinkAnim.running && root.controller.hasBlinkTargets())
+                blinkAnim.start()
         }
     }
 
@@ -116,6 +398,7 @@ Item {
         const preset = gesturePresets[name]
         if (!preset || !root.avatar)
             return
+        cancelMicroIdle()
         gestureAnim.stop()
         gestureAnim.targetProperty = preset.property
         gestureAnim.toValue = preset.to

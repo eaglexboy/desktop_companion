@@ -273,6 +273,7 @@ User / Reflection Loop          Brain Daemon                Blender Subprocess  
 
 6. **Pruning & Finalization:**
    * Upon receiving `asset_swap_result: {ok: true}` (or 60-second grace timeout), daemon prunes `<deploy_dir>/assets/` and old versions in `<deploy_dir>/data/current/` exceeding `keep_recent_versions` (default 3).
+   * After a publish, the daemon renders the version's thumbnail to `<deploy_dir>/looks/look-v{N}.png` (never pruned; best-effort, outside the build lock). See [ADR_LOOK_HISTORY.md](ADR_LOOK_HISTORY.md).
    * Scratch artifacts are cleaned; daemon emits `status_update: {"state": "idle"}`.
 
 ---
@@ -287,7 +288,8 @@ If the overlay client encounters an OpenGL shader crash or asset failure, it tra
 ### 2. Fast User Undo / Revert ("Go back to your old look")
 Users can ask to revert at any time:
 * Router detects intent via `revert_appearance()` tool or keyword classifier. Also exposed via `POST /appearance/revert`.
-* Reverting requires **zero Blender recompilation** because recent `.glb` files and LookSpecs are preserved.
+* Reverting one step requires **zero Blender recompilation** because recent `.glb` files and LookSpecs are preserved.
+* **Revert to a numbered version** ("go back to version 12", from the status page's Looks tab): if that version's `.glb` is still kept it is the same pointer rewrite. If it was pruned, the look is rebuilt from the `look_spec` the manifest keeps for every version and published as a **new** version (numbers never go backwards), with the usual progress stages. An unknown number, or the one already current, is answered in words and changes nothing. `POST /appearance/revert` is unchanged (one step back).
 
 ### 3. Concurrency & Collision Rules
 * Only one Blender compilation subprocess runs at a time.

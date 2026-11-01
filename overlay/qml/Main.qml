@@ -12,7 +12,7 @@ Window {
     // (see the bar's anchoring below), so opening it never pushes the
     // surface off the bottom of the screen.
     width: avatarWidth
-    height: avatarHeight
+    height: avatarHeight + headroom
     color: "transparent"
     flags: Qt.FramelessWindowHint
     visible: true
@@ -31,7 +31,11 @@ Window {
     property real slideX: 24
     property real slideY: 24
     LayerShellQt.Window.margins.left: Math.round(slideX)
-    LayerShellQt.Window.margins.top: Math.round(slideY)
+    LayerShellQt.Window.margins.top: Math.max(0, Math.round(slideY) - headroom)
+    // Where the avatar's top edge sits inside the window: the full headroom,
+    // less whatever the screen's top edge cuts off when the avatar is parked there.
+    readonly property int avatarOffsetY: Math.min(Math.round(slideY), headroom)
+    onAvatarOffsetYChanged: applyMask()
     readonly property bool moving: slideAnim.running
     // Per-frame, so the bubble rides along with the avatar while it runs.
     onSlideXChanged: speechBubble.avatarLeft = slideX
@@ -48,17 +52,32 @@ Window {
     // on screen, a jump for the very first placement or a zero duration.
     function slideTo(localX, localY, durationMs, animate, easing) {
         slideAnim.stop()
+        slideStartTimer.stop()
         if (!animate || durationMs <= 0 || (localX === slideX && localY === slideY)) {
             slideX = localX
             slideY = localY
-            return
+            // The re-home between monitors happens mid-trip: stay side-on.
+            if (!root.crossEntering)
+                idleBehaviors.turnBack()
+            return 0
         }
-        idleBehaviors.travelDir = localX >= slideX ? 1 : -1
+        const dx = localX - slideX
+        idleBehaviors.travelDir = dx >= 0 ? 1 : -1
+        // Turn to face the heading first (the slide starts once the turn is
+        // done); a mostly vertical trip keeps facing the user.
+        const turns = Math.abs(dx) >= 8 && idleBehaviors.turnToward(idleBehaviors.travelDir)
+        slideStartTimer.interval = turns ? idleBehaviors.turnMs : 1
         slideAnim.durationMs = durationMs
         slideXAnim.easing.type = slideYAnim.easing.type = easing !== undefined ? easing : Easing.InOutQuad
         slideXAnim.to = localX
         slideYAnim.to = localY
-        slideAnim.start()
+        slideStartTimer.start()
+        return slideStartTimer.interval
+    }
+
+    Timer {
+        id: slideStartTimer
+        onTriggered: slideAnim.start()
     }
 
     property bool interactive: false
@@ -83,6 +102,9 @@ Window {
     // `welcome` arrives -- it is never what a configured size ends up as.
     property int avatarWidth: 240
     property int avatarHeight: 240
+    // Transparent room above the avatar inside its window (see Avatar3D
+    // `baseHeight`): the avatar's size and position on screen are unchanged.
+    readonly property int headroom: Math.round(avatarHeight * 0.15)
     // [presence] show_speech_bubble, delivered in `welcome`.
     property bool showSpeechBubble: true
 
@@ -122,7 +144,7 @@ Window {
     WindowMaskHelper { id: maskHelper }
     LayerShellScreenHelper { id: layerShellScreen }
     function applyMask() {
-        maskHelper.applyMask(root, root.avatarWidth, root.avatarHeight)
+        maskHelper.applyMask(root, root.avatarWidth, root.avatarHeight, root.avatarOffsetY)
     }
 
     // The daemon broadcasts window position in global virtual-desktop
@@ -274,8 +296,9 @@ Window {
         Avatar3D {
             id: avatar3d
             width: root.avatarWidth
-            height: root.avatarHeight
-            anchors.top: parent.top
+            height: root.avatarHeight + root.headroom
+            baseHeight: root.avatarHeight
+            y: root.avatarOffsetY - root.headroom
             anchors.left: parent.left
             lookSource: root.currentLookPath
 
@@ -293,6 +316,9 @@ Window {
             id: idleBehaviors
             avatar: avatar3d.modelNode
             moving: root.moving
+            holdTurn: root.crossing || root.crossEntering
+            pivotHeight: avatar3d.pivotHeight
+            controller: avatar3d.controller
         }
 
         InteractionBar {
@@ -382,7 +408,9 @@ Window {
         }
         root.crossTarget = { x: x, y: y, screen: screenName, entryX: entryX + to.virtualX, entryY: entryY + to.virtualY }
         root.crossing = true
-        root.slideTo(exitX, exitY, root.crossRunMs, true, Easing.InQuad)
+        // The run starts after the turn; the swap waits for both.
+        const lead = root.slideTo(exitX, exitY, root.crossRunMs, true, Easing.InQuad)
+        crossTimer.interval = lead + root.crossRunMs
         crossTimer.restart()
         return true
     }
@@ -394,20 +422,55 @@ Window {
         interval: root.crossRunMs
         onTriggered: {
             const t = root.crossTarget
-            root.crossing = false
             root.crossTarget = null
-            if (!t)
+            if (!t) {
+                root.crossing = false
                 return
-            // Re-home at the entry edge (a jump while invisible), then run in.
+            }
+            // Re-home at the entry edge (a jump while invisible). The surface
+            // is destroyed and recreated for the new output, which takes a
+            // moment to appear: the run in waits for its first frame, or the
+            // whole run would play before anything is on screen.
             root.crossEntering = true
             root.hidden = true
             root.applyPosition(t.entryX, t.entryY, t.screen, false, 0)
-            const to = root.screenByName(t.screen)
-            if (to) {
-                root.slideTo(t.x - to.virtualX, t.y - to.virtualY, root.crossRunMs, true, Easing.OutQuad)
-                root.lastPlacement = { x: t.x, y: t.y, screen: t.screen }
+            root.lastPlacement = { x: t.x, y: t.y, screen: t.screen }
+            root.entryRun = t
+            root.awaitFrame = true
+            entryFallbackTimer.restart()
+            root.crossing = false
+        }
+    }
+
+    // The run in on the new output, once its surface is up.
+    property var entryRun: null
+    property bool awaitFrame: false
+    function startEntryRun() {
+        const t = root.entryRun
+        root.entryRun = null
+        root.awaitFrame = false
+        entryFallbackTimer.stop()
+        entrySettleTimer.stop()
+        if (!t)
+            return
+        const to = root.screenByName(t.screen)
+        let ran = 0
+        if (to)
+            ran = root.slideTo(t.x - to.virtualX, t.y - to.virtualY, root.crossRunMs, true, Easing.OutQuad)
+        root.crossEntering = false
+        // Already at the spot, so no run in to end the trip: face the user now.
+        if (ran === 0)
+            idleBehaviors.turnBack()
+    }
+    Timer { id: entrySettleTimer; interval: 90; onTriggered: root.startEntryRun() }
+    Timer { id: entryFallbackTimer; interval: 800; onTriggered: root.startEntryRun() }
+    Connections {
+        target: root
+        function onFrameSwapped() {
+            if (root.awaitFrame) {
+                root.awaitFrame = false
+                entrySettleTimer.restart()
             }
-            root.crossEntering = false
         }
     }
 
@@ -455,6 +518,9 @@ Window {
                 root.pendingManifestVersion = current.version
                 root.hasFace = current.has_face
                 avatar3d.controller.shapeKeyNames = current.viseme_shape_keys || []
+                avatar3d.controller.blinkKeyNames = current.blink_shape_keys || []
+                avatar3d.controller.runKeyNames = current.run_shape_keys || []
+                avatar3d.pivotHeight = ((current.bounds && current.bounds.height_m) || 0) * 0.45
                 root.currentLookPath = "file://" + assetDir + "/" + current.glb_filename
             }
             if (config.shortcuts) {
@@ -472,6 +538,12 @@ Window {
             // Moving across monitors triggers a 200ms fade-out, re-anchor,
             // 200ms fade-in sequence to avoid compositor re-map flicker.
             // Same-screen moves slide over duration_ms.
+            if (root.entryRun !== null) {
+                // Waiting for the new surface: only the spot can change.
+                if (screenName === root.entryRun.screen)
+                    root.entryRun = { x: x, y: y, screen: screenName }
+                return
+            }
             if (root.crossing) {
                 // Mid-run: retarget. Same destination keeps its entry edge;
                 // a different one just appears at its target.
@@ -524,6 +596,9 @@ Window {
                 root.pendingManifestVersion = current.version
                 root.hasFace = current.has_face
                 avatar3d.controller.shapeKeyNames = current.viseme_shape_keys || []
+                avatar3d.controller.blinkKeyNames = current.blink_shape_keys || []
+                avatar3d.controller.runKeyNames = current.run_shape_keys || []
+                avatar3d.pivotHeight = ((current.bounds && current.bounds.height_m) || 0) * 0.45
                 root.currentLookPath = "file://" + root.deskmateDataDir + "/" + current.glb_filename
             }
         }

@@ -2,7 +2,7 @@
 
 ## Role
 
-A browser dashboard for seeing what the stack is doing without a terminal tab per service: health, the live decision pipeline, mood over time, chat and logs. It is a **separate process** from the brain (`deskmate-status.service`, `python -m status_page.app`), deliberately: it must stay up and restartable when the brain hangs or crashes, it cannot slow the brain, and iterating on it never interrupts the companion.
+A browser dashboard for seeing what the stack is doing without a terminal tab per service: health, the live decision pipeline, mood over time, the history of the companion's looks, chat and logs. It is a **separate process** from the brain (`deskmate-status.service`, `python -m status_page.app`), deliberately: it must stay up and restartable when the brain hangs or crashes, it cannot slow the brain, and iterating on it never interrupts the companion.
 
 ## Principles
 
@@ -20,6 +20,8 @@ A browser dashboard for seeing what the stack is doing without a terminal tab pe
 | `GET /api/overview` | One poll (the page polls every 3 s): unit states, backup status (`[storage] backup_dir`'s `state.db` mtime plus `deskmate-backup.timer`), brain `GET /health` + `GET /api/status` + `GET /api/skills`, endpoint probes, and from `state.db` the last 40 chat turns (each assistant turn joined to its `reply_raw` row, when it has one; a database from before that table still reads), 12 memory notes, `agent_state`, traits and mood. |
 | `GET /api/events` | Relays the brain's SSE event stream (`GET /api/events`, see [SPEC_BRAIN.md](SPEC_BRAIN.md) "Event Stream") so the browser talks only to this service. `?since=` / `Last-Event-ID` pass through; if the brain is unreachable it emits a `brain-down` event and ends, and the browser's `EventSource` retries. |
 | `GET /api/history?kind=mood\|traits&hours=` | Time series from `personality_history`, step-function points per name, down-sampled to $\le 600$ per series, anchored by the last point before the window (1 hour to 30 days). |
+| `GET /api/looks` | Every version in `manifest.json`, newest first: `version`, `created_at`, `status`, `summary` (template, outfit, footwear, worn accessories), `palette`, `has_picture` (a PNG exists in `<deploy_dir>/looks/`) and `kept` (its `.glb` is still in `assets/`), plus `current`. Read straight from the manifest file; a missing or unreadable manifest gives an empty list. |
+| `GET /api/looks/{version}.png` | The version's picture (`<deploy_dir>/looks/look-v{N}.png`, rendered by the brain, see [ADR_LOOK_HISTORY.md](ADR_LOOK_HISTORY.md)); `404` if not rendered yet. The version is an integer in the route, never a path. |
 | `GET /api/logs/{source}` | SSE tail of one configured source: `journalctl --user -u <unit>.service -o short-iso -n 200 -f`, or `tail -F -n 200 <file>`. The client names a source; it can never supply a command or path (unknown $\to$ 404). |
 
 Endpoint probes (`/models` of the local and classifier LLMs; each `[voice.tts.remote.*]` instance's capabilities endpoint) use a 2 s timeout; disabled instances show as such rather than failing.
@@ -39,7 +41,7 @@ status_page/
     │   ├── tokens.css      # colors for light and dark; series slots --s1..--s3
     │   ├── base.css        # reset, header, tab nav, buttons, tab panels, section cards
     │   ├── components.css  # status rows, dots, key/value, bars, chips, tables, banner, empty state
-    │   ├── thinking.css  timeline.css  chat.css  logs.css   # one per tab
+    │   ├── thinking.css  timeline.css  chat.css  logs.css  looks.css   # one per tab
     └── js/
         ├── main.js         # wires the modules together and starts the poll and the stream
         ├── bus.js          # pub/sub ("overview", "stream", "tab", "theme"): modules never import each other's panels
@@ -50,19 +52,21 @@ status_page/
         ├── personality.js  # live mood/trait bars          feelings.js  # feeling() and its colors
         ├── thinking.js     # per-turn cards                skills.js    # registry, activity, prompt block
         ├── timeline.js     # chart                         series.js    # step-series lookup
-        ├── logs.js         # log tails                     tabs.js  theme.js
+        ├── looks.js        # Looks tab: fetches /api/looks when shown     logs.js  # log tails
+        ├── tabs.js  theme.js
 ```
 
 Each panel module exports one `initX()` and reacts to bus events; adding a panel means a new module, a new `initX()` call in `main.js`, and (for a tab) an entry in `tabs.js` and `index.html`.
 
 ## UI
 
-Six tabs (location hash), a live-connection indicator, a light/dark toggle (`prefers-color-scheme` plus an explicit override; chart colors are the validated categorical slots 1-3 for both modes), and a problems banner (a unit not active, brain/LLM/TTS unreachable, overlay not connected, database error).
+Seven tabs (location hash), a live-connection indicator, a light/dark toggle (`prefers-color-scheme` plus an explicit override; chart colors are the validated categorical slots 1-3 for both modes), and a problems banner (a unit not active, brain/LLM/TTS unreachable, overlay not connected, database error).
 
 * **Overview:** services, endpoints, companion (name, voice, presence, look, overlay connection, uptime), **backup** (target, age of the last good snapshot, timer state; a problem is raised if no `backup_dir` is configured, no backup has been made, the last is over 36 h old, or the timer is not active), "feeling now", live mood and trait bars with the last change, placement (avatar, active window, screens).
 * **Thinking:** a feed of cards, one per user turn (events grouped by their `turn` id): the prompt (collapsed), routing decision and reason, the pool chosen (including "wanted cloud, none configured, fell back"), each model call with latency and tokens, the model's reasoning when `[llm.local] reasoning = true`, reply format (flagging an unstructured reply), skills run (`Did:`) or refused (`Refused:`), the **raw response** (the model's reply exactly as returned, from the `reply.raw` event, with a word diff against the text that was finally said and saved), the spoken reply, and per-sentence voice timing. Reflection results appear as their own cards; a "Background events" toggle adds placement moves and mood shifts. A note states whether reasoning is on, since it is off by default.
 * **Skills:** every registered skill (enabled or not) with its description, arguments (enum values shown), state, and in-memory usage counters (calls, failures, refusals, last used, last error; reset on brain restart), a live list of skills run or refused since the page opened, and the exact skills block appended to the model's system prompt (the only way the companion knows what it can do). An **Installed Agent Skills** table lists third-party `SKILL.md` skills: display name and canonical `source/name` id, purpose, trust tier, enabled / pinned / exposure (`absent`, `discoverable`, `stub`) with the stub's token cost, source, commit and category, license, notes (scripts, dangerous tools, scan findings), and whether it runs (not yet: the agent runtime does not exist, and no skill is put in the prompt). The heading carries the budget meter (enabled and pinned counts, stub tokens against the budget, the context size it was derived from). Rejected directories follow, with the reason. The table is **read-only**, like the rest of the page; changes are made with `python -m brain.skills.manage` or the brain's `POST /api/skills/state`. Data comes from the brain's `GET /api/skills`, fetched with each overview poll.
 * **Mood timeline:** valence/energy/stress (or up to three chosen traits) as step lines over a selectable range, hover crosshair with values, a table view, and a strip of derived *feelings* along the bottom. The feeling is computed in the page from the three mood values (stress $\ge 65$ nervous/anxious; valence $\ge 65$ excited/happy; $\le 35$ sad/frustrated; then sleepy/energetic by energy; else content/down/neutral); it is never stored. Live `personality.*` events extend the chart without a reload.
+* **Looks:** every version of the companion's appearance, newest first, as a grid of cards: the picture, `Version N`, a *current* badge, a one-line summary, the build date, and "rebuilt on request" where the `.glb` is no longer kept (the pictures are kept for every version; see [ADR_LOOK_HISTORY.md](ADR_LOOK_HISTORY.md)). A version whose picture is not rendered yet shows "picture pending…". **Read-only, like the rest of the page:** there is no restore control. To go back to a look, tell the companion its number ("go back to version 12"); the tab is the reference for choosing one. Loaded when the tab is shown.
 * **Chat & memory, Logs:** recent turns with provider/escalation, each assistant turn that has a recorded raw reply carrying a collapsible "raw response" with the same comparison (the diff is between the dialogue the model produced — the `say` of a structured reply, else the whole text — and the saved text, so it isolates what the cleanup removed or added; open comparisons stay open across the 3 s re-render), memory notes; log panes per source with filter, pause and clear (a dropped log stream is re-opened rather than auto-resumed, to avoid replaying the backlog as duplicates).
 
 ## Deployment
@@ -71,4 +75,4 @@ Six tabs (location hash), a live-connection indicator, a light/dark toggle (`pre
 
 ## Tests
 
-`brain/tests/test_status_page.py`: Host-header guard (including on `/static`), log-source whitelisting, read-only database access, missing-database handling, every asset the index references is served, every JS `import` resolves, and the static mount cannot serve files outside its directory.
+`brain/tests/test_status_page.py`: Host-header guard (including on `/static`), log-source whitelisting, read-only database access, missing-database handling, every asset the index references is served, every JS `import` resolves, the static mount cannot serve files outside its directory, and `/api/looks` (newest first, picture flag, summary, missing manifest, picture 200/404).

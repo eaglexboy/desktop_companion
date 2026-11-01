@@ -1,0 +1,64 @@
+"""Renders one PNG of a built look. Run headless, never imported:
+
+    blender --background --factory-startup --python blender/thumbnail.py -- <in.glb> <out.png> [size]
+
+Uses the Workbench engine (no GPU, ~3 s) and frames the camera from the
+model's own bounding box, so a tall and a short avatar both fill the shot.
+"""
+
+import math
+import sys
+
+import bpy  # pyright: ignore[reportMissingImports]
+from mathutils import Vector  # pyright: ignore[reportMissingImports]
+
+glb, out = sys.argv[sys.argv.index("--") + 1 :][:2]
+extra = sys.argv[sys.argv.index("--") + 3 :]
+size = int(extra[0]) if extra else 320
+
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.gltf(filepath=glb)
+scene = bpy.context.scene
+
+# The imported animation would pose the model at frame 0 of whatever clip is
+# active; the rest pose is the representative one.
+for obj in bpy.data.objects:
+    if obj.animation_data:
+        obj.animation_data_clear()
+    if obj.type == "ARMATURE":
+        obj.data.pose_position = "REST"
+    if obj.name.startswith("Icosphere"):
+        obj.hide_render = True
+
+bpy.context.view_layer.update()
+low, high = Vector((1e9,) * 3), Vector((-1e9,) * 3)
+for obj in bpy.data.objects:
+    # The glTF importer adds an "Icosphere" bone-display helper that is not in
+    # the file; and a skinned mesh's bound_box is not its rest-pose extent.
+    if obj.type != "MESH" or obj.name.startswith("Icosphere"):
+        continue
+    for vertex in obj.data.vertices:
+        world = obj.matrix_world @ vertex.co
+        low = Vector(map(min, low, world))
+        high = Vector(map(max, high, world))
+center = (low + high) / 2
+height = max(high.z - low.z, 0.01)
+width = max(high.x - low.x, high.y - low.y, 0.01)
+
+scene.render.engine = "BLENDER_WORKBENCH"
+scene.display.shading.light = "STUDIO"
+scene.display.shading.color_type = "MATERIAL"
+scene.render.resolution_x = scene.render.resolution_y = size
+scene.render.film_transparent = True
+
+camera = bpy.data.objects.new("cam", bpy.data.cameras.new("cam"))
+scene.collection.objects.link(camera)
+scene.camera = camera
+camera.data.type = "ORTHO"
+camera.data.ortho_scale = max(height, width) * 1.12
+camera.location = (center.x, center.y - 10.0, center.z)
+camera.rotation_euler = (math.radians(90), 0, 0)
+
+scene.render.filepath = out
+bpy.ops.render.render(write_still=True)
+print("THUMB_OK")

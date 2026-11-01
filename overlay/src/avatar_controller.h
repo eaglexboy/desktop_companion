@@ -50,6 +50,15 @@ class AvatarController : public QObject
     // with an EMPTY objectName, so name-based lookup can never match; the
     // i-th morph target of a model is the i-th name in this list.
     Q_PROPERTY(QStringList shapeKeyNames READ shapeKeyNames WRITE setShapeKeyNames NOTIFY shapeKeyNamesChanged)
+    // The manifest's `blink_shape_keys` (the eye meshes' morph targets, e.g.
+    // ["blink"]). Imported morph targets carry no names, so eye models are
+    // recognised by their target COUNT matching this list; that is
+    // unambiguous because it never equals the nine-strong viseme set.
+    Q_PROPERTY(QStringList blinkKeyNames READ blinkKeyNames WRITE setBlinkKeyNames NOTIFY blinkKeyNamesChanged)
+    // The manifest's `run_shape_keys` (["run_a", "run_b"]): the two mirrored
+    // extremes of a run cycle, present on the body (and clothes) of
+    // avatars with legs. Matched by target count like the blink keys.
+    Q_PROPERTY(QStringList runKeyNames READ runKeyNames WRITE setRunKeyNames NOTIFY runKeyNamesChanged)
 
 public:
     explicit AvatarController(QObject *parent = nullptr);
@@ -59,6 +68,23 @@ public:
 
     QStringList shapeKeyNames() const { return m_shapeKeyNames; }
     void setShapeKeyNames(const QStringList &names);
+    QStringList blinkKeyNames() const { return m_blinkKeyNames; }
+    void setBlinkKeyNames(const QStringList &names);
+
+    // Sets every eye morph target to `weight` (0 = open, 1 = closed). A
+    // no-op for avatars without eye blink targets.
+    Q_INVOKABLE void setBlinkWeight(double weight);
+    // Whether the loaded avatar has any eye blink targets. Walks the tree,
+    // so call per blink, not per frame.
+    Q_INVOKABLE bool hasBlinkTargets() const;
+
+    QStringList runKeyNames() const { return m_runKeyNames; }
+    void setRunKeyNames(const QStringList &names);
+    // Sets the two run-pose weights (run_a, run_b) on every model that has
+    // them. No-op for avatars without run targets.
+    Q_INVOKABLE void setRunWeights(double a, double b);
+    // Whether the loaded avatar can run (legs with run targets).
+    Q_INVOKABLE bool hasRunTargets() const;
 
     // visemes: an array of maps with start_s/end_s/shape_key describing
     // the viseme timeline for one utterance. Call once per utterance
@@ -78,18 +104,48 @@ public:
     // load, including hot reloads -- those reuse the same loader object.
     Q_INVOKABLE void resetMorphWeights();
 
+    // Baked glTF clips. RuntimeLoader turns every clip into a Qt Quick
+    // Timeline animation object (objectName = the clip's name) and starts it
+    // looping, with no API to prevent that. These helpers find those objects
+    // under `root` so the overlay can stop them all after a load and then
+    // play one clip at a time by name.
+    // Names of the clips present (unique; per-node object clips such as
+    // "idle_blink.Eye_L" are skipped).
+    Q_INVOKABLE QStringList clipNames() const;
+    // Stops every clip and rewinds it to frame 0 (the rest pose in our
+    // generated clips). Returns how many animation objects were touched.
+    Q_INVOKABLE int stopAllClips();
+    // Plays clip `name` (stopping any other first): `loops` times, or
+    // forever when -1. Returns false when no such clip exists. A finite
+    // clip rewinds itself when done.
+    Q_INVOKABLE bool playClip(const QString &name, int loops = 1);
+    // Duration in ms of one pass of clip `name`, or 0 if unknown.
+    Q_INVOKABLE int clipDurationMs(const QString &name) const;
+
 signals:
     void rootChanged();
     void shapeKeyNamesChanged();
+    void blinkKeyNamesChanged();
+    void runKeyNamesChanged();
 
 private:
     void applyWeights(const QHash<QString, float> &desired);
     int zeroAllMorphWeights();
+    QList<QObject *> clipAnimations(const QString &name = QString()) const;
+    static QObject *timelineOf(QObject *anim);
+    void rewindClip(QObject *anim);
+    bool isBlinkModel(int targetCount) const;
+    bool isRunModel(int targetCount) const;
+    // Models whose morph targets are not visemes (see blink/run key names).
+    bool isNonVisemeModel(int targetCount) const { return isBlinkModel(targetCount) || isRunModel(targetCount); }
     void resetStep(int generation, int attempt, int passesAfterFound);
 
     QPointer<QObject> m_root;
     std::vector<VisemeFrame> m_timeline;
     QStringList m_lastAppliedShapeKeys;
     QStringList m_shapeKeyNames;
+    QStringList m_blinkKeyNames;
+    QStringList m_runKeyNames;
     int m_resetGeneration = 0;
+    int m_clipGeneration = 0;
 };
