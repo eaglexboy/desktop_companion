@@ -374,7 +374,7 @@ Window {
     // as it goes), is re-homed while invisible, then runs in from the matching
     // edge of the new one -- the same trip the eye would expect from a walk
     // between side-by-side (or stacked) monitors, instead of a teleport.
-    readonly property int crossRunMs: 260
+    readonly property int crossRunMs: 650
     property bool crossing: false
     property bool crossEntering: false
     property var crossTarget: null   // { x, y, screen, entryX, entryY } -- output-local entry edge

@@ -52,8 +52,8 @@ Item {
         id: hopLoop
         loops: Animation.Infinite
         running: root.avatar !== null && root.moving
-        NumberAnimation { target: root.avatar; property: "position.y"; to: root.pivotHeight + 0.14; duration: 110; easing.type: Easing.OutQuad }
-        NumberAnimation { target: root.avatar; property: "position.y"; to: root.pivotHeight; duration: 110; easing.type: Easing.InQuad }
+        NumberAnimation { target: root.avatar; property: "position.y"; to: root.pivotHeight + 0.14; duration: 150; easing.type: Easing.OutQuad }
+        NumberAnimation { target: root.avatar; property: "position.y"; to: root.pivotHeight; duration: 150; easing.type: Easing.InQuad }
         onRunningChanged: if (!running) root.restoreRestHeight()
     }
     // Facing. Before a run the avatar turns 90 degrees toward its heading
@@ -125,7 +125,7 @@ Item {
         property: "runPhase"
         from: 0
         to: 1
-        duration: 440   // two hops (110ms up + 110ms down each)
+        duration: 600   // two hops (150ms up + 150ms down each)
         loops: Animation.Infinite
         running: root.avatar !== null && (root.moving && root.canRun || root.runAmount > 0)
     }

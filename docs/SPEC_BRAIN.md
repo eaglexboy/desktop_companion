@@ -444,7 +444,7 @@ Returns screen-local `Placement(x, y, screen_name, hidden)`:
 ```json
 // Daemon -> Client
 {"type": "chat_response", "timestamp": 1718000000.0, "payload": {"utterance_id": "utt_1", "text": "Hello!", "provider": "local", "escalated": false, "rationale": "chat"}}
-{"type": "set_position", "timestamp": 1718000000.0, "payload": {"x": 100, "y": 200, "screen_name": "DP-1", "duration_ms": 400, "hidden": false}}
+{"type": "set_position", "timestamp": 1718000000.0, "payload": {"x": 100, "y": 200, "screen_name": "DP-1", "duration_ms": 900, "hidden": false}}
 {"type": "status_update", "timestamp": 1718000000.0, "payload": {"state": "idle" | "thinking" | "rebuilding" | "listening" | "speaking"}}
 {"type": "appearance_progress", "timestamp": 1718000000.0, "payload": {"stage": "designing" | "building" | "done" | "staged" | "failed", "label": "Building the 3D model...", "source": "user" | "api" | "autonomous", "version": 4, "error": "..."}}
 {"type": "mood_update", "timestamp": 1718000000.0, "payload": {"energy": 60.0, "valence": 50.0, "stress": 20.0}}
