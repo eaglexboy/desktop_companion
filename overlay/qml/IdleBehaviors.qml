@@ -130,11 +130,149 @@ Item {
         running: root.avatar !== null && (root.moving && root.canRun || root.runAmount > 0)
     }
 
+    // Arm gestures while she speaks, for a model rigged with its own arms: the
+    // generator bakes four arm poses as morph targets (gesture_l_out/_l_in for the
+    // first arm, gesture_r_out/_r_in for the other) and each arm swings between its
+    // two, like the run's pair of legs. Phrases of one arm, the other or both, with
+    // a pause between; not while she runs.
+    property bool speaking: false
+    property bool canGesture: false
+    property bool gesturing: false
+    property real gestEnvL: 0     // 0 = arm at rest, 1 = full swing
+    property real gestEnvR: 0
+    property real gestPhaseL: 0
+    property real gestPhaseR: 0
+    Behavior on gestEnvL { NumberAnimation { duration: 260; easing.type: Easing.InOutQuad } }
+    Behavior on gestEnvR { NumberAnimation { duration: 260; easing.type: Easing.InOutQuad } }
+    function applyGesturePose() {
+        if (!root.controller || !root.canGesture)
+            return
+        const kL = 0.5 + 0.5 * Math.sin(2 * Math.PI * root.gestPhaseL)
+        const kR = 0.5 + 0.5 * Math.sin(2 * Math.PI * root.gestPhaseR)
+        root.controller.setGestureWeights([root.gestEnvL * kL, root.gestEnvL * (1 - kL),
+                                           root.gestEnvR * kR, root.gestEnvR * (1 - kR)])
+    }
+    onGestEnvLChanged: applyGesturePose()
+    onGestEnvRChanged: applyGesturePose()
+    onGestPhaseLChanged: applyGesturePose()
+    onGestPhaseRChanged: applyGesturePose()
+    NumberAnimation {
+        id: gestCycleL
+        target: root; property: "gestPhaseL"; from: 0; to: 1; duration: 900
+        loops: Animation.Infinite
+        running: root.canGesture && root.gestEnvL > 0
+    }
+    NumberAnimation {
+        id: gestCycleR
+        target: root; property: "gestPhaseR"; from: 0; to: 1; duration: 1300
+        loops: Animation.Infinite
+        running: root.canGesture && root.gestEnvR > 0
+    }
+    Timer { id: gestureTimer; onTriggered: root.nextGesturePhase() }
+    function endGesture() {
+        gestureTimer.stop()
+        root.gesturing = false
+        root.gestEnvL = 0
+        root.gestEnvR = 0
+    }
+    function nextGesturePhase() {
+        if (!root.speaking) {
+            nextIdleArmPhase()
+            return
+        }
+        if (!root.canGesture || root.moving) {
+            endGesture()
+            return
+        }
+        if (root.gesturing) {   // a phrase is ending: arms settle, then a pause
+            root.gesturing = false
+            root.gestEnvL = 0
+            root.gestEnvR = 0
+            gestureTimer.interval = 350 + Math.random() * 750
+        } else {
+            const pick = Math.floor(Math.random() * 3)   // 0: first arm, 1: other arm, 2: both
+            gestCycleL.duration = 700 + Math.random() * 500
+            gestCycleR.duration = 1000 + Math.random() * 600
+            root.gesturing = true
+            root.gestEnvL = pick !== 1 ? 0.75 + 0.25 * Math.random() : 0
+            root.gestEnvR = pick !== 0 ? 0.7 + 0.3 * Math.random() : 0
+            gestureTimer.interval = 1100 + Math.random() * 1400
+        }
+        gestureTimer.restart()
+    }
+    // Idle arms: while she is just standing there the same two poses are driven
+    // gently, a slow drift most of the time and now and then a bigger wave or
+    // shift, scaled by mood. Anything that takes over the body (speech, running,
+    // thinking, the turn) puts the arms back at rest.
+    readonly property real armMood: ({ "fidget": 1.4, "curious": 1.15, "neutral": 1.0, "content": 0.85, "bored": 0.6 })[root.mood] || 1.0
+    property bool armIdle: false
+    readonly property bool idleArmsOk: root.avatar !== null && !root.speaking && !root.moving
+        && !root.thinking && !root.turned && !root.pulsing
+    onIdleArmsOkChanged: {
+        if (!idleArmsOk && armIdle) {
+            armIdle = false
+            endGesture()
+        }
+    }
+    Timer {
+        id: idleArmStart
+        interval: 2500
+        running: root.idleArmsOk && !root.armIdle
+        onTriggered: root.nextIdleArmPhase()
+    }
+    function nextIdleArmPhase() {
+        if (!root.idleArmsOk) {
+            root.armIdle = false
+            endGesture()
+            return
+        }
+        // Looked up here, not once: a hot-reloaded look replaces the nodes.
+        root.canGesture = root.controller !== null && root.controller.hasGestureTargets()
+        if (!root.canGesture) {
+            root.armIdle = false
+            return
+        }
+        root.armIdle = true
+        if (Math.random() < 0.22 * root.armMood) {   // a bigger move: a wave or a shift
+            const pick = Math.floor(Math.random() * 3)
+            gestCycleL.duration = 800 + Math.random() * 600
+            gestCycleR.duration = 1000 + Math.random() * 600
+            root.gestEnvL = pick !== 1 ? 0.5 + 0.3 * Math.random() : 0
+            root.gestEnvR = pick !== 0 ? 0.45 + 0.3 * Math.random() : 0
+            gestureTimer.interval = 1800 + Math.random() * 1400
+        } else {                                      // the slow drift
+            gestCycleL.duration = 4200 + Math.random() * 2600
+            gestCycleR.duration = 5200 + Math.random() * 3000
+            root.gestEnvL = Math.min(0.5, (0.15 + 0.15 * Math.random()) * root.armMood)
+            root.gestEnvR = Math.min(0.5, (0.12 + 0.15 * Math.random()) * root.armMood)
+            gestureTimer.interval = 5000 + Math.random() * 6000
+        }
+        gestureTimer.restart()
+    }
+
+    onSpeakingChanged: {
+        root.armIdle = false
+        if (speaking) {
+            root.canGesture = root.controller !== null && root.controller.hasGestureTargets()
+            if (root.canGesture) {
+                root.gesturing = false
+                gestureTimer.interval = 150
+                gestureTimer.restart()
+            }
+        } else {
+            endGesture()
+        }
+    }
+
     onMovingChanged: {
         if (moving) {
             cancelMicroIdle()
+            endGesture()
             // Checked per trip: a hot-reloaded look replaces the nodes.
             root.canRun = root.controller !== null && root.controller.hasRunTargets()
+        } else if (root.speaking && root.canGesture) {
+            gestureTimer.interval = 400
+            gestureTimer.restart()
         }
         root.runAmount = (moving && root.canRun) ? 1 : 0
         if (!moving && !holdTurn)

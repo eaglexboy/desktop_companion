@@ -46,7 +46,58 @@ void AvatarController::setRunKeyNames(const QStringList &names)
 bool AvatarController::isRunModel(int targetCount) const
 {
     return !m_runKeyNames.isEmpty() && targetCount == m_runKeyNames.size()
-        && targetCount != m_shapeKeyNames.size() && targetCount != m_blinkKeyNames.size();
+        && targetCount != m_shapeKeyNames.size() && targetCount != m_blinkKeyNames.size()
+        && targetCount != m_gestureKeyNames.size();
+}
+
+void AvatarController::setGestureKeyNames(const QStringList &names)
+{
+    if (m_gestureKeyNames == names)
+        return;
+    m_gestureKeyNames = names;
+    emit gestureKeyNamesChanged();
+}
+
+bool AvatarController::isGestureModel(int targetCount) const
+{
+    return !m_gestureKeyNames.isEmpty() && targetCount == m_gestureKeyNames.size()
+        && targetCount != m_shapeKeyNames.size() && targetCount != m_blinkKeyNames.size()
+        && targetCount != m_runKeyNames.size();
+}
+
+bool AvatarController::hasGestureTargets() const
+{
+    if (!m_root || m_gestureKeyNames.isEmpty())
+        return false;
+    QList<QObject *> stack;
+    stack.append(m_root);
+    while (!stack.isEmpty()) {
+        QObject *node = stack.takeLast();
+        QQmlListReference ref(node, "morphTargets");
+        if (ref.isValid() && isGestureModel(int(ref.count())))
+            return true;
+        stack.append(node->children());
+    }
+    return false;
+}
+
+void AvatarController::setGestureWeights(const QVariantList &weights)
+{
+    if (!m_root || m_gestureKeyNames.isEmpty())
+        return;
+    QList<QObject *> stack;
+    stack.append(m_root);
+    while (!stack.isEmpty()) {
+        QObject *node = stack.takeLast();
+        QQmlListReference ref(node, "morphTargets");
+        if (ref.isValid() && isGestureModel(int(ref.count()))) {
+            for (qsizetype i = 0; i < ref.count() && i < weights.size(); ++i) {
+                if (QObject *target = ref.at(i))
+                    target->setProperty("weight", float(weights.at(i).toDouble()));
+            }
+        }
+        stack.append(node->children());
+    }
 }
 
 bool AvatarController::hasRunTargets() const

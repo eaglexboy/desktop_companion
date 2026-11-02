@@ -15,6 +15,8 @@ bounds) rather than a raw SHA256 match.
 
 from __future__ import annotations
 
+from typing import Any
+
 import json
 import math
 import shutil
@@ -262,6 +264,114 @@ def test_model_without_a_face_map_still_builds_faceless(tmp_path):
     _, _, build_json = _compile(_minimal_spec(base_template="custom:plain", has_face=True), tmp_path, "plain")
     assert build_json["has_face"] is False
     assert build_json["blink_shape_keys"] == []
+
+
+def _limb_rigged_glb(path: Path) -> None:
+    """A rigged model made of two skinned meshes, `Legs` and `Arms`, on a rig with
+    the usual limb bones (thigh/shin, upper_arm/forearm, left and right) under a root.
+    Each box is weighted to the upper bone above its middle and the lower bone below."""
+    joints = ["thigh.L", "shin.L", "thigh.R", "shin.R", "upper_arm.L", "forearm.L", "upper_arm.R", "forearm.R", "root"]
+    world = {
+        "thigh.L": (-0.2, 1.0, 0), "shin.L": (-0.2, 0.5, 0), "thigh.R": (0.2, 1.0, 0), "shin.R": (0.2, 0.5, 0),
+        "upper_arm.L": (-0.4, 1.8, 0), "forearm.L": (-0.4, 1.4, 0), "upper_arm.R": (0.4, 1.8, 0), "forearm.R": (0.4, 1.4, 0),
+        "root": (0, 0, 0),
+    }
+    parents = {"thigh.L": "root", "thigh.R": "root", "upper_arm.L": "root", "upper_arm.R": "root",
+               "shin.L": "thigh.L", "shin.R": "thigh.R", "forearm.L": "upper_arm.L", "forearm.R": "upper_arm.R"}
+    nodes: list[dict[str, Any]] = [{"name": name} for name in ("root", *[j for j in joints if j != "root"])]
+    index = {node["name"]: i for i, node in enumerate(nodes)}
+    for name, node in zip((n["name"] for n in nodes), nodes):
+        parent = parents.get(name)
+        origin = world[parent] if parent else (0, 0, 0)
+        node["translation"] = [world[name][k] - origin[k] for k in range(3)]
+    for name, parent in parents.items():
+        nodes[index[parent]].setdefault("children", []).append(index[name])
+    triangles = [0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 4, 5, 0, 5, 1, 2, 3, 7, 2, 7, 6, 0, 2, 6, 0, 6, 4, 1, 5, 7, 1, 7, 3]
+
+    blob = bytearray()
+    views, accessors = [], []
+
+    def add(data: bytes, **accessor) -> int:
+        while len(blob) % 4:
+            blob.append(0)
+        views.append({"buffer": 0, "byteOffset": len(blob), "byteLength": len(data)})
+        blob.extend(data)
+        accessors.append({"bufferView": len(views) - 1, **accessor})
+        return len(accessors) - 1
+
+    def mesh_of(boxes: list) -> dict:
+        positions, joint_ids = [], []
+        for cx, y0, y1, upper, lower in boxes:
+            for x in (cx - 0.05, cx + 0.05):
+                for y in (y0, y1):
+                    for z in (-0.05, 0.05):
+                        positions.append((x, y, z))
+                        joint_ids.append(joints.index(upper if y > (y0 + y1) / 2 else lower))
+        count = len(positions)
+        all_triangles = [t + 8 * b for b in range(len(boxes)) for t in triangles]
+        pos = add(b"".join(struct.pack("<3f", *p) for p in positions), componentType=5126, count=count, type="VEC3",
+                  min=[min(p[k] for p in positions) for k in range(3)], max=[max(p[k] for p in positions) for k in range(3)])
+        idx = add(struct.pack(f"<{len(all_triangles)}H", *all_triangles), componentType=5123, count=len(all_triangles), type="SCALAR")
+        jnt = add(b"".join(struct.pack("<4B", j, 0, 0, 0) for j in joint_ids), componentType=5121, count=count, type="VEC4")
+        wgt = add(b"".join(struct.pack("<4f", 1, 0, 0, 0) for _ in positions), componentType=5126, count=count, type="VEC4")
+        return {"primitives": [{"attributes": {"POSITION": pos, "JOINTS_0": jnt, "WEIGHTS_0": wgt}, "indices": idx}]}
+
+    meshes = [
+        mesh_of([(-0.2, 0.0, 1.0, "thigh.L", "shin.L"), (0.2, 0.0, 1.0, "thigh.R", "shin.R")]),
+        mesh_of([(-0.4, 1.0, 1.8, "upper_arm.L", "forearm.L"), (0.4, 1.0, 1.8, "upper_arm.R", "forearm.R")]),
+    ]
+    inverse_bind = add(
+        b"".join(struct.pack("<16f", 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, *(-c for c in world[j]), 1) for j in joints),
+        componentType=5126, count=len(joints), type="MAT4",
+    )
+    nodes += [{"name": "Legs", "mesh": 0, "skin": 0}, {"name": "Arms", "mesh": 1, "skin": 0}]
+    doc = {
+        "asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0, len(nodes) - 2, len(nodes) - 1]}],
+        "nodes": nodes, "meshes": meshes, "skins": [{"joints": [index[j] for j in joints], "inverseBindMatrices": inverse_bind}],
+        "accessors": accessors, "bufferViews": views, "buffers": [{"byteLength": len(blob)}],
+    }
+    body = json.dumps(doc).encode()
+    body += b" " * ((-len(body)) % 4)
+    total = 12 + 8 + len(body) + 8 + len(blob)
+    path.write_bytes(
+        b"glTF" + struct.pack("<II", 2, total) + struct.pack("<I", len(body)) + b"JSON" + body
+        + struct.pack("<I", len(blob)) + b"BIN\x00" + bytes(blob)
+    )
+
+
+def test_rigged_model_gets_run_and_gesture_targets_from_its_limb_bones(tmp_path):
+    """The loader the overlay uses does not apply skeletal clips, so a rig's limb
+    motion is baked as morph targets: run poses on the meshes the legs deform and
+    arm gestures on the ones the arms deform, found by bone name."""
+    custom_dir = tmp_path / "deploy" / "assets" / "custom_templates"
+    custom_dir.mkdir(parents=True)
+    _limb_rigged_glb(custom_dir / "walker.glb")
+
+    result, out_path, build_json = _compile(_minimal_spec(base_template="custom:walker", has_face=False), tmp_path, "walker")
+    assert result.returncode == 0, result.stderr
+    assert build_json["run_shape_keys"] == ["run_a", "run_b"]
+    assert build_json["gesture_shape_keys"] == ["gesture_l_out", "gesture_l_in", "gesture_r_out", "gesture_r_in"]
+
+    data = out_path.read_bytes()
+    gltf = json.loads(data[20 : 20 + struct.unpack("<I", data[12:16])[0]])
+    by_name = {n.get("name"): n for n in gltf["nodes"]}
+    targets = lambda name: len(gltf["meshes"][by_name[name]["mesh"]]["primitives"][0].get("targets", []))  # noqa: E731
+    assert targets("Legs") == 2
+    assert targets("Arms") == 4
+
+
+def test_rigged_model_without_limb_bones_gets_no_limb_targets(tmp_path):
+    """A rig whose bones are not named like limbs (this generator's own rigs have one
+    `arm_L`/`leg_L` bone each) is left as it is, with a warning."""
+    _, source_glb, _ = _compile(_minimal_spec(base_template="standard_humanoid_female"), tmp_path, "source")
+    custom_dir = tmp_path / "deploy" / "assets" / "custom_templates"
+    custom_dir.mkdir(parents=True)
+    shutil.copy(source_glb, custom_dir / "robot.glb")
+
+    _, _, build_json = _compile(_minimal_spec(base_template="custom:robot"), tmp_path, "robot")
+    assert build_json["run_shape_keys"] == []
+    assert build_json["gesture_shape_keys"] == []
+    assert any("thigh/shin" in w for w in build_json["warnings"])
 
 
 def test_installed_model_without_a_face_builds_faceless(tmp_path):

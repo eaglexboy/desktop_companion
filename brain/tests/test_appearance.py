@@ -175,7 +175,9 @@ async def test_publish_writes_manifest_and_glb_atomically(tmp_path):
     manifest = load_manifest(settings.deploy_dir)
     assert manifest is not None
     assert manifest.current_version == 1
-    assert manifest.get_version(1).look_spec["base_template"] == "primitive_blob"
+    entry = manifest.get_version(1)
+    assert entry is not None
+    assert entry.look_spec["base_template"] == "primitive_blob"
 
     assert not any(p.suffix == ".tmp" for p in settings.assets_dir.iterdir())
     assert not any(p.suffix == ".tmp" for p in settings.current_dir.iterdir())

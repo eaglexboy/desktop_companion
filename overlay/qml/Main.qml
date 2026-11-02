@@ -353,6 +353,7 @@ Window {
         }
         onPlaybackStateChanged: {
             idleBehaviors.pulsing = !root.hasFace && playbackState === MediaPlayer.PlayingState
+            idleBehaviors.speaking = playbackState === MediaPlayer.PlayingState
             if (playbackState === MediaPlayer.StoppedState && root.activeUtteranceId !== "") {
                 avatar3d.controller.clearVisemeWeights()
                 if (root.speechQueue.length > 0) {
@@ -520,6 +521,7 @@ Window {
                 avatar3d.controller.shapeKeyNames = current.viseme_shape_keys || []
                 avatar3d.controller.blinkKeyNames = current.blink_shape_keys || []
                 avatar3d.controller.runKeyNames = current.run_shape_keys || []
+                avatar3d.controller.gestureKeyNames = current.gesture_shape_keys || []
                 avatar3d.pivotHeight = ((current.bounds && current.bounds.height_m) || 0) * 0.45
                 root.currentLookPath = "file://" + assetDir + "/" + current.glb_filename
             }
@@ -598,6 +600,7 @@ Window {
                 avatar3d.controller.shapeKeyNames = current.viseme_shape_keys || []
                 avatar3d.controller.blinkKeyNames = current.blink_shape_keys || []
                 avatar3d.controller.runKeyNames = current.run_shape_keys || []
+                avatar3d.controller.gestureKeyNames = current.gesture_shape_keys || []
                 avatar3d.pivotHeight = ((current.bounds && current.bounds.height_m) || 0) * 0.45
                 root.currentLookPath = "file://" + root.deskmateDataDir + "/" + current.glb_filename
             }

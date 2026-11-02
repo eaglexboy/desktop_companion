@@ -1161,6 +1161,199 @@ _ALL_CLIP_META: dict[str, tuple[bool, float]] = {
 }
 
 
+# --- limb poses baked as morph targets, for a model's own rig ---------------------
+#
+# The core clips drive bones named root/spine/head, which an imported rig does not
+# have, so they do nothing there; and a skeletal clip on the rig's own limbs is not
+# applied by the overlay's glTF loader (checked: the legs and arms did not move).
+# What the loader does honour is morph targets, so the limb motion is baked as
+# those: the rig is posed here, each skinned mesh's deformation is recorded, and the
+# overlay blends the targets by weight like blink, lip-sync and the generated
+# avatars' run poses. Rotations are given about world axes and converted into each
+# bone's own frame, so they do not depend on how the rig's bones are oriented.
+
+_LIMB_NAME_PARTS = {
+    "upper_arm": ("upper_arm", "upperarm"),
+    "forearm": ("forearm", "lowerarm", "lower_arm"),
+    "thigh": ("thigh", "upleg", "upperleg", "upper_leg"),
+    "shin": ("shin", "calf", "lowerleg", "lower_leg"),
+    "foot": ("foot", "ankle"),
+}
+_LIMB_NAME_SKIP = ("end", "twist", "ik", "pole", "helper", "toe")
+LIMB_MIN_DISPLACEMENT = 0.01  # metres a mesh must move in some pose to get a target
+
+RUN_KEYS = ("run_a", "run_b")
+GESTURE_KEYS = ("gesture_l_out", "gesture_l_in", "gesture_r_out", "gesture_r_in")
+
+
+def find_limb_bones(arm_obj) -> dict:
+    """{role: {"min_x": bone_name, "max_x": bone_name}} for the arm and leg bones,
+    sides told apart by where they sit (the min-x one is the avatar's right)."""
+    found: dict[str, list] = {role: [] for role in _LIMB_NAME_PARTS}
+    for bone in arm_obj.data.bones:
+        lowered = bone.name.lower()
+        if any(part in lowered for part in _LIMB_NAME_SKIP):
+            continue
+        for role, parts in _LIMB_NAME_PARTS.items():
+            if any(part in lowered for part in parts):
+                found[role].append((bone.head_local.x, bone.name))
+    roles = {}
+    for role, entries in found.items():
+        if len(entries) == 2:
+            entries.sort()
+            roles[role] = {"min_x": entries[0][1], "max_x": entries[1][1]}
+    return roles
+
+
+def _local_axis(arm_obj, bone, world_axis) -> "mathutils.Vector":
+    """`world_axis` as a direction in `bone`'s own rest frame, for a rotation."""
+    in_armature = arm_obj.matrix_world.to_3x3().normalized().inverted() @ mathutils.Vector(world_axis)
+    return (bone.matrix_local.to_3x3().normalized().inverted() @ in_armature).normalized()
+
+
+def _feet_follow(arm_obj, roles: dict, side: str, thigh_angle: float, shin_angle: float, axis) -> tuple:
+    """A foot bone parented to the root rather than the shin (common in rigs
+    exported with control bones) stays put while the leg swings, stretching the
+    shoe. Returns (foot rotation about `axis`, offset in armature space) that carry
+    it to where the leg's own motion puts the ankle; (0, zero) when the foot already
+    rides on the shin."""
+    if "foot" not in roles:
+        return 0.0, (0.0, 0.0, 0.0)
+    bones = arm_obj.data.bones
+    foot, shin, thigh = bones[roles["foot"][side]], bones[roles["shin"][side]], bones[roles["thigh"][side]]
+    if any(parent == shin for parent in foot.parent_recursive):
+        return 0.0, (0.0, 0.0, 0.0)
+    arm_axis = arm_obj.matrix_world.to_3x3().normalized().inverted() @ mathutils.Vector(axis)
+    rot_thigh = mathutils.Quaternion(arm_axis, thigh_angle)
+    rot_both = mathutils.Quaternion(arm_axis, thigh_angle + shin_angle)
+    knee = thigh.head_local + rot_thigh @ (shin.head_local - thigh.head_local)
+    ankle = knee + rot_both @ (foot.head_local - shin.head_local)
+    return thigh_angle + shin_angle, tuple(ankle - foot.head_local)
+
+
+def _deformed_points(mesh) -> list:
+    evaluated = mesh.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    data = evaluated.to_mesh()
+    points = [v.co.copy() for v in data.vertices]
+    evaluated.to_mesh_clear()
+    return points
+
+
+def _capture_pose(arm_obj, meshes, rotations: list, offsets: dict | None = None) -> dict:
+    """Poses the rig (`rotations`: [(bone, world_axis, angle)], `offsets`:
+    {bone: armature-space offset}), reads every mesh's deformed vertices, and puts
+    the rig back to rest."""
+    touched = {name for name, _axis, _angle in rotations} | set(offsets or {})
+    for name, axis, angle in rotations:
+        pbone = arm_obj.pose.bones[name]
+        pbone.rotation_mode = "QUATERNION"
+        pbone.rotation_quaternion = mathutils.Quaternion(_local_axis(arm_obj, arm_obj.data.bones[name], axis), angle)
+    for name, delta in (offsets or {}).items():
+        bone = arm_obj.data.bones[name]
+        arm_obj.pose.bones[name].location = bone.matrix_local.to_3x3().normalized().inverted() @ mathutils.Vector(delta)
+    bpy.context.view_layer.update()
+    points = {mesh.name: _deformed_points(mesh) for mesh in meshes}
+    for name in touched:
+        arm_obj.pose.bones[name].rotation_quaternion = (1, 0, 0, 0)
+        arm_obj.pose.bones[name].location = (0, 0, 0)
+    bpy.context.view_layer.update()
+    return points
+
+
+def _add_pose_targets(meshes, rest: dict, poses: dict, other_keys: set) -> list:
+    """Adds one morph target per pose (`poses`: {key name: captured points}) to every
+    mesh some pose moves by more than LIMB_MIN_DISPLACEMENT. Returns the meshes that
+    got them. A mesh that already carries shape keys is skipped (it would no longer
+    have exactly this many targets)."""
+    gained = []
+    for mesh in meshes:
+        moved = max(
+            (pose[mesh.name][i] - rest[mesh.name][i]).length
+            for pose in poses.values()
+            for i in range(len(rest[mesh.name]))
+        )
+        if moved < LIMB_MIN_DISPLACEMENT:
+            continue
+        if mesh.data.shape_keys is not None:
+            continue
+        mesh.shape_key_add(name="Basis")
+        for name, pose in poses.items():
+            key = mesh.shape_key_add(name=name)
+            key.value = 0.0
+            for i, point in enumerate(pose[mesh.name]):
+                key.data[i].co = point
+        gained.append(mesh)
+    return gained
+
+
+def bake_limb_morphs(arm_obj, meshes, warnings: list[str]) -> tuple[list[str], list[str]]:
+    """Run poses for the legs and arm-gesture poses for the arms as morph targets on
+    the skinned meshes they deform. Returns (run key names, gesture key names), each
+    empty when the rig lacks the bones."""
+    roles = find_limb_bones(arm_obj)
+    lateral, forward = (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)
+    skinned = [m for m in meshes if any(md.type == "ARMATURE" and md.object == arm_obj for md in m.modifiers)]
+    bpy.context.view_layer.update()
+    rest = {m.name: _deformed_points(m) for m in skinned}
+    run_keys: list[str] = []
+    gesture_keys: list[str] = []
+    run_meshes: list = []
+
+    if "thigh" in roles and "shin" in roles:
+        def stride(ahead: str):
+            """One leg forward (thigh swung forward, knee a little bent), the other
+            trailing (thigh back, heel kicked up). Forward is -Y, a negative turn about +X."""
+            rotations, offsets = [], {}
+            for side in ("min_x", "max_x"):
+                leading = side == ahead
+                thigh_angle = -R(38) if leading else R(30)
+                shin_angle = R(25) if leading else R(70)
+                rotations += [(roles["thigh"][side], lateral, thigh_angle), (roles["shin"][side], lateral, shin_angle)]
+                foot_angle, foot_offset = _feet_follow(arm_obj, roles, side, thigh_angle, shin_angle, lateral)
+                if "foot" in roles and (foot_angle or foot_offset != (0.0, 0.0, 0.0)):
+                    rotations.append((roles["foot"][side], lateral, foot_angle))
+                    offsets[roles["foot"][side]] = foot_offset
+            return rotations, offsets
+
+        poses = {name: _capture_pose(arm_obj, skinned, *stride(ahead)) for name, ahead in zip(RUN_KEYS, ("min_x", "max_x"))}
+        run_meshes = _add_pose_targets(skinned, rest, poses, set())
+        if run_meshes:
+            run_keys = list(RUN_KEYS)
+    else:
+        warnings.append("model rig has no thigh/shin bones to run with; it keeps the hop")
+
+    if "upper_arm" in roles and "forearm" in roles:
+        ua, fa = roles["upper_arm"], roles["forearm"]
+        # Turning about world Y swings a limb sideways, which is what reads from the
+        # front. Which sign is "out" depends on the pose the model rests in; these were
+        # chosen by looking at it, and the rest pose is the middle of each pair.
+        arm_poses = {
+            "gesture_l_out": [(ua["min_x"], forward, R(34)), (fa["min_x"], forward, R(-60))],
+            "gesture_l_in": [(ua["min_x"], forward, R(-24)), (fa["min_x"], forward, R(50))],
+            "gesture_r_out": [(ua["max_x"], forward, R(-24)), (fa["max_x"], forward, R(-34))],
+            "gesture_r_in": [(ua["max_x"], forward, R(16)), (fa["max_x"], forward, R(20))],
+        }
+        captured = {name: _capture_pose(arm_obj, skinned, rotations) for name, rotations in arm_poses.items()}
+        candidates = [m for m in skinned if m not in run_meshes]
+        if len(candidates) < len([m for m in skinned if _moves(m, rest, captured)]):
+            warnings.append("a mesh is moved by both the legs and the arms; its arm gestures are left out")
+        arm_meshes = _add_pose_targets(candidates, rest, captured, set())
+        if arm_meshes:
+            gesture_keys = list(GESTURE_KEYS)
+    else:
+        warnings.append("model rig has no upper_arm/forearm bones to gesture with")
+
+    return run_keys, gesture_keys
+
+
+def _moves(mesh, rest: dict, poses: dict) -> bool:
+    return any(
+        (pose[mesh.name][i] - rest[mesh.name][i]).length >= LIMB_MIN_DISPLACEMENT
+        for pose in poses.values()
+        for i in range(len(rest[mesh.name]))
+    )
+
+
 def clip_metadata(baked_names: list[str]) -> list[dict]:
     return [
         {"name": name, "loop": _ALL_CLIP_META[name][0], "duration_s": _ALL_CLIP_META[name][1]}
@@ -1873,6 +2066,10 @@ def main() -> None:
         bake_proportions(arm_obj, proportions)
         bake_morphological_proportions(body, proportions)
 
+    gesture_keys: list[str] = []
+    if imported is not None and imported["armature"] is not None:
+        run_keys, gesture_keys = bake_limb_morphs(arm_obj, imported["meshes"], warnings)
+
     speech_indicator_mode = "viseme_shapekeys" if has_face else "talk_pulse"
     talk_pulse_clip = None
     if not has_face:
@@ -1915,6 +2112,7 @@ def main() -> None:
         "viseme_shape_keys": viseme_keys,
         "blink_shape_keys": [BLINK_SHAPE_KEY] if eyes else [],
         "run_shape_keys": run_keys,
+        "gesture_shape_keys": gesture_keys,
         "animation_clips": clip_metadata(baked_clips),
         "bounds": bounds,
         "warnings": warnings,

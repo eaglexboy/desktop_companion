@@ -422,7 +422,134 @@ async def test_revert_to_pruned_version_rebuilds_it_as_a_new_version(tmp_path, m
     await asyncio.gather(*evolution._background_tasks)
     manifest = _manifest(settings)
     assert manifest.current_version == 3  # numbers never go backwards
-    assert manifest.get_version(3).look_spec == manifest.get_version(1).look_spec
+    assert _version_entry(manifest, 3).look_spec == _version_entry(manifest, 1).look_spec
+
+
+# --- the look lock (an imported model is kept until the user frees it) ----------
+
+
+def _evolution_on_custom_look(tmp_path, monkeypatch, *replies: str):
+    """An AvatarEvolution whose current look is a custom (imported) model, built
+    through the real manifest mechanics after one generated look."""
+    _install_fake_compile_and_publish(monkeypatch)
+    settings = _settings(tmp_path)
+    custom_dir = settings.deploy_dir / "assets" / "custom_templates"
+    custom_dir.mkdir(parents=True)
+    for name in ("miss", "other"):  # the catalog check wants the model files to exist
+        (custom_dir / f"{name}.glb").write_bytes(b"glTF")
+    evolution = AvatarEvolution(settings, _store(tmp_path), _pool(*replies))
+    return settings, evolution
+
+
+async def _publish(evolution, **look):
+    result = await evolution.generate_from_full_spec(_minimal_look(**look))
+    assert result is not None and result.outcome == "published"
+    return result
+
+
+@pytest.mark.asyncio
+async def test_a_custom_model_locks_the_look_and_a_request_to_change_it_is_declined(tmp_path, monkeypatch):
+    settings, evolution = _evolution_on_custom_look(tmp_path, monkeypatch, json.dumps({"wardrobe": {"outfit": "vest"}}))
+    await _publish(evolution)  # v1 generated
+    assert evolution.look_locked() is False
+    await _publish(evolution, base_template="custom:miss")  # v2 imported
+    assert evolution.look_locked() is True
+
+    reply = await evolution.change_appearance("put on a vest")
+    assert "keeping this look" in reply
+    await asyncio.gather(*evolution._background_tasks)
+    assert _manifest(settings).current_version == 2  # nothing was built
+
+
+@pytest.mark.asyncio
+async def test_saying_it_may_change_its_look_unlocks_it_and_the_next_request_goes_through(tmp_path, monkeypatch):
+    settings, evolution = _evolution_on_custom_look(tmp_path, monkeypatch, json.dumps({"wardrobe": {"outfit": "vest"}}))
+    await _publish(evolution, base_template="custom:miss")
+    assert evolution.look_locked() is True
+
+    reply = await evolution.change_appearance("You can change your look if you want")
+    assert "free to change" in reply
+    assert evolution.look_locked() is False
+
+    await evolution.change_appearance("put on a vest")
+    await asyncio.gather(*evolution._background_tasks)
+    assert _manifest(settings).current_version == 2
+    assert evolution.look_locked() is False  # still the same model: the unlock covers it
+
+
+@pytest.mark.asyncio
+async def test_an_unlock_covers_only_the_model_it_was_given_for(tmp_path, monkeypatch):
+    _, evolution = _evolution_on_custom_look(tmp_path, monkeypatch, "{}")
+    await _publish(evolution, base_template="custom:miss")
+    await evolution.unlock_appearance()
+    await _publish(evolution, base_template="custom:other")
+    assert evolution.look_locked() is True  # a different imported model is locked again
+    await _publish(evolution)  # a generated look
+    await _publish(evolution, base_template="custom:miss")
+    assert evolution.look_locked() is True  # and so is the first one, once it has been left
+
+
+@pytest.mark.asyncio
+async def test_asking_for_a_generated_look_goes_back_to_the_last_one(tmp_path, monkeypatch):
+    settings, evolution = _evolution_on_custom_look(tmp_path, monkeypatch, "{}")
+    await _publish(evolution, palette=PaletteSpec(primary="#111111", secondary="#FFFFFF", accent="#F5A623", emissive="#7FD1FF"))
+    await _publish(evolution, base_template="custom:miss")
+
+    reply = await evolution.change_appearance("go back to a generated look")
+    await asyncio.gather(*evolution._background_tasks)
+    assert "version 1" in reply
+    manifest = _manifest(settings)
+    assert _current_entry(manifest).look_spec["base_template"] == "primitive_blob"
+    assert evolution.look_locked() is False
+
+
+@pytest.mark.asyncio
+async def test_no_generated_look_to_go_back_to_is_said_plainly(tmp_path, monkeypatch):
+    _, evolution = _evolution_on_custom_look(tmp_path, monkeypatch, "{}")
+    await _publish(evolution, base_template="custom:miss")
+    reply = await evolution.change_appearance("switch to a procedural body")
+    assert "don't have a generated look" in reply
+    assert evolution.look_locked() is True
+
+
+@pytest.mark.asyncio
+async def test_the_companion_does_not_redesign_itself_while_the_look_is_locked(tmp_path, monkeypatch):
+    settings, evolution = _evolution_on_custom_look(tmp_path, monkeypatch, json.dumps({"wardrobe": {"outfit": "vest"}}))
+    await _publish(evolution, base_template="custom:miss")
+    await evolution.trigger_b_on_eligible()
+    assert _manifest(settings).current_version == 1  # no autonomous redesign
+
+    await evolution.unlock_appearance()
+    await evolution.trigger_b_on_eligible()
+    assert _manifest(settings).current_version == 2
+
+
+@pytest.mark.asyncio
+async def test_restoring_a_numbered_look_is_still_allowed_while_locked(tmp_path, monkeypatch):
+    settings, evolution = _evolution_on_custom_look(tmp_path, monkeypatch, "{}")
+    await _publish(evolution)
+    await _publish(evolution, base_template="custom:miss")
+    await evolution.revert_appearance("go back to version 1")
+    assert _manifest(settings).current_version == 1
+    assert evolution.look_locked() is False
+
+
+@pytest.mark.parametrize(
+    ("text", "unlock", "generated"),
+    [
+        ("You can change your look if you want", True, False),
+        ("you're free to change your look", True, False),
+        ("feel free to change your appearance", True, False),
+        ("it's okay to change your look", True, False),
+        ("change to a generated look", False, True),
+        ("go back to your procedural body", False, True),
+        ("generate a pirate look", False, False),
+        ("put on a vest", False, False),
+    ],
+)
+def test_lock_phrases(text, unlock, generated):
+    assert evolution_module._wants_unlock(text) is unlock
+    assert evolution_module._wants_generated(text) is generated
 
 
 # --- Trigger B: synthetic stage -> reveal cycle --------------------------------

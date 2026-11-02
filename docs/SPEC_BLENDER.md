@@ -86,6 +86,11 @@ A model under `custom_templates/` (Tier 1) is imported, then:
 
   The eyelids and patch use **the model's own material**, with every texture coordinate pointed at a spot of plain skin, so they are lit and coloured exactly like the painted face around them (a flat colour matched by eye never rendered the same shade). Two constraints learned the hard way: those coordinates are spread over a few texels rather than identical, because a renderer that derives tangents from a degenerate map shades the part black; and no overlay shape may be a collapsed zero-area line at rest, because the normals pass cannot give it a facing and it is culled once it opens. With no sidecar the model is built faceless as before. Skinned objects lose their scale on export, so overlay parts have it baked into the geometry first.
 
+* **Limb motion (rigged models):** the core clips drive bones named `root`/`spine`/`head`, which an imported rig does not have, and a skeletal clip on the rig's own limbs is not applied by the glTF loader the overlay uses (checked: the legs and arms did not move), so a rigged model's limb motion is baked as **morph targets**, which the loader does honour. The generator finds the limb bones by name (`thigh`, `shin`, `upper_arm`, `forearm`, `foot`; the two sides told apart by position), poses the rig with rotations given about world axes and converted into each bone's own frame (so bone orientation does not matter), records every skinned mesh's deformed vertices, and adds them as shape keys on each mesh a pose moves by more than 1 cm:
+  * `run_a`, `run_b` (reported as `run_shape_keys`): the two mirrored extremes of a stride, one leg forward with a bent knee and the other trailing with the heel kicked up. A foot bone not parented to the shin is carried to the ankle's new position so the shoe does not stretch. Driven like the generated avatars' run poses.
+  * `gesture_l_out`, `gesture_l_in`, `gesture_r_out`, `gesture_r_in` (reported as `gesture_shape_keys`): each arm's two extremes either side of its rest pose, so an arm swings between them. A mesh the legs and the arms both move gets the run targets only (the overlay tells a model's targets apart by their count: 1 blink, 2 run, 4 gesture, 9 viseme), with a warning.
+  A rig without such bones keeps the plain hop and gets a warning.
+
 ### Subprocess Execution Rules
 1. **Isolated Execution:** Relies exclusively on Blender's bundled `bpy` and Python standard library.
 2. **Environment Sanitization:** Strips all host virtual environment variables (`VIRTUAL_ENV`, `PYTHONPATH`, `PYTHONHOME`) and removes the active venv path from `PATH`.
@@ -320,6 +325,7 @@ Declares all allowable outfits, footwear options, and socket-mounted accessories
     "viseme_shape_keys": ["viseme_A", "..."],
     "blink_shape_keys": ["blink"],
     "run_shape_keys": [],
+    "gesture_shape_keys": [],
     "animation_clips": [{"name": "idle_lookaround", "loop": true, "duration_s": 4.0}],
     "bounds": {"height_m": 1.65, "width_m": 0.55, "depth_m": 0.32},
     "warnings": []

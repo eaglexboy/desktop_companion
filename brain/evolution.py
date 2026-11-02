@@ -192,6 +192,48 @@ def _requested_version(request: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+# --- the look lock -----------------------------------------------------------------
+#
+# An imported model took real work to get right, and the designer (a language model
+# picking from catalogs) cannot improve it: it has no wardrobe, and a redesign would
+# quietly replace it with a generated body. So while the current look is a custom
+# (imported) model, the companion will not change its look on its own and declines a
+# request to, until the user says it may or asks for a generated look. The lock is
+# derived, not stored: it holds while the current base template is a custom model the
+# user has not unlocked, and `look_unlocked_for` remembers which one they did.
+
+_CUSTOM_PREFIX = "custom:"
+_UNLOCK_PHRASES = (
+    "you can change your",
+    "you may change your",
+    "free to change your",
+    "feel free to change your",
+    "go ahead and change your",
+    "okay to change your",
+    "ok to change your",
+    "fine to change your",
+    "you can redesign",
+    "you can switch your look",
+    "unlock your look",
+    "unlock your appearance",
+    "unlock yourself",
+)
+_GENERATED_LOOK = re.compile(r"\b(generated|procedural)\b", re.IGNORECASE)
+_LOCKED_REPLY = (
+    "I'm keeping this look, it took a lot of work to get right. Tell me I can change my look "
+    "and I will, or ask me to go back to a generated one."
+)
+
+
+def _wants_unlock(request: str) -> bool:
+    lowered = (request or "").lower().replace("'", "").replace("’", "")
+    return any(phrase.replace("'", "") in lowered for phrase in _UNLOCK_PHRASES)
+
+
+def _wants_generated(request: str) -> bool:
+    return bool(_GENERATED_LOOK.search(request or ""))
+
+
 class AvatarEvolution:
     """Owns the real logic behind the two router tool stubs, the reflection
     loop's autonomous-redesign eligibility callback, the presence-transition
@@ -242,6 +284,46 @@ class AvatarEvolution:
             {"type": "object", "properties": {}},
             self.revert_appearance,
         )
+        router.register_tool(
+            "unlock_appearance",
+            "Let the companion change its look again after the user said it may (an imported look is kept until then).",
+            {"type": "object", "properties": {}},
+            self.unlock_appearance,
+        )
+
+    # --- the look lock ------------------------------------------------------
+
+    def look_locked(self) -> bool:
+        """True while the current look is an imported model the user has not freed."""
+        base = self.current_look_spec().base_template
+        return base.startswith(_CUSTOM_PREFIX) and self._store.get_agent_state("look_unlocked_for") != base
+
+    def _refresh_lock(self) -> None:
+        """Called after the current look changes: an unlock only covers the model it
+        was given for, so moving to a different look forgets it (and the old model
+        is locked again if it comes back)."""
+        unlocked_for = self._store.get_agent_state("look_unlocked_for")
+        if unlocked_for is not None and unlocked_for != self.current_look_spec().base_template:
+            self._store.set_agent_state("look_unlocked_for", None)
+
+    async def unlock_appearance(self, _request: str = "") -> str:
+        """The `unlock_appearance` tool / `unlock_look` skill: the user says the
+        companion may change its look again."""
+        if not self.look_locked():
+            return "My look isn't locked, I can change it whenever you ask."
+        self._store.set_agent_state("look_unlocked_for", self.current_look_spec().base_template)
+        self._store.add_memory_note("The user said I may change my look again.")
+        return "Okay, I'm free to change my look again."
+
+    async def _back_to_generated(self) -> str:
+        """Goes back to the most recent look that was not an imported model."""
+        manifest = load_manifest(self._settings.deploy_dir)
+        generated = [
+            v.version for v in (manifest.versions if manifest else []) if not v.look_spec.get("base_template", "").startswith(_CUSTOM_PREFIX)
+        ]
+        if not generated:
+            return "I don't have a generated look to go back to yet. Tell me I can change my look and I'll design one."
+        return await self._restore_version(manifest, max(generated))
 
     # --- current look -----------------------------------------------------
 
@@ -342,6 +424,8 @@ class AvatarEvolution:
 
     async def _finish(self, result: CompileResult, source: str) -> None:
         stage = "done" if result.outcome == "published" else "staged"
+        if result.outcome == "published":
+            self._refresh_lock()
         await self._progress(stage, source, version=result.version)
 
     # --- Trigger A: user-prompted ------------------------------------------
@@ -356,7 +440,13 @@ class AvatarEvolution:
         """The real `change_appearance` tool handler (replaces router.py's
         stub): reply immediately, do the actual synthesis+compile in the
         background, cancelling any in-flight autonomous build first (user
-        intent always wins)."""
+        intent always wins). An imported look is locked: see look_locked()."""
+        if self.look_locked():
+            if _wants_unlock(request):
+                return await self.unlock_appearance()
+            if _wants_generated(request):
+                return await self._back_to_generated()
+            return _LOCKED_REPLY
         cancel_running_build()
         self._schedule_background(self._run_trigger_a(request))
         return "I like that idea. Let me put something together..."
@@ -467,6 +557,7 @@ class AvatarEvolution:
 
         reverted = revert_to_version(manifest, target_version)
         save_manifest(self._settings.deploy_dir, reverted)
+        self._refresh_lock()
         self._store.set_agent_state("last_redesign_timestamp", str(self._clock()))
         return f"Done -- back to how I looked before: {look_summary(LookSpec.model_validate(target_entry.look_spec))}."
 
@@ -479,6 +570,7 @@ class AvatarEvolution:
         spec = LookSpec.model_validate(entry.look_spec)
         if (self._settings.current_dir / entry.glb_filename).is_file():
             save_manifest(self._settings.deploy_dir, revert_to_version(manifest, version))
+            self._refresh_lock()
             self._store.set_agent_state("last_redesign_timestamp", str(self._clock()))
             return f"Done -- back to version {version}: {look_summary(spec)}."
         cancel_running_build()
@@ -505,6 +597,9 @@ class AvatarEvolution:
     async def trigger_b_on_eligible(self) -> None:
         """The real `on_eligible` callback for
         `reflect.maybe_trigger_autonomous_redesign()`."""
+        if self.look_locked():
+            logger.info("Trigger B: the look is locked to an imported model, not redesigning")
+            return
         current = self.current_look_spec()
         traits = self._store.get_traits()
         mood = self._store.get_mood()
@@ -585,6 +680,7 @@ class AvatarEvolution:
         revealed_entry = result.manifest.get_version(version) if result.manifest is not None else None
         if revealed_entry is not None:
             new_look = LookSpec.model_validate(revealed_entry.look_spec)
+            self._refresh_lock()
             self._stamp_redesign_metadata(current, new_look)
             self._store.add_memory_note(
                 f"Revealed an appearance change that was staged while away: {look_summary(new_look)}."
