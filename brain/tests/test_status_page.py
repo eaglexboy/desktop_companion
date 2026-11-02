@@ -125,6 +125,19 @@ async def test_backup_state_reports_the_snapshot_age_and_missing_config(settings
     assert 3500 < time.time() - state["last_ts"] < 3700
 
 
+async def test_backup_state_parses_the_timers_next_run(settings, monkeypatch):
+    outputs = {"is-active": "active", "show": "@1793690261\n"}
+
+    async def fake_run(*argv):
+        return 0, outputs["show" if "show" in argv else "is-active"]
+
+    monkeypatch.setattr(status_app, "_run", fake_run)
+    assert (await status_app._backup_state(settings))["next"] == 1793690261.0
+
+    outputs["show"] = "@0\n"  # nothing scheduled
+    assert (await status_app._backup_state(settings))["next"] is None
+
+
 def test_ui_sizes_are_rem_not_px(settings):
     """The UI scales with the viewer's root font size; a stray px length would not."""
     import re
