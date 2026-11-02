@@ -219,4 +219,24 @@ def test_looks_lists_versions_newest_first_with_picture_flag(settings):
 
 
 def test_looks_empty_without_manifest(settings):
-    assert _client().get("/api/looks").json() == {"current": None, "looks": []}
+    assert _client().get("/api/looks").json() == {"current": None, "locked": False, "looks": []}
+
+
+def test_looks_reports_the_lock_on_an_imported_model_until_it_is_unlocked(settings):
+    import json
+
+    entry = {"version": 1, "glb_filename": "look-v1.glb", "created_at": 1.0, "status": "ok",
+             "look_spec": {"base_template": "custom:miss", "wardrobe": {}, "accessories": {}}}
+    (settings.deploy_dir / "manifest.json").write_text(json.dumps({"current_version": 1, "versions": [entry]}))
+    assert _client().get("/api/looks").json()["locked"] is True  # no personality db yet: locked
+
+    conn = sqlite3.connect(settings.personality_db_path)
+    conn.execute("CREATE TABLE agent_state (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO agent_state VALUES ('look_unlocked_for', 'custom:miss')")
+    conn.commit()
+    conn.close()
+    assert _client().get("/api/looks").json()["locked"] is False
+
+    entry["look_spec"]["base_template"] = "primitive_blob"
+    (settings.deploy_dir / "manifest.json").write_text(json.dumps({"current_version": 1, "versions": [entry]}))
+    assert _client().get("/api/looks").json()["locked"] is False

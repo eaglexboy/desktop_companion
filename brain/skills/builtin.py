@@ -31,6 +31,10 @@ async def _revert_look(args: dict[str, Any], state: Any) -> str:
     return await state.evolution.revert_appearance(f"version {version}" if version.isdigit() else "")
 
 
+async def _unlock_look(_args: dict[str, Any], state: Any) -> str:
+    return await state.evolution.unlock_appearance()
+
+
 def register_builtin(registry: SkillRegistry) -> None:
     registry.register(
         Skill(
@@ -51,7 +55,8 @@ def register_builtin(registry: SkillRegistry) -> None:
     registry.register(
         Skill(
             "change_look",
-            "redesign your own appearance (takes a minute to build); say what you want to look like",
+            "redesign your own appearance (takes a minute to build); say what you want to look like. "
+            "Declined while you wear an imported model you were asked to keep",
             _change_look,
             (Param("request", "the look the user asked for"),),
         )
@@ -62,5 +67,13 @@ def register_builtin(registry: SkillRegistry) -> None:
             "go back to your previous appearance, or to a numbered look from the status page's Looks tab",
             _revert_look,
             (Param("version", "the look number to go back to; leave out for the previous look", required=False),),
+        )
+    )
+    registry.register(
+        Skill(
+            "unlock_look",
+            "free yourself to change your look again; use when the user says you may change your look "
+            "(you keep an imported model until they do)",
+            _unlock_look,
         )
     )

@@ -13,8 +13,9 @@ async function load() {
     return;
   }
   $("looksSummary").textContent = data.looks.length
-    ? `${data.looks.length} versions · now version ${data.current}`
+    ? `${data.looks.length} versions · now version ${data.current}${data.locked ? " · look locked" : ""}`
     : "";
+  $("looksLocked").hidden = !data.locked;
   if (!data.looks.length) {
     $("looksGrid").innerHTML = '<div class="empty">No looks built yet.</div>';
     return;

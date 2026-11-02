@@ -133,6 +133,7 @@ _WIRE_VERSION_FIELDS = (
     "viseme_shape_keys",
     "blink_shape_keys",
     "run_shape_keys",
+    "gesture_shape_keys",
     "animation_clips",
     "bounds",
 )
