@@ -10,6 +10,8 @@ import pytest
 from pydantic import ValidationError
 
 from brain.appearance.manifest import (
+    AssetManifest,
+    AssetVersionEntry,
     append_version,
     atomic_write,
     load_manifest,
@@ -17,6 +19,18 @@ from brain.appearance.manifest import (
     revert_to_version,
     save_manifest,
 )
+
+
+def _entry(manifest: AssetManifest, version: int) -> AssetVersionEntry:
+    entry = manifest.get_version(version)
+    assert entry is not None
+    return entry
+
+
+def _current(manifest: AssetManifest) -> AssetVersionEntry:
+    entry = manifest.current()
+    assert entry is not None
+    return entry
 
 
 def _build_json(**overrides) -> dict:
@@ -56,8 +70,8 @@ def test_append_version_increments_and_retains_history():
     m2 = append_version(m1, _build_json(glb_filename="look-v2.glb"), LOOK_SPEC)
     assert m2.current_version == 2
     assert len(m2.versions) == 2
-    assert m2.get_version(1).glb_filename == "look-v1.glb"
-    assert m2.get_version(2).glb_filename == "look-v2.glb"
+    assert _entry(m2, 1).glb_filename == "look-v1.glb"
+    assert _entry(m2, 2).glb_filename == "look-v2.glb"
 
 
 def test_append_version_rejects_unknown_fields():
@@ -72,7 +86,7 @@ def test_revert_to_version_rewrites_pointer_only():
     assert reverted.current_version == 1
     # both versions still present -- revert is a pointer rewrite, not a deletion
     assert len(reverted.versions) == 2
-    assert reverted.current().seed == 42
+    assert _current(reverted).seed == 42
 
 
 def test_revert_to_version_rejects_unknown_version():
@@ -85,8 +99,8 @@ def test_mark_version_status_updates_only_target_version():
     m1 = append_version(None, _build_json(), LOOK_SPEC)
     m2 = append_version(m1, _build_json(), LOOK_SPEC)
     marked = mark_version_status(m2, 2, "corrupted")
-    assert marked.get_version(2).status == "corrupted"
-    assert marked.get_version(1).status == "ok"
+    assert _entry(marked, 2).status == "corrupted"
+    assert _entry(marked, 1).status == "ok"
 
 
 def test_mark_version_status_rejects_unknown_version():
@@ -147,5 +161,5 @@ def test_append_version_assigns_versioned_filename_regardless_of_build_json():
     # file that never exists.
     m1 = append_version(None, _build_json(glb_filename="look.glb"), LOOK_SPEC)
     m2 = append_version(m1, _build_json(glb_filename="look.glb"), LOOK_SPEC)
-    assert m1.get_version(1).glb_filename == "look-v1.glb"
-    assert m2.get_version(2).glb_filename == "look-v2.glb"
+    assert _entry(m1, 1).glb_filename == "look-v1.glb"
+    assert _entry(m2, 2).glb_filename == "look-v2.glb"

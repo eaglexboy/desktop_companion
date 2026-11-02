@@ -84,6 +84,7 @@ The character driver blends animations across concurrent tiers:
 * **Tier 3: Cognitive States:** `think` loop active on `status: "thinking"`. Interrupted immediately by speech.
 * **Tier 2: Mood Idles:** Selected based on `mood_update` (`idle_bored`, `idle_curious`, `idle_fidget`, etc.).
 * **Tier 1: Base Idle Loop:** Continuous looping baseline (`idle_lookaround`, `idle_stretch`, `idle_blink`).
+* **Limb motion on a rigged imported model:** driven by morph weights, not skeletal clips (the glTF loader does not apply a rig's own bone clips; checked). While the avatar runs, its `run_shape_keys` pair is cross-faded in time with the hop, as for generated avatars. While it speaks, its `gesture_shape_keys` (`gesture_l_out`/`_l_in`, `gesture_r_out`/`_r_in`) are driven in phrases: one arm, the other or both swings between its two extremes for a second or two (an envelope eases it in and out), then both settle for a pause. Gestures stop while it runs and are skipped for a model without those targets. When it is just standing (not speaking, running, thinking or turning) the same targets are driven gently: a slow drift of each arm (about 15-30% of the swing, a 4-8 s cycle, re-rolled every 5-11 s) with, now and then, a bigger wave or shift (about 50-80% for 2-3 s); the strengths and the chance of the bigger move scale with mood (fidgeting more, bored least). Anything that takes over the body eases the arms back to rest.
 
 ---
 

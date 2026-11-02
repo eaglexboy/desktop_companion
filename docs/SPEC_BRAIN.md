@@ -229,7 +229,7 @@ class LLMClient(ABC):
 2. **Provider Selection:** Queries matching capability tags (`code`, `complex_reasoning`, `large_context`) when escalation is warranted.
 3. **Extensible Tool Registry (V1 Accommodation for V2 Skills):**
    * Exposes an open registration method `register_tool(name: str, description: str, parameters: dict, handler: Callable)` in `router.py`, allowing V2 skills to plug in dynamically alongside V1's hardcoded `change_appearance` and `revert_appearance`.
-   * Built-in V1 tools: `change_appearance(request: str)` and `revert_appearance(request: str = "")`. With no version in the request it steps back one version; "version N" / "look #N" restores that version (pointer rewrite if its `.glb` is kept, else a rebuild from the stored `look_spec` published as a new version; see [ADR_LOOK_HISTORY.md](ADR_LOOK_HISTORY.md)). The `revert_look` skill takes an optional `version` argument.
+   * Built-in V1 tools: `change_appearance(request: str)`, `revert_appearance(request: str = "")` and `unlock_appearance()`. While the current look is an imported (`custom:`) model, the companion keeps it: `change_appearance` is declined and the autonomous redesign is skipped, until the user says it may change its look (or asks for a generated one); see [ADR_IMPORTED_LOOK_LOCK.md](ADR_IMPORTED_LOOK_LOCK.md). The `unlock_look` skill is the same unlock for a model that phrases it as a skill call. With no version in the request it steps back one version; "version N" / "look #N" restores that version (pointer rewrite if its `.glb` is kept, else a rebuild from the stored `look_spec` published as a new version; see [ADR_LOOK_HISTORY.md](ADR_LOOK_HISTORY.md)). The `revert_look` skill takes an optional `version` argument.
    * Models lacking native tool calling are supported via a lightweight intent classifier and keyword pre-filter.
 4. **Return Envelope:** Yields `{text, provider, escalated, rationale}`.
 
@@ -444,7 +444,7 @@ Returns screen-local `Placement(x, y, screen_name, hidden)`:
 ```json
 // Daemon -> Client
 {"type": "chat_response", "timestamp": 1718000000.0, "payload": {"utterance_id": "utt_1", "text": "Hello!", "provider": "local", "escalated": false, "rationale": "chat"}}
-{"type": "set_position", "timestamp": 1718000000.0, "payload": {"x": 100, "y": 200, "screen_name": "DP-1", "duration_ms": 400, "hidden": false}}
+{"type": "set_position", "timestamp": 1718000000.0, "payload": {"x": 100, "y": 200, "screen_name": "DP-1", "duration_ms": 900, "hidden": false}}
 {"type": "status_update", "timestamp": 1718000000.0, "payload": {"state": "idle" | "thinking" | "rebuilding" | "listening" | "speaking"}}
 {"type": "appearance_progress", "timestamp": 1718000000.0, "payload": {"stage": "designing" | "building" | "done" | "staged" | "failed", "label": "Building the 3D model...", "source": "user" | "api" | "autonomous", "version": 4, "error": "..."}}
 {"type": "mood_update", "timestamp": 1718000000.0, "payload": {"energy": 60.0, "valence": 50.0, "stress": 20.0}}

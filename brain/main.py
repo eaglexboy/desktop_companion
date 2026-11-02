@@ -462,7 +462,7 @@ async def _broadcast_set_position(state: AppState, window: WindowState | None, s
             "x": placement.x,
             "y": placement.y,
             "screen_name": placement.screen_name,
-            "duration_ms": 400,  # 200ms fade-out + re-anchor + 200ms fade-in
+            "duration_ms": 900,  # same-screen slide; a monitor change is a cross-screen run in the overlay
             "hidden": placement.hidden,
         },
     )

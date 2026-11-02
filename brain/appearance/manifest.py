@@ -49,6 +49,7 @@ class AssetVersionEntry(_Strict):
     viseme_shape_keys: list[str]
     blink_shape_keys: list[str] = []
     run_shape_keys: list[str] = []
+    gesture_shape_keys: list[str] = []
     animation_clips: list[AnimationClipEntry]
     bounds: dict[str, float]
     warnings: list[str] = []

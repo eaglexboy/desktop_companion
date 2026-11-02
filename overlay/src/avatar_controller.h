@@ -59,6 +59,7 @@ class AvatarController : public QObject
     // extremes of a run cycle, present on the body (and clothes) of
     // avatars with legs. Matched by target count like the blink keys.
     Q_PROPERTY(QStringList runKeyNames READ runKeyNames WRITE setRunKeyNames NOTIFY runKeyNamesChanged)
+    Q_PROPERTY(QStringList gestureKeyNames READ gestureKeyNames WRITE setGestureKeyNames NOTIFY gestureKeyNamesChanged)
 
 public:
     explicit AvatarController(QObject *parent = nullptr);
@@ -80,11 +81,19 @@ public:
 
     QStringList runKeyNames() const { return m_runKeyNames; }
     void setRunKeyNames(const QStringList &names);
+    QStringList gestureKeyNames() const { return m_gestureKeyNames; }
+    void setGestureKeyNames(const QStringList &names);
     // Sets the two run-pose weights (run_a, run_b) on every model that has
     // them. No-op for avatars without run targets.
     Q_INVOKABLE void setRunWeights(double a, double b);
     // Whether the loaded avatar can run (legs with run targets).
     Q_INVOKABLE bool hasRunTargets() const;
+
+    // Arm gestures of an avatar rigged with its own arms: the generator bakes a
+    // few arm poses as morph targets (`gesture_shape_keys`) on the meshes the arms
+    // deform; these set their weights, in the manifest's order.
+    Q_INVOKABLE void setGestureWeights(const QVariantList &weights);
+    Q_INVOKABLE bool hasGestureTargets() const;
 
     // visemes: an array of maps with start_s/end_s/shape_key describing
     // the viseme timeline for one utterance. Call once per utterance
@@ -127,6 +136,7 @@ signals:
     void shapeKeyNamesChanged();
     void blinkKeyNamesChanged();
     void runKeyNamesChanged();
+    void gestureKeyNamesChanged();
 
 private:
     void applyWeights(const QHash<QString, float> &desired);
@@ -136,8 +146,12 @@ private:
     void rewindClip(QObject *anim);
     bool isBlinkModel(int targetCount) const;
     bool isRunModel(int targetCount) const;
+    bool isGestureModel(int targetCount) const;
     // Models whose morph targets are not visemes (see blink/run key names).
-    bool isNonVisemeModel(int targetCount) const { return isBlinkModel(targetCount) || isRunModel(targetCount); }
+    bool isNonVisemeModel(int targetCount) const
+    {
+        return isBlinkModel(targetCount) || isRunModel(targetCount) || isGestureModel(targetCount);
+    }
     void resetStep(int generation, int attempt, int passesAfterFound);
 
     QPointer<QObject> m_root;
@@ -146,6 +160,7 @@ private:
     QStringList m_shapeKeyNames;
     QStringList m_blinkKeyNames;
     QStringList m_runKeyNames;
+    QStringList m_gestureKeyNames;
     int m_resetGeneration = 0;
     int m_clipGeneration = 0;
 };

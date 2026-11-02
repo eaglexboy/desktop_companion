@@ -141,7 +141,7 @@ async def test_describe_reports_every_skill_with_usage_counters():
     reg, state = _registry(disabled={"change_look"}), FakeState()
     await reg.run_all([SkillCall("gesture", {"name": "greet"}), SkillCall("gesture", {"name": "nope"})], state)
     by_name = {s["name"]: s for s in reg.describe()}
-    assert set(by_name) == {"gesture", "remember", "change_look", "revert_look"}
+    assert set(by_name) == {"gesture", "remember", "change_look", "revert_look", "unlock_look"}
     assert by_name["change_look"]["enabled"] is False and by_name["gesture"]["enabled"] is True
     assert (by_name["gesture"]["calls"], by_name["gesture"]["refused"]) == (1, 1)
     assert by_name["gesture"]["params"][0]["enum"] == ["greet", "agree", "disagree", "celebrate", "shrug"]

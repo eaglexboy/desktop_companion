@@ -295,7 +295,7 @@ def _looks(settings: Settings) -> dict:
     try:
         manifest = json.loads(path.read_text())
     except (OSError, ValueError):
-        return {"current": None, "looks": []}
+        return {"current": None, "locked": False, "looks": []}
     looks = []
     for entry in manifest.get("versions", []):
         version = entry["version"]
@@ -313,7 +313,29 @@ def _looks(settings: Settings) -> dict:
             }
         )
     looks.sort(key=lambda look: look["version"], reverse=True)
-    return {"current": manifest.get("current_version"), "looks": looks}
+    current = next((e for e in manifest.get("versions", []) if e["version"] == manifest.get("current_version")), None)
+    return {
+        "current": manifest.get("current_version"),
+        "locked": _look_locked(settings, (current or {}).get("look_spec", {}).get("base_template", "")),
+        "looks": looks,
+    }
+
+
+def _look_locked(settings: Settings, base_template: str) -> bool:
+    """The companion keeps an imported model until the user frees it (see
+    brain/evolution.py): locked while the current base is a custom model other
+    than the one `agent_state.look_unlocked_for` names. Read-only."""
+    if not base_template.startswith("custom:"):
+        return False
+    try:
+        conn = sqlite3.connect(f"file:{settings.personality_db_path}?mode=ro", uri=True, timeout=1.0)
+        try:
+            row = conn.execute("SELECT value FROM agent_state WHERE key = 'look_unlocked_for'").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return True
+    return not (row and row[0] == base_template)
 
 
 def _look_summary(spec: dict) -> str:

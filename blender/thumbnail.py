@@ -20,34 +20,43 @@ bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=glb)
 scene = bpy.context.scene
 
-# The imported animation would pose the model at frame 0 of whatever clip is
-# active; the rest pose is the representative one.
+# The imported animations would pose the model at frame 0 of whatever clip is
+# active, so drop them. The pose itself stays: a model whose bind shape is not
+# its standing shape (common in converted files) is only upright when posed.
 for obj in bpy.data.objects:
     if obj.animation_data:
         obj.animation_data_clear()
-    if obj.type == "ARMATURE":
-        obj.data.pose_position = "REST"
     if obj.name.startswith("Icosphere"):
         obj.hide_render = True
+    # Blink and mouth shapes come in at their file defaults; the overlay zeroes
+    # them on load, so a resting face is the representative picture.
+    if obj.type == "MESH" and obj.data.shape_keys is not None:
+        for key in obj.data.shape_keys.key_blocks:
+            key.value = 0.0
 
 bpy.context.view_layer.update()
+depsgraph = bpy.context.evaluated_depsgraph_get()
 low, high = Vector((1e9,) * 3), Vector((-1e9,) * 3)
 for obj in bpy.data.objects:
     # The glTF importer adds an "Icosphere" bone-display helper that is not in
-    # the file; and a skinned mesh's bound_box is not its rest-pose extent.
+    # the file. Bounds come from the evaluated (deformed) mesh: a skinned
+    # mesh's own vertices and bound_box are its undeformed shape.
     if obj.type != "MESH" or obj.name.startswith("Icosphere"):
         continue
-    for vertex in obj.data.vertices:
-        world = obj.matrix_world @ vertex.co
+    evaluated = obj.evaluated_get(depsgraph)
+    mesh = evaluated.to_mesh()
+    for vertex in mesh.vertices:
+        world = evaluated.matrix_world @ vertex.co
         low = Vector(map(min, low, world))
         high = Vector(map(max, high, world))
+    evaluated.to_mesh_clear()
 center = (low + high) / 2
 height = max(high.z - low.z, 0.01)
 width = max(high.x - low.x, high.y - low.y, 0.01)
 
 scene.render.engine = "BLENDER_WORKBENCH"
 scene.display.shading.light = "STUDIO"
-scene.display.shading.color_type = "MATERIAL"
+scene.display.shading.color_type = "TEXTURE"  # shows image textures, and falls back to the material colour
 scene.render.resolution_x = scene.render.resolution_y = size
 scene.render.film_transparent = True
 
