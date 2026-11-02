@@ -164,9 +164,14 @@ async def _backup_state(settings: Settings) -> dict:
             pass
     _, active = await _run("systemctl", "--user", "is-active", "deskmate-backup.timer")
     out["timer"] = active
-    _, shown = await _run("systemctl", "--user", "show", "deskmate-backup.timer", "-p", "NextElapseUSecRealtime", "--value")
-    if shown.strip().isdigit() and int(shown) > 0:
-        out["next"] = int(shown) / 1_000_000
+    # --timestamp=unix prints "@<epoch seconds>" (empty or "@0" when nothing is scheduled);
+    # the default is a locale-formatted date that cannot be parsed reliably.
+    _, shown = await _run(
+        "systemctl", "--user", "show", "deskmate-backup.timer", "--timestamp=unix", "-p", "NextElapseUSecRealtime", "--value"
+    )
+    shown = shown.strip().removeprefix("@")
+    if shown.isdigit() and int(shown) > 0:
+        out["next"] = float(shown)
     out["stale_after_s"] = BACKUP_STALE_AFTER_S
     return out
 

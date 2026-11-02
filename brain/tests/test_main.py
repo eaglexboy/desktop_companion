@@ -680,6 +680,7 @@ async def _transition(state, old, new, monkeypatch) -> tuple[list[str], list[str
         spoken.append(text)
 
     state.hub.broadcast = fake_broadcast
+    monkeypatch.setattr(type(state.hub), "connected_client_ids", ["desktop_primary"])
     monkeypatch.setattr("brain.main._speak", fake_speak)
     await _handle_presence_transition(state, old, new)
     return gestures, spoken
@@ -715,3 +716,66 @@ async def test_greeting_can_be_disabled(client, monkeypatch):
     state.settings.presence.greet_on_return = False
     gestures, spoken = await _transition(state, PresenceState.AWAY, PresenceState.ACTIVE, monkeypatch)
     assert gestures == [] and spoken == []
+
+
+async def test_greeting_waits_for_overlay_then_speaks(client, monkeypatch):
+    from brain.presence.desktop_bridge import PresenceState
+
+    _c, state = client
+    calls = {"n": 0}
+
+    def late_client(_self):
+        calls["n"] += 1
+        return [] if calls["n"] < 3 else ["desktop_primary"]
+
+    async def fast_sleep(_s):
+        return None
+
+    _g, spoken = await _transition(state, PresenceState.AWAY, PresenceState.ACTIVE, monkeypatch)
+    state.settings.presence.greet_cooldown_s = 0
+    monkeypatch.setattr(type(state.hub), "connected_client_ids", property(late_client))
+    monkeypatch.setattr("brain.main.asyncio.sleep", fast_sleep)
+    from brain.main import _handle_presence_transition
+
+    await _handle_presence_transition(state, PresenceState.AWAY, PresenceState.ACTIVE)
+    assert calls["n"] >= 3 and state.pending_greeting is None
+
+
+async def test_greeting_held_without_overlay_and_delivered_on_connect(client, monkeypatch):
+    from brain.main import _deliver_pending_greeting, _handle_presence_transition
+    from brain.presence.desktop_bridge import PresenceState
+
+    _c, state = client
+    spoken: list[str] = []
+
+    async def fake_speak(_state, text, **_kw):
+        spoken.append(text)
+
+    async def noop_broadcast(*_a, **_k):
+        return None
+
+    state.hub.broadcast = noop_broadcast
+    monkeypatch.setattr(type(state.hub), "connected_client_ids", [])
+    monkeypatch.setattr("brain.main._speak", fake_speak)
+    monkeypatch.setattr("brain.main._GREETING_CLIENT_WAIT_S", 0.0)
+    state.store.set_agent_state("last_greeting_timestamp", None)
+
+    await _handle_presence_transition(state, PresenceState.AWAY, PresenceState.ACTIVE)
+    assert spoken == [] and state.pending_greeting is not None
+    assert state.store.get_agent_state("last_greeting_timestamp") is None  # cooldown not spent
+
+    task = _deliver_pending_greeting(state)
+    assert task is not None
+    await task
+    assert len(spoken) == 1 and state.pending_greeting is None
+    assert state.store.get_agent_state("last_greeting_timestamp") is not None
+
+
+async def test_stale_held_greeting_is_dropped(client):
+    import time
+    from brain.main import _deliver_pending_greeting
+
+    _c, state = client
+    state.pending_greeting = ("Hey, you're back!", time.time() - 10_000)
+    assert _deliver_pending_greeting(state) is None
+    assert state.pending_greeting is None

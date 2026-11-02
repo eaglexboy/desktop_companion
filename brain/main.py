@@ -109,6 +109,9 @@ class AppState:
     last_presence: tuple[WindowState | None, list[ScreenInfo]] | None = None
     last_placement: Placement | None = None
     background_tasks: list[asyncio.Task] = field(default_factory=list)
+    # (text, created_at) of a return greeting that found no overlay connected;
+    # delivered when one connects, unless it has gone stale.
+    pending_greeting: tuple[str, float] | None = None
 
 
 def build_app_state(settings: Settings | None = None) -> AppState:
@@ -161,6 +164,7 @@ def build_app_state(settings: Settings | None = None) -> AppState:
         last = state_holder["state"].last_presence
         if last is not None:
             await _broadcast_set_position(state_holder["state"], *last)
+        _deliver_pending_greeting(state_holder["state"])
 
     hub = OverlayHub(
         settings,
@@ -521,6 +525,56 @@ async def _handle_presence_transition(state: AppState, old_state: PresenceState,
     )
     if greeting is None:
         return
+    # A broadcast reaches only whoever is connected right now, and on a wake
+    # from suspend the overlay can reconnect a moment after the brain notices
+    # the return. Wait briefly; failing that, hold the greeting for the next
+    # connection instead of speaking to nobody.
+    if not await _wait_for_overlay(state, _GREETING_CLIENT_WAIT_S):
+        state.pending_greeting = (greeting, time.time())
+        logger.info("no overlay connected after %.0fs; greeting held until one connects", _GREETING_CLIENT_WAIT_S)
+        return
+    if warm_task is not None:
+        await warm_task
+    await _deliver_greeting(state, greeting)
+
+
+# How long a return greeting waits for the overlay to (re)connect, and how long
+# a held one stays worth saying once it does.
+_GREETING_CLIENT_WAIT_S = 10.0
+_GREETING_STALE_S = 300.0
+
+
+async def _wait_for_overlay(state: AppState, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while not state.hub.connected_client_ids:
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(0.25)
+    return True
+
+
+def _deliver_pending_greeting(state: AppState) -> asyncio.Task | None:
+    pending, state.pending_greeting = state.pending_greeting, None
+    if pending is None:
+        return None
+    greeting, created_at = pending
+    if time.time() - created_at > _GREETING_STALE_S:
+        return None
+
+    async def _run() -> None:
+        # Pocket may have gone cold again while the greeting was held.
+        if state.tts_pool.has_remote:
+            await state.tts_pool.warm_up(state.settings.voice_cache_dir / "_warmup.wav")
+        await _deliver_greeting(state, greeting)
+
+    task = asyncio.create_task(_run())
+    state.background_tasks.append(task)
+    task.add_done_callback(lambda t: state.background_tasks.remove(t) if t in state.background_tasks else None)
+    return task
+
+
+async def _deliver_greeting(state: AppState, greeting: str) -> None:
+    # Stamped on delivery, so a greeting nobody received does not use up the cooldown.
     state.store.set_agent_state("last_greeting_timestamp", str(time.time()))
     # Same delivery as a model reply: stored in the conversation (so chat and
     # the model's history see it) and sent as chat_response before the voice.
@@ -531,8 +585,6 @@ async def _handle_presence_transition(state: AppState, old_state: PresenceState,
         {"utterance_id": utterance_id, "text": greeting, "provider": "presence", "escalated": False, "rationale": ""},
     )
     await state.hub.broadcast("play_gesture", {"name": "greet", "clip": "greet", "loop": False})
-    if warm_task is not None:
-        await warm_task
     await _speak(state, greeting, utterance_id=utterance_id)
 
 
