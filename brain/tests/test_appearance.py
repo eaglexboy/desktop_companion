@@ -32,7 +32,9 @@ from brain.appearance.manifest import load_manifest
 from brain.appearance.spec import LookSpec, PaletteSpec, WardrobeSpec
 from brain.config import Settings
 
-VALID_PALETTE = PaletteSpec(primary="#4A90D9", secondary="#FFFFFF", accent="#F5A623", emissive="#7FD1FF")
+VALID_PALETTE = PaletteSpec(
+    primary="#4A90D9", secondary="#FFFFFF", accent="#F5A623", emissive="#7FD1FF"
+)
 
 
 def _look_spec(**overrides) -> LookSpec:
@@ -49,15 +51,22 @@ def _look_spec(**overrides) -> LookSpec:
 def _settings(tmp_path: Path, blender_bin: str) -> Settings:
     return Settings.model_validate(
         {
-            "storage": {"workspace_dir": str(tmp_path / "workspace"), "deploy_dir": str(tmp_path / "deploy")},
-            "llm": {"local": {"base_url": "http://127.0.0.1:11434/v1", "model": "test-model"}},
+            "storage": {
+                "workspace_dir": str(tmp_path / "workspace"),
+                "deploy_dir": str(tmp_path / "deploy"),
+            },
+            "llm": {
+                "local": {
+                    "base_url": "http://127.0.0.1:11434/v1",
+                    "model": "test-model",
+                }
+            },
             "appearance": {"blender_bin": blender_bin, "keep_recent_versions": 2},
         }
     )
 
 
-_FAKE_BLENDER_OK = textwrap.dedent(
-    """\
+_FAKE_BLENDER_OK = textwrap.dedent("""\
     #!/usr/bin/env python3
     import json, sys
     argv = sys.argv
@@ -85,25 +94,20 @@ _FAKE_BLENDER_OK = textwrap.dedent(
         json.dump(build_json, f)
     print("DESKMATE_BUILD_OK " + out)
     sys.exit(0)
-    """
-)
+    """)
 
-_FAKE_BLENDER_FAIL = textwrap.dedent(
-    """\
+_FAKE_BLENDER_FAIL = textwrap.dedent("""\
     #!/usr/bin/env python3
     print("DESKMATE_BUILD_FAIL budget_exceeded: triangles=99999 (max 30000)")
     import sys
     sys.exit(1)
-    """
-)
+    """)
 
-_FAKE_BLENDER_HANGS = textwrap.dedent(
-    """\
+_FAKE_BLENDER_HANGS = textwrap.dedent("""\
     #!/usr/bin/env python3
     import time
     time.sleep(999)
-    """
-)
+    """)
 
 
 def _write_fake_blender(tmp_path: Path, script: str, name: str = "fake_blender") -> str:
@@ -134,7 +138,10 @@ def test_verify_build_output_rejects_bad_magic_bytes(tmp_path):
 def test_verify_build_output_rejects_missing_viseme_keys(tmp_path):
     glb = tmp_path / "ok.glb"
     glb.write_bytes(b"glTF" + b"\x00" * 10)
-    build_json = {"viseme_shape_keys": ["viseme_A"], "animation_clips": [{"name": "idle_x"}, {"name": "move"}, {"name": "think"}]}
+    build_json = {
+        "viseme_shape_keys": ["viseme_A"],
+        "animation_clips": [{"name": "idle_x"}, {"name": "move"}, {"name": "think"}],
+    }
     with pytest.raises(GenerationError, match="viseme shape keys"):
         _verify_build_output(glb, build_json, has_face=True)
 
@@ -165,7 +172,9 @@ async def test_publish_writes_manifest_and_glb_atomically(tmp_path):
     bin_path = _write_fake_blender(tmp_path, _FAKE_BLENDER_OK)
     settings = _settings(tmp_path, bin_path)
 
-    result = await compile_and_publish(settings, _look_spec(), is_user_present=lambda: True)
+    result = await compile_and_publish(
+        settings, _look_spec(), is_user_present=lambda: True
+    )
 
     assert result.outcome == "published"
     assert result.version == 1
@@ -189,10 +198,13 @@ async def test_publish_prunes_old_versions_beyond_keep_recent(tmp_path):
     bin_path = _write_fake_blender(tmp_path, _FAKE_BLENDER_OK)
     settings = _settings(tmp_path, bin_path)  # keep_recent_versions=2
 
+    result = None
     for _ in range(3):
-        result = await compile_and_publish(settings, _look_spec(), is_user_present=lambda: True)
+        result = await compile_and_publish(
+            settings, _look_spec(), is_user_present=lambda: True
+        )
 
-    assert result.version == 3
+    assert result is not None and result.version == 3
     remaining = {p.name for p in settings.assets_dir.glob("look-v*.glb")}
     assert remaining == {"look-v2.glb", "look-v3.glb"}
 
@@ -216,7 +228,9 @@ async def test_staged_build_does_not_touch_live_manifest(tmp_path):
     bin_path = _write_fake_blender(tmp_path, _FAKE_BLENDER_OK)
     settings = _settings(tmp_path, bin_path)
 
-    result = await compile_and_publish(settings, _look_spec(), is_user_present=lambda: False)
+    result = await compile_and_publish(
+        settings, _look_spec(), is_user_present=lambda: False
+    )
 
     assert result.outcome == "staged"
     assert result.version == 1
@@ -230,7 +244,9 @@ async def test_reveal_staged_publishes_without_recompiling(tmp_path):
     bin_path = _write_fake_blender(tmp_path, _FAKE_BLENDER_OK)
     settings = _settings(tmp_path, bin_path)
 
-    staged = await compile_and_publish(settings, _look_spec(), is_user_present=lambda: False)
+    staged = await compile_and_publish(
+        settings, _look_spec(), is_user_present=lambda: False
+    )
     assert staged.outcome == "staged"
 
     revealed = reveal_staged(settings, staged.version)
@@ -238,7 +254,8 @@ async def test_reveal_staged_publishes_without_recompiling(tmp_path):
     assert revealed.outcome == "published"
     assert revealed.version == 1
     assert (settings.current_dir / "look-v1.glb").is_file()
-    assert load_manifest(settings.deploy_dir).current_version == 1
+    manifest = load_manifest(settings.deploy_dir)
+    assert manifest is not None and manifest.current_version == 1
     # staged scratch cleaned up once published
     assert not (settings.staged_dir / "look-v1.glb").exists()
     assert not (settings.staged_dir / "look-v1.meta.json").exists()
@@ -273,7 +290,9 @@ async def test_cancel_running_build_raises_build_cancelled(tmp_path):
     bin_path = _write_fake_blender(tmp_path, _FAKE_BLENDER_HANGS)
     settings = _settings(tmp_path, bin_path)
 
-    task = asyncio.create_task(compile_and_publish(settings, _look_spec(), is_user_present=lambda: True))
+    task = asyncio.create_task(
+        compile_and_publish(settings, _look_spec(), is_user_present=lambda: True)
+    )
     for _ in range(50):
         if blender_gen._current_proc is not None:
             break

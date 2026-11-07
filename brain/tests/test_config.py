@@ -73,7 +73,9 @@ def test_log_level_accepts_every_valid_level(tmp_path: Path) -> None:
         path = _write(tmp_path, toml, name=f"config-{level}.toml")
         settings = Settings.model_validate(_load_toml(path))
         assert settings.general.log_level == LogLevel(level)
-        assert settings.general.log_level == level  # StrEnum compares equal to its raw string
+        assert (
+            settings.general.log_level == level
+        )  # StrEnum compares equal to its raw string
 
 
 def test_log_level_rejects_invalid_value(tmp_path: Path) -> None:
@@ -84,7 +86,9 @@ def test_log_level_rejects_invalid_value(tmp_path: Path) -> None:
 
 
 def test_stt_local_engine_rejects_unsupported_value(tmp_path: Path) -> None:
-    toml = MINIMAL_TOML + '\n[voice.stt.local]\nengine = "faster_whisper"\n'  # underscore typo
+    toml = (
+        MINIMAL_TOML + '\n[voice.stt.local]\nengine = "faster_whisper"\n'
+    )  # underscore typo
     path = _write(tmp_path, toml)
     with pytest.raises(ValidationError):
         Settings.model_validate(_load_toml(path))
@@ -110,9 +114,7 @@ def test_repo_config_example_toml_round_trips() -> None:
 
 
 def test_keyed_llm_cloud_table_with_multiple_providers(tmp_path: Path) -> None:
-    toml = (
-        MINIMAL_TOML
-        + """
+    toml = MINIMAL_TOML + """
 [llm.cloud.alpha]
 provider_type = "generic_openai"
 base_url = "https://alpha.example.com/v1"
@@ -137,19 +139,21 @@ api_key = "sk-x"
 priority = 999
 enabled = false
 """
-    )
     path = _write(tmp_path, toml)
     settings = Settings.model_validate(_load_toml(path))
 
     assert set(settings.llm.cloud) == {"alpha", "beta", "disabled_one"}
     enabled = settings.llm.enabled_cloud_providers()
-    assert [p.provider_type for p in enabled] == ["anthropic", "generic_openai"]  # beta (50) before alpha (5)
+    assert [p.provider_type for p in enabled] == [
+        "anthropic",
+        "generic_openai",
+    ]  # beta (50) before alpha (5)
 
 
-def test_keyed_tts_remote_table_with_multiple_instances_priority_order(tmp_path: Path) -> None:
-    toml = (
-        MINIMAL_TOML
-        + """
+def test_keyed_tts_remote_table_with_multiple_instances_priority_order(
+    tmp_path: Path,
+) -> None:
+    toml = MINIMAL_TOML + """
 [voice.tts.remote.voxcpm_elsrig]
 base_url = "http://127.0.0.1:7500"
 priority = 10
@@ -165,7 +169,6 @@ base_url = "http://example.com:7500"
 priority = 1
 enabled = false
 """
-    )
     path = _write(tmp_path, toml)
     settings = Settings.model_validate(_load_toml(path))
 
@@ -173,17 +176,17 @@ enabled = false
     enabled = settings.voice.tts.enabled_remote_instances()
     # Higher priority number tried first -- matches [llm.cloud.<provider_name>]'s
     # convention exactly, since this keyed table mirrors it (priority=20 before priority=10).
-    assert [r.base_url for r in enabled] == ["http://192.168.0.21:7500", "http://127.0.0.1:7500"]
+    assert [r.base_url for r in enabled] == [
+        "http://192.168.0.21:7500",
+        "http://127.0.0.1:7500",
+    ]
 
 
 def test_tts_remote_provider_type_defaults_to_tts_serve(tmp_path: Path) -> None:
-    toml = (
-        MINIMAL_TOML
-        + """
+    toml = MINIMAL_TOML + """
 [voice.tts.remote.voxcpm_elsrig]
 base_url = "http://127.0.0.1:7500"
 """
-    )
     path = _write(tmp_path, toml)
     settings = Settings.model_validate(_load_toml(path))
     assert settings.voice.tts.remote["voxcpm_elsrig"].provider_type == "tts_serve"
@@ -193,9 +196,7 @@ def test_tts_remote_generic_openai_provider_type_with_api_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("DESKMATE_TTS_TEST_KEY", "sk-tts-resolved")
-    toml = (
-        MINIMAL_TOML
-        + """
+    toml = MINIMAL_TOML + """
 [voice.tts.remote.openai_cloud]
 provider_type = "generic_openai"
 base_url = "https://api.openai.com"
@@ -204,7 +205,6 @@ capabilities_endpoint = ""
 api_key = "env:DESKMATE_TTS_TEST_KEY"
 params = { model = "tts-1", voice = "alloy" }
 """
-    )
     path = _write(tmp_path, toml)
     settings = Settings.model_validate(_load_toml(path))
     entry = settings.voice.tts.remote["openai_cloud"]
@@ -215,14 +215,11 @@ params = { model = "tts-1", voice = "alloy" }
 
 
 def test_tts_remote_invalid_provider_type_rejected(tmp_path: Path) -> None:
-    toml = (
-        MINIMAL_TOML
-        + """
+    toml = MINIMAL_TOML + """
 [voice.tts.remote.bogus]
 provider_type = "some_other_engine"
 base_url = "http://example.com:7500"
 """
-    )
     path = _write(tmp_path, toml)
     with pytest.raises(ValidationError):
         Settings.model_validate(_load_toml(path))
@@ -232,19 +229,19 @@ def test_tts_remote_disabled_instance_unset_env_var_does_not_block_startup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("DESKMATE_TTS_TOTALLY_UNSET_VAR", raising=False)
-    toml = (
-        MINIMAL_TOML
-        + """
+    toml = MINIMAL_TOML + """
 [voice.tts.remote.disabled_cloud]
 provider_type = "generic_openai"
 base_url = "https://api.openai.com"
 enabled = false
 api_key = "env:DESKMATE_TTS_TOTALLY_UNSET_VAR"
 """
-    )
     path = _write(tmp_path, toml)
     settings = Settings.model_validate(_load_toml(path))  # must not raise
-    assert settings.voice.tts.remote["disabled_cloud"].api_key == "env:DESKMATE_TTS_TOTALLY_UNSET_VAR"
+    assert (
+        settings.voice.tts.remote["disabled_cloud"].api_key
+        == "env:DESKMATE_TTS_TOTALLY_UNSET_VAR"
+    )
 
 
 def test_classifier_cascades_from_llm_local_when_blank(tmp_path: Path) -> None:
@@ -257,15 +254,12 @@ def test_classifier_cascades_from_llm_local_when_blank(tmp_path: Path) -> None:
 
 
 def test_classifier_explicit_values_not_overridden(tmp_path: Path) -> None:
-    toml = (
-        MINIMAL_TOML
-        + """
+    toml = MINIMAL_TOML + """
 [llm.routing.classifier]
 base_url = "http://classifier.example.com/v1"
 model = "small-fast"
 timeout_s = 2.0
 """
-    )
     path = _write(tmp_path, toml)
     settings = Settings.model_validate(_load_toml(path))
 
@@ -275,35 +269,33 @@ timeout_s = 2.0
     assert resolved.timeout_s == 2.0
 
 
-def test_env_var_api_key_resolved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_env_var_api_key_resolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("DESKMATE_TEST_KEY", "sk-resolved-value")
-    toml = (
-        MINIMAL_TOML
-        + """
+    toml = MINIMAL_TOML + """
 [llm.cloud.cloudy]
 provider_type = "anthropic"
 base_url = "https://example.com"
 model = "m"
 api_key = "env:DESKMATE_TEST_KEY"
 """
-    )
     path = _write(tmp_path, toml)
     settings = Settings.model_validate(_load_toml(path))
     assert settings.llm.cloud["cloudy"].api_key == "sk-resolved-value"
 
 
-def test_env_var_api_key_missing_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_env_var_api_key_missing_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.delenv("DESKMATE_TOTALLY_UNSET_VAR", raising=False)
-    toml = (
-        MINIMAL_TOML
-        + """
+    toml = MINIMAL_TOML + """
 [llm.cloud.cloudy]
 provider_type = "anthropic"
 base_url = "https://example.com"
 model = "m"
 api_key = "env:DESKMATE_TOTALLY_UNSET_VAR"
 """
-    )
     path = _write(tmp_path, toml)
     with pytest.raises(ValidationError):
         Settings.model_validate(_load_toml(path))
@@ -313,16 +305,13 @@ def test_stt_remote_api_key_resolved_when_backend_is_remote(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("DESKMATE_STT_TEST_KEY", "sk-stt-resolved")
-    toml = (
-        MINIMAL_TOML
-        + """
+    toml = MINIMAL_TOML + """
 [voice.stt]
 active_backend = "remote"
 
 [voice.stt.remote]
 api_key = "env:DESKMATE_STT_TEST_KEY"
 """
-    )
     path = _write(tmp_path, toml)
     settings = Settings.model_validate(_load_toml(path))
     assert settings.voice.stt.remote.api_key == "sk-stt-resolved"
@@ -335,16 +324,13 @@ def test_stt_remote_unset_env_var_does_not_block_startup_when_backend_is_local(
     backend that isn't selected must never block the whole daemon from
     starting."""
     monkeypatch.delenv("DESKMATE_STT_TOTALLY_UNSET_VAR", raising=False)
-    toml = (
-        MINIMAL_TOML
-        + """
+    toml = MINIMAL_TOML + """
 [voice.stt]
 active_backend = "local"
 
 [voice.stt.remote]
 api_key = "env:DESKMATE_STT_TOTALLY_UNSET_VAR"
 """
-    )
     path = _write(tmp_path, toml)
     settings = Settings.model_validate(_load_toml(path))  # must not raise
     assert settings.voice.stt.remote.api_key == "env:DESKMATE_STT_TOTALLY_UNSET_VAR"
@@ -354,37 +340,31 @@ def test_stt_remote_unset_env_var_raises_when_backend_is_remote(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("DESKMATE_STT_TOTALLY_UNSET_VAR", raising=False)
-    toml = (
-        MINIMAL_TOML
-        + """
+    toml = MINIMAL_TOML + """
 [voice.stt]
 active_backend = "remote"
 
 [voice.stt.remote]
 api_key = "env:DESKMATE_STT_TOTALLY_UNSET_VAR"
 """
-    )
     path = _write(tmp_path, toml)
     with pytest.raises(ValidationError):
         Settings.model_validate(_load_toml(path))
 
 
 def test_unknown_key_rejected_loudly(tmp_path: Path) -> None:
-    toml = MINIMAL_TOML + "\n[general]\nlog_level = \"INFO\"\ntypo_field = true\n"
+    toml = MINIMAL_TOML + '\n[general]\nlog_level = "INFO"\ntypo_field = true\n'
     path = _write(tmp_path, toml)
     with pytest.raises(ValidationError):
         Settings.model_validate(_load_toml(path))
 
 
 def test_appearance_cooldown_range_validated(tmp_path: Path) -> None:
-    toml = (
-        MINIMAL_TOML
-        + """
+    toml = MINIMAL_TOML + """
 [appearance]
 redesign_cooldown_hours_min = 30
 redesign_cooldown_hours_max = 12
 """
-    )
     path = _write(tmp_path, toml)
     with pytest.raises(ValidationError):
         Settings.model_validate(_load_toml(path))
@@ -427,28 +407,30 @@ def test_config_watcher_reload_on_invalid_toml_keeps_last_good(tmp_path: Path) -
     assert watcher.settings.llm.local.model == "test-model"
 
 
-def test_config_watcher_reload_on_validation_failure_keeps_last_good(tmp_path: Path) -> None:
+def test_config_watcher_reload_on_validation_failure_keeps_last_good(
+    tmp_path: Path,
+) -> None:
     path = _write(tmp_path, MINIMAL_TOML)
     watcher = ConfigWatcher(path)
     good_settings = watcher.settings
 
     # storage.workspace_dir is required -- remove it to force a validation error.
-    path.write_text(
-        """
+    path.write_text("""
 [storage]
 deploy_dir = "/tmp/deskmate-test-deploy"
 
 [llm.local]
 base_url = "http://127.0.0.1:11434/v1"
 model = "test-model"
-"""
-    )
+""")
     watcher.reload()
 
     assert watcher.settings is good_settings
 
 
-def test_config_watcher_subscribers_notified_on_successful_reload(tmp_path: Path) -> None:
+def test_config_watcher_subscribers_notified_on_successful_reload(
+    tmp_path: Path,
+) -> None:
     path = _write(tmp_path, MINIMAL_TOML)
     watcher = ConfigWatcher(path)
     seen: list[Settings] = []
@@ -488,7 +470,9 @@ def test_subscribe_if_running_is_a_noop_without_a_watcher(monkeypatch) -> None:
     assert calls == []
 
 
-def test_subscribe_if_running_subscribes_and_unsubscribes(tmp_path: Path, monkeypatch) -> None:
+def test_subscribe_if_running_subscribes_and_unsubscribes(
+    tmp_path: Path, monkeypatch
+) -> None:
     import brain.config as config_module
 
     path = _write(tmp_path, MINIMAL_TOML)
@@ -516,7 +500,9 @@ def test_tts_volume_outside_zero_to_one_is_rejected(volume: float) -> None:
         TTSConfig(volume=volume)
 
 
-def test_config_watcher_subscribers_not_notified_on_failed_reload(tmp_path: Path) -> None:
+def test_config_watcher_subscribers_not_notified_on_failed_reload(
+    tmp_path: Path,
+) -> None:
     path = _write(tmp_path, MINIMAL_TOML)
     watcher = ConfigWatcher(path)
     seen: list[Settings] = []
@@ -563,7 +549,9 @@ def test_presence_avatar_size_defaults_and_bounds():
     cfg = PresenceConfig()
     assert (cfg.avatar_width_px, cfg.avatar_height_px) == (240, 240)
     assert cfg.show_speech_bubble is True
-    assert PresenceConfig(avatar_width_px=96, avatar_height_px=1024).avatar_width_px == 96
+    assert (
+        PresenceConfig(avatar_width_px=96, avatar_height_px=1024).avatar_width_px == 96
+    )
     for bad in (0, 95, 1025, -240):
         with pytest.raises(ValidationError):
             PresenceConfig(avatar_width_px=bad)
@@ -576,12 +564,19 @@ def test_voice_lipsync_recognizer_defaults_to_the_fast_one_and_rejects_typos():
     from brain.config import VoiceConfig
 
     assert VoiceConfig().lipsync_recognizer == "phonetic"
-    assert VoiceConfig(lipsync_recognizer="pocketSphinx").lipsync_recognizer == "pocketSphinx"
+    assert (
+        VoiceConfig(lipsync_recognizer="pocketSphinx").lipsync_recognizer
+        == "pocketSphinx"
+    )
     with pytest.raises(ValidationError):
-        VoiceConfig(lipsync_recognizer="pocketsphynx")
+        VoiceConfig(
+            lipsync_recognizer="pocketsphynx"  # pyright: ignore[reportArgumentType]
+        )
 
 
-def test_reload_handler_matches_the_watched_file_whether_watchdog_gives_str_or_bytes(tmp_path) -> None:
+def test_reload_handler_matches_the_watched_file_whether_watchdog_gives_str_or_bytes(
+    tmp_path,
+) -> None:
     import os
 
     from brain.config import _ReloadHandler
@@ -589,4 +584,6 @@ def test_reload_handler_matches_the_watched_file_whether_watchdog_gives_str_or_b
     target = tmp_path / "config.toml"
     handler = _ReloadHandler(target, lambda: None)
     assert handler._matches(str(target)) and handler._matches(os.fsencode(target))
-    assert not handler._matches(str(tmp_path / "other.toml")) and not handler._matches(os.fsencode(tmp_path / "other.toml"))
+    assert not handler._matches(str(tmp_path / "other.toml")) and not handler._matches(
+        os.fsencode(tmp_path / "other.toml")
+    )

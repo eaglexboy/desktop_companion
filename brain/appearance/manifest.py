@@ -50,6 +50,8 @@ class AssetVersionEntry(_Strict):
     blink_shape_keys: list[str] = []
     run_shape_keys: list[str] = []
     gesture_shape_keys: list[str] = []
+    library_clips: dict[str, str] = {}  # role (idle, talk, run...) -> clip, from an animation library the body wears
+    skeletal_clips: bool = False  # animation_clips act on the model's own bones (see the overlay's preferBakedClips)
     animation_clips: list[AnimationClipEntry]
     bounds: dict[str, float]
     warnings: list[str] = []

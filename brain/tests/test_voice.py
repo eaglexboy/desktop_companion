@@ -39,14 +39,20 @@ class _ScriptedSTTBackend(STTBackend):
     def __init__(self, *, text: str = "", fails: bool = False) -> None:
         self.text = text
         self.fails = fails
-        self.calls: list[tuple[int, int, int] | None] = []  # (n_channels, framerate, n_frames), or None if no real WAV
+        self.calls: list[tuple[int, int, int] | None] = (
+            []
+        )  # (n_channels, framerate, n_frames), or None if no real WAV
 
     async def transcribe(self, wav_path: Path, *, language: str | None = None) -> str:
         if wav_path.is_file():
             with wave.open(str(wav_path), "rb") as wf:
-                self.calls.append((wf.getnchannels(), wf.getframerate(), wf.getnframes()))
+                self.calls.append(
+                    (wf.getnchannels(), wf.getframerate(), wf.getnframes())
+                )
         else:
-            self.calls.append(None)  # failover tests pass a placeholder path that's never written
+            self.calls.append(
+                None
+            )  # failover tests pass a placeholder path that's never written
         if self.fails:
             raise RuntimeError("transcription failed")
         return self.text
@@ -131,6 +137,7 @@ async def test_end_stream_transcribes_buffered_pcm_as_wav(tmp_path):
     name, text = await streaming.end_stream("s_1")
 
     assert (name, text) == ("local", "hello world")
+    assert local.calls[0] is not None
     n_channels, framerate, n_frames = local.calls[0]
     assert framerate == 16000
     assert n_channels == 1
@@ -156,9 +163,13 @@ def test_trailing_silence_detection_uses_energy_not_just_elapsed_time():
 
     streaming.start_stream("s_1")
     clock.now = 0.1
-    streaming.feed_chunk("s_1", _pcm16le_tone(8000))  # loud -- resets the voice-activity clock
+    streaming.feed_chunk(
+        "s_1", _pcm16le_tone(8000)
+    )  # loud -- resets the voice-activity clock
     clock.now = 0.5
-    assert streaming.is_trailing_silence_exceeded("s_1") is False  # only 0.4s since last voice
+    assert (
+        streaming.is_trailing_silence_exceeded("s_1") is False
+    )  # only 0.4s since last voice
 
     clock.now = 0.7
     streaming.feed_chunk("s_1", _pcm16le_tone(0))  # silence -- does not reset the clock
@@ -201,10 +212,16 @@ async def test_remote_stt_posts_multipart_and_parses_text_field(tmp_path):
         return httpx.Response(200, json={"text": "transcribed text"})
 
     config = STTRemoteConfig.model_validate(
-        {"base_url": "http://testserver", "endpoint": "/v1/audio/transcriptions", "model": "whisper-1"}
+        {
+            "base_url": "http://testserver",
+            "endpoint": "/v1/audio/transcriptions",
+            "model": "whisper-1",
+        }
     )
     backend = RemoteSTTBackend(config)
-    backend._http = httpx.AsyncClient(base_url="http://testserver", transport=_mock_transport(handler))
+    backend._http = httpx.AsyncClient(
+        base_url="http://testserver", transport=_mock_transport(handler)
+    )
 
     text = await backend.transcribe(wav_path, language="en")
     assert text == "transcribed text"
@@ -223,10 +240,14 @@ async def test_remote_stt_sends_bearer_token_when_api_key_set(tmp_path):
         captured_headers.update(request.headers)
         return httpx.Response(200, json={"text": "ok"})
 
-    config = STTRemoteConfig.model_validate({"base_url": "http://testserver", "api_key": "secret"})
+    config = STTRemoteConfig.model_validate(
+        {"base_url": "http://testserver", "api_key": "secret"}
+    )
     backend = RemoteSTTBackend(config)
     backend._http = httpx.AsyncClient(
-        base_url="http://testserver", headers={"Authorization": "Bearer secret"}, transport=_mock_transport(handler)
+        base_url="http://testserver",
+        headers={"Authorization": "Bearer secret"},
+        transport=_mock_transport(handler),
     )
     await backend.transcribe(wav_path)
     assert captured_headers["authorization"] == "Bearer secret"
@@ -240,8 +261,12 @@ async def test_remote_stt_raises_on_http_error(tmp_path):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500)
 
-    backend = RemoteSTTBackend(STTRemoteConfig.model_validate({"base_url": "http://testserver"}))
-    backend._http = httpx.AsyncClient(base_url="http://testserver", transport=_mock_transport(handler))
+    backend = RemoteSTTBackend(
+        STTRemoteConfig.model_validate({"base_url": "http://testserver"})
+    )
+    backend._http = httpx.AsyncClient(
+        base_url="http://testserver", transport=_mock_transport(handler)
+    )
     with pytest.raises(httpx.HTTPStatusError):
         await backend.transcribe(wav_path)
 
@@ -250,27 +275,45 @@ async def test_remote_stt_raises_on_http_error(tmp_path):
 
 
 def test_pick_delivery_long_or_code_wins_regardless_of_mood():
-    assert pick_delivery({"sarcasm": 90}, {"energy": 90}, is_long_or_code=True) == "explanatory"
+    assert (
+        pick_delivery({"sarcasm": 90}, {"energy": 90}, is_long_or_code=True)
+        == "explanatory"
+    )
 
 
 def test_pick_delivery_high_sarcasm_is_deadpan():
-    assert pick_delivery({"sarcasm": 80}, {"energy": 50}, is_long_or_code=False) == "deadpan"
+    assert (
+        pick_delivery({"sarcasm": 80}, {"energy": 50}, is_long_or_code=False)
+        == "deadpan"
+    )
 
 
 def test_pick_delivery_high_energy_is_animated():
-    assert pick_delivery({"sarcasm": 50}, {"energy": 80}, is_long_or_code=False) == "animated"
+    assert (
+        pick_delivery({"sarcasm": 50}, {"energy": 80}, is_long_or_code=False)
+        == "animated"
+    )
 
 
 def test_pick_delivery_low_energy_is_subdued():
-    assert pick_delivery({"sarcasm": 50}, {"energy": 20}, is_long_or_code=False) == "subdued"
+    assert (
+        pick_delivery({"sarcasm": 50}, {"energy": 20}, is_long_or_code=False)
+        == "subdued"
+    )
 
 
 def test_pick_delivery_sarcasm_takes_priority_over_energy():
-    assert pick_delivery({"sarcasm": 80}, {"energy": 80}, is_long_or_code=False) == "deadpan"
+    assert (
+        pick_delivery({"sarcasm": 80}, {"energy": 80}, is_long_or_code=False)
+        == "deadpan"
+    )
 
 
 def test_pick_delivery_defaults_to_animated_when_nothing_matches():
-    assert pick_delivery({"sarcasm": 50}, {"energy": 50}, is_long_or_code=False) == "animated"
+    assert (
+        pick_delivery({"sarcasm": 50}, {"energy": 50}, is_long_or_code=False)
+        == "animated"
+    )
 
 
 def test_pick_delivery_missing_keys_use_neutral_defaults():
@@ -316,7 +359,9 @@ async def test_real_faster_whisper_transcribes_real_piper_audio(tmp_path):
     from brain.voice.stt_local import FasterWhisperSTTBackend
 
     backend = FasterWhisperSTTBackend(
-        STTLocalConfig.model_validate({"model_size": "tiny.en", "device": "cpu", "compute_type": "int8"})
+        STTLocalConfig.model_validate(
+            {"model_size": "tiny.en", "device": "cpu", "compute_type": "int8"}
+        )
     )
     transcribed = await backend.transcribe(wav_path, language="en")
     # "tiny.en" (chosen here for download speed, not the production

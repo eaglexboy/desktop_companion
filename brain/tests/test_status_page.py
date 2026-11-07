@@ -253,3 +253,38 @@ def test_looks_reports_the_lock_on_an_imported_model_until_it_is_unlocked(settin
     entry["look_spec"]["base_template"] = "primitive_blob"
     (settings.deploy_dir / "manifest.json").write_text(json.dumps({"current_version": 1, "versions": [entry]}))
     assert _client().get("/api/looks").json()["locked"] is False
+
+
+def test_animations_lists_libraries_and_what_each_body_gets(settings):
+    import json
+    import struct
+
+    from blender.animation_library import REQUIRED_BONES
+
+    def glb(doc: dict) -> bytes:
+        body = json.dumps(doc).encode()
+        body += b" " * (-len(body) % 4)
+        return b"glTF" + struct.pack("<II", 2, 20 + len(body)) + struct.pack("<I", len(body)) + b"JSON" + body
+
+    core = sorted(REQUIRED_BONES)
+    library = settings.deploy_dir / "assets" / "animation_library"
+    library.mkdir(parents=True)
+    (library / "pack.glb").write_bytes(glb({
+        "asset": {"version": "2.0"}, "nodes": [{"name": n} for n in core],
+        "skins": [{"joints": list(range(len(core)))}], "animations": [{"name": "Idle_Loop"}],
+    }))
+    custom = settings.deploy_dir / "assets" / "custom_templates"
+    custom.mkdir()
+    (custom / "hero.glb").write_bytes(b"glTF")
+    (custom / "hero.caps.json").write_text(json.dumps({"bone_names": core, "has_head": True, "has_arms": True, "has_legs": True, "has_face": False}))
+
+    data = _client().get("/api/animations").json()
+
+    assert data["libraries"] == [{"name": "pack", "clips": ["Idle_Loop"], "joints": len(core)}]
+    hero = next(b for b in data["bodies"] if b["body"] == "custom:hero")
+    assert hero["libraries"]["pack"]["fits"] is True and hero["libraries"]["pack"]["roles"] == ["idle"]
+
+
+def test_animations_is_empty_without_a_deploy_directory(settings):
+    data = _client().get("/api/animations").json()
+    assert data["libraries"] == []

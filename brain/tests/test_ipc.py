@@ -6,6 +6,7 @@ through it)."""
 from __future__ import annotations
 
 import time
+from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI, WebSocket
@@ -61,9 +62,16 @@ def _build_json(**overrides) -> dict:
         "size_bytes": 20,
         "has_face": True,
         "speech_indicator_mode": "viseme_shapekeys",
-        "capabilities": {"has_head": True, "has_arms": False, "has_legs": False, "has_face": True},
+        "capabilities": {
+            "has_head": True,
+            "has_arms": False,
+            "has_legs": False,
+            "has_face": True,
+        },
         "viseme_shape_keys": [f"viseme_{c}" for c in "ABCDEFGHX"],
-        "animation_clips": [{"name": "idle_lookaround", "loop": True, "duration_s": 4.0}],
+        "animation_clips": [
+            {"name": "idle_lookaround", "loop": True, "duration_s": 4.0}
+        ],
         "bounds": {"height_m": 2.0, "width_m": 1.0, "depth_m": 1.0},
         "warnings": ["a test warning"],
     }
@@ -77,18 +85,25 @@ def _build_json(**overrides) -> dict:
 def test_rejects_disallowed_origin():
     hub = OverlayHub(_settings())
     client = TestClient(_app(hub))
-    with pytest.raises(WebSocketDisconnect) as exc_info, client.websocket_connect(
-        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER, "origin": "https://evil.example.com"}
+    with (
+        pytest.raises(WebSocketDisconnect) as exc_info,
+        client.websocket_connect(
+            "/ws/overlay",
+            headers={"host": DEFAULT_HOST_HEADER, "origin": "https://evil.example.com"},
+        ),
     ):
         pass
     assert exc_info.value.code == 1008
 
 
 def test_accepts_allowed_origin():
-    hub = OverlayHub(_settings(server={"allowed_origins": ["https://trusted.example.com"]}))
+    hub = OverlayHub(
+        _settings(server={"allowed_origins": ["https://trusted.example.com"]})
+    )
     client = TestClient(_app(hub))
     with client.websocket_connect(
-        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER, "origin": "https://trusted.example.com"}
+        "/ws/overlay",
+        headers={"host": DEFAULT_HOST_HEADER, "origin": "https://trusted.example.com"},
     ) as ws:
         ws.send_json(_hello())
         welcome = ws.receive_json()
@@ -98,7 +113,9 @@ def test_accepts_allowed_origin():
 def test_accepts_missing_origin_as_native_client():
     hub = OverlayHub(_settings())
     client = TestClient(_app(hub))
-    with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws:
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws:
         ws.send_json(_hello())
         assert ws.receive_json()["type"] == "welcome"
 
@@ -106,8 +123,11 @@ def test_accepts_missing_origin_as_native_client():
 def test_rejects_bad_host_header():
     hub = OverlayHub(_settings())
     client = TestClient(_app(hub))
-    with pytest.raises(WebSocketDisconnect) as exc_info, client.websocket_connect(
-        "/ws/overlay", headers={"host": "attacker.example.com"}
+    with (
+        pytest.raises(WebSocketDisconnect) as exc_info,
+        client.websocket_connect(
+            "/ws/overlay", headers={"host": "attacker.example.com"}
+        ),
     ):
         pass
     assert exc_info.value.code == 1008
@@ -119,7 +139,9 @@ def test_rejects_bad_host_header():
 def test_welcome_contains_expected_fields():
     hub = OverlayHub(_settings())
     client = TestClient(_app(hub))
-    with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws:
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws:
         ws.send_json(_hello())
         welcome = ws.receive_json()
         assert welcome["type"] == "welcome"
@@ -127,7 +149,11 @@ def test_welcome_contains_expected_fields():
         assert payload["protocol_version"] == PROTOCOL_VERSION
         assert "asset_dir" in payload
         assert payload["manifest"] == {"current_version": 0, "versions": []}
-        assert payload["config"]["presence"] == {"avatar_width_px": 240, "avatar_height_px": 240, "show_speech_bubble": True}
+        assert payload["config"]["presence"] == {
+            "avatar_width_px": 240,
+            "avatar_height_px": 240,
+            "show_speech_bubble": True,
+        }
         assert payload["config"]["shortcuts"]["toggle_interaction"] == "Meta+Alt+D"
         assert payload["config"]["voice"] == {"volume": 1.0}
 
@@ -135,7 +161,9 @@ def test_welcome_contains_expected_fields():
 def test_welcome_carries_the_configured_voice_volume():
     hub = OverlayHub(_settings(voice={"tts": {"volume": 0.4}}))
     client = TestClient(_app(hub))
-    with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws:
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws:
         ws.send_json(_hello())
         assert ws.receive_json()["payload"]["config"]["voice"] == {"volume": 0.4}
 
@@ -145,7 +173,9 @@ def test_update_settings_changes_what_later_clients_are_welcomed_with():
     hub.update_settings(_settings(voice={"tts": {"volume": 0.25}}))
     assert hub.settings.voice.tts.volume == 0.25
     client = TestClient(_app(hub))
-    with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws:
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws:
         ws.send_json(_hello())
         assert ws.receive_json()["payload"]["config"]["voice"] == {"volume": 0.25}
 
@@ -154,7 +184,9 @@ def test_welcome_includes_real_manifest_with_look_spec_and_warnings():
     manifest = append_version(None, _build_json(), {"base_template": "primitive_blob"})
     hub = OverlayHub(_settings(), get_manifest=lambda: manifest)
     client = TestClient(_app(hub))
-    with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws:
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws:
         ws.send_json(_hello())
         welcome = ws.receive_json()
         entry = welcome["payload"]["manifest"]["versions"][0]
@@ -166,15 +198,38 @@ def test_welcome_includes_real_manifest_with_look_spec_and_warnings():
         assert "size_bytes" not in entry
 
 
+def test_the_overlay_is_told_which_clips_a_body_plays():
+    """`skeletal_clips` and `library_clips` decide how the overlay animates a body (its own clips
+    by role, or its transform stand-ins); they were missing from the wire fields."""
+    build = {
+        **_build_json(),
+        "skeletal_clips": True,
+        "library_clips": {"idle": "Idle_Loop", "run": "Sprint_Loop"},
+    }
+    manifest = append_version(None, build, {"base_template": "primitive_blob"})
+    hub = OverlayHub(_settings(), get_manifest=lambda: manifest)
+    client = TestClient(_app(hub))
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws:
+        ws.send_json(_hello())
+        entry = ws.receive_json()["payload"]["manifest"]["versions"][0]
+        assert entry["library_clips"] == {"idle": "Idle_Loop", "run": "Sprint_Loop"}
+        assert entry["skeletal_clips"] is True
+
+
 def test_rejects_wrong_protocol_version():
     # The server closes only after accept() + reading this message, so the
     # rejection is only observable to the client on the *next* recv/send,
     # not at connect() time (unlike the pre-accept Origin/Host checks above).
     hub = OverlayHub(_settings())
     client = TestClient(_app(hub))
-    with pytest.raises(WebSocketDisconnect) as exc_info, client.websocket_connect(
-        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
-    ) as ws:
+    with (
+        pytest.raises(WebSocketDisconnect) as exc_info,
+        client.websocket_connect(
+            "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+        ) as ws,
+    ):
         ws.send_json(_hello(protocol_version=99))
         ws.receive_json()
     assert exc_info.value.code == 1008
@@ -183,10 +238,19 @@ def test_rejects_wrong_protocol_version():
 def test_rejects_non_hello_first_message():
     hub = OverlayHub(_settings())
     client = TestClient(_app(hub))
-    with pytest.raises(WebSocketDisconnect) as exc_info, client.websocket_connect(
-        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
-    ) as ws:
-        ws.send_json({"type": "user_text_input", "timestamp": time.time(), "payload": {"text": "hi", "client_id": "x"}})
+    with (
+        pytest.raises(WebSocketDisconnect) as exc_info,
+        client.websocket_connect(
+            "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+        ) as ws,
+    ):
+        ws.send_json(
+            {
+                "type": "user_text_input",
+                "timestamp": time.time(),
+                "payload": {"text": "hi", "client_id": "x"},
+            }
+        )
         ws.receive_json()
     assert exc_info.value.code == 1008
 
@@ -194,10 +258,15 @@ def test_rejects_non_hello_first_message():
 def test_rejects_malformed_hello_payload():
     hub = OverlayHub(_settings())
     client = TestClient(_app(hub))
-    with pytest.raises(WebSocketDisconnect) as exc_info, client.websocket_connect(
-        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
-    ) as ws:
-        ws.send_json({"type": "hello", "timestamp": time.time(), "payload": {"client_id": "x"}})
+    with (
+        pytest.raises(WebSocketDisconnect) as exc_info,
+        client.websocket_connect(
+            "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+        ) as ws,
+    ):
+        ws.send_json(
+            {"type": "hello", "timestamp": time.time(), "payload": {"client_id": "x"}}
+        )
         ws.receive_json()
     assert exc_info.value.code == 1008
 
@@ -208,11 +277,15 @@ def test_rejects_malformed_hello_payload():
 def test_duplicate_client_id_closes_older_socket_with_4409():
     hub = OverlayHub(_settings())
     client = TestClient(_app(hub))
-    with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws1:
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws1:
         ws1.send_json(_hello("desktop_primary"))
         ws1.receive_json()  # welcome
 
-        with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws2:
+        with client.websocket_connect(
+            "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+        ) as ws2:
             ws2.send_json(_hello("desktop_primary"))
             ws2.receive_json()  # welcome
             assert hub.connected_client_ids == ["desktop_primary"]
@@ -233,11 +306,17 @@ def test_user_text_input_invokes_callback():
 
     hub = OverlayHub(_settings(), on_user_text_input=on_user_text_input)
     client = TestClient(_app(hub))
-    with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws:
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws:
         ws.send_json(_hello("desktop_primary"))
         ws.receive_json()
         ws.send_json(
-            {"type": "user_text_input", "timestamp": time.time(), "payload": {"text": "Hello", "client_id": "desktop_primary"}}
+            {
+                "type": "user_text_input",
+                "timestamp": time.time(),
+                "payload": {"text": "Hello", "client_id": "desktop_primary"},
+            }
         )
         ws.close()
 
@@ -252,11 +331,17 @@ def test_interaction_state_invokes_callback():
 
     hub = OverlayHub(_settings(), on_interaction_state=on_interaction_state)
     client = TestClient(_app(hub))
-    with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws:
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws:
         ws.send_json(_hello("desktop_primary"))
         ws.receive_json()
         ws.send_json(
-            {"type": "interaction_state", "timestamp": time.time(), "payload": {"state": "active", "client_id": "desktop_primary"}}
+            {
+                "type": "interaction_state",
+                "timestamp": time.time(),
+                "payload": {"state": "active", "client_id": "desktop_primary"},
+            }
         )
         ws.close()
 
@@ -271,11 +356,17 @@ def test_asset_swap_result_invokes_callback():
 
     hub = OverlayHub(_settings(), on_asset_swap_result=on_asset_swap_result)
     client = TestClient(_app(hub))
-    with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws:
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws:
         ws.send_json(_hello("desktop_primary"))
         ws.receive_json()
         ws.send_json(
-            {"type": "asset_swap_result", "timestamp": time.time(), "payload": {"ok": False, "version": 3, "error": "boom"}}
+            {
+                "type": "asset_swap_result",
+                "timestamp": time.time(),
+                "payload": {"ok": False, "version": 3, "error": "boom"},
+            }
         )
         ws.close()
 
@@ -290,10 +381,18 @@ def test_speech_finished_invokes_callback():
 
     hub = OverlayHub(_settings(), on_speech_finished=on_speech_finished)
     client = TestClient(_app(hub))
-    with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws:
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws:
         ws.send_json(_hello("desktop_primary"))
         ws.receive_json()
-        ws.send_json({"type": "speech_finished", "timestamp": time.time(), "payload": {"utterance_id": "utt_1"}})
+        ws.send_json(
+            {
+                "type": "speech_finished",
+                "timestamp": time.time(),
+                "payload": {"utterance_id": "utt_1"},
+            }
+        )
         ws.close()
 
     assert received == [("desktop_primary", "utt_1")]
@@ -305,7 +404,9 @@ def test_speech_finished_invokes_callback():
 def test_reserved_event_is_a_recognized_noop():
     hub = OverlayHub(_settings())
     client = TestClient(_app(hub))
-    with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws:
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws:
         ws.send_json(_hello("desktop_primary"))
         ws.receive_json()
         ws.send_json(
@@ -316,18 +417,38 @@ def test_reserved_event_is_a_recognized_noop():
             }
         )
         # connection must still be alive and usable afterward
-        ws.send_json({"type": "speech_finished", "timestamp": time.time(), "payload": {"utterance_id": "utt_1"}})
+        ws.send_json(
+            {
+                "type": "speech_finished",
+                "timestamp": time.time(),
+                "payload": {"utterance_id": "utt_1"},
+            }
+        )
         ws.close()
 
 
 def test_unknown_event_type_does_not_crash_connection():
     hub = OverlayHub(_settings())
     client = TestClient(_app(hub))
-    with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws:
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws:
         ws.send_json(_hello("desktop_primary"))
         ws.receive_json()
-        ws.send_json({"type": "something_the_server_has_never_heard_of", "timestamp": time.time(), "payload": {}})
-        ws.send_json({"type": "speech_finished", "timestamp": time.time(), "payload": {"utterance_id": "utt_1"}})
+        ws.send_json(
+            {
+                "type": "something_the_server_has_never_heard_of",
+                "timestamp": time.time(),
+                "payload": {},
+            }
+        )
+        ws.send_json(
+            {
+                "type": "speech_finished",
+                "timestamp": time.time(),
+                "payload": {"utterance_id": "utt_1"},
+            }
+        )
         ws.close()
 
 
@@ -339,11 +460,25 @@ def test_malformed_payload_does_not_crash_connection():
 
     hub = OverlayHub(_settings(), on_speech_finished=on_speech_finished)
     client = TestClient(_app(hub))
-    with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws:
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws:
         ws.send_json(_hello("desktop_primary"))
         ws.receive_json()
-        ws.send_json({"type": "speech_finished", "timestamp": time.time(), "payload": {"wrong_field": "x"}})
-        ws.send_json({"type": "speech_finished", "timestamp": time.time(), "payload": {"utterance_id": "utt_ok"}})
+        ws.send_json(
+            {
+                "type": "speech_finished",
+                "timestamp": time.time(),
+                "payload": {"wrong_field": "x"},
+            }
+        )
+        ws.send_json(
+            {
+                "type": "speech_finished",
+                "timestamp": time.time(),
+                "payload": {"utterance_id": "utt_ok"},
+            }
+        )
         ws.close()
 
     assert received == ["utt_ok"]
@@ -368,20 +503,51 @@ def test_audio_stream_routes_binary_frames_and_finalizes_on_end():
 
     coordinator = STTCoordinator("local", _FakeSTTBackend("transcribed speech"), None)
     streaming = StreamingSTT(coordinator, silence_threshold_ms=800)
-    hub = OverlayHub(_settings(), streaming_stt=streaming, on_user_text_input=on_user_text_input)
+    hub = OverlayHub(
+        _settings(), streaming_stt=streaming, on_user_text_input=on_user_text_input
+    )
     client = TestClient(_app(hub))
 
-    with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws:
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws:
         ws.send_json(_hello("desktop_primary"))
         ws.receive_json()
         ws.send_json(
-            {"type": "audio_stream_start", "timestamp": time.time(), "payload": {"stream_id": "s_1", "sample_rate": 16000, "encoding": "pcm16le", "channels": 1}}
+            {
+                "type": "audio_stream_start",
+                "timestamp": time.time(),
+                "payload": {
+                    "stream_id": "s_1",
+                    "sample_rate": 16000,
+                    "encoding": "pcm16le",
+                    "channels": 1,
+                },
+            }
         )
-        ws.send_json({"type": "audio_stream_chunk", "timestamp": time.time(), "payload": {"stream_id": "s_1", "seq": 0}})
+        ws.send_json(
+            {
+                "type": "audio_stream_chunk",
+                "timestamp": time.time(),
+                "payload": {"stream_id": "s_1", "seq": 0},
+            }
+        )
         ws.send_bytes(b"\x00\x00" * 160)
-        ws.send_json({"type": "audio_stream_chunk", "timestamp": time.time(), "payload": {"stream_id": "s_1", "seq": 1}})
+        ws.send_json(
+            {
+                "type": "audio_stream_chunk",
+                "timestamp": time.time(),
+                "payload": {"stream_id": "s_1", "seq": 1},
+            }
+        )
         ws.send_bytes(b"\x00\x00" * 160)
-        ws.send_json({"type": "audio_stream_end", "timestamp": time.time(), "payload": {"stream_id": "s_1"}})
+        ws.send_json(
+            {
+                "type": "audio_stream_end",
+                "timestamp": time.time(),
+                "payload": {"stream_id": "s_1"},
+            }
+        )
         ws.close()
 
     assert received == [("desktop_primary", "transcribed speech")]
@@ -393,11 +559,19 @@ def test_binary_frame_with_no_active_stream_is_ignored_not_fatal():
     hub = OverlayHub(_settings(), streaming_stt=streaming)
     client = TestClient(_app(hub))
 
-    with client.websocket_connect("/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}) as ws:
+    with client.websocket_connect(
+        "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+    ) as ws:
         ws.send_json(_hello("desktop_primary"))
         ws.receive_json()
         ws.send_bytes(b"\x00\x00" * 160)  # no audio_stream_start first
-        ws.send_json({"type": "speech_finished", "timestamp": time.time(), "payload": {"utterance_id": "still_alive"}})
+        ws.send_json(
+            {
+                "type": "speech_finished",
+                "timestamp": time.time(),
+                "payload": {"utterance_id": "still_alive"},
+            }
+        )
         ws.close()
 
 
@@ -429,10 +603,22 @@ async def test_broadcast_reaches_all_connected_clients():
 
     hub = OverlayHub(_settings())
     ws1, ws2 = _FakeWebSocket(), _FakeWebSocket()
-    hub._connections["primary"] = _ConnectionState(websocket=ws1, client_id="primary", client_type="overlay", capabilities=[])
-    hub._connections["secondary"] = _ConnectionState(websocket=ws2, client_id="secondary", client_type="overlay", capabilities=[])
+    hub._connections["primary"] = _ConnectionState(
+        websocket=cast(Any, ws1),
+        client_id="primary",
+        client_type="overlay",
+        capabilities=[],
+    )
+    hub._connections["secondary"] = _ConnectionState(
+        websocket=cast(Any, ws2),
+        client_id="secondary",
+        client_type="overlay",
+        capabilities=[],
+    )
 
-    await hub.broadcast("mood_update", {"energy": 60.0, "valence": 50.0, "stress": 20.0})
+    await hub.broadcast(
+        "mood_update", {"energy": 60.0, "valence": 50.0, "stress": 20.0}
+    )
 
     assert ws1.sent[0]["type"] == "mood_update"
     assert ws1.sent[0]["payload"]["energy"] == 60.0
@@ -445,8 +631,18 @@ async def test_broadcast_prunes_dead_connections_without_failing_the_rest():
 
     hub = OverlayHub(_settings())
     alive, dead = _FakeWebSocket(), _FakeWebSocket(fails=True)
-    hub._connections["alive"] = _ConnectionState(websocket=alive, client_id="alive", client_type="overlay", capabilities=[])
-    hub._connections["dead"] = _ConnectionState(websocket=dead, client_id="dead", client_type="overlay", capabilities=[])
+    hub._connections["alive"] = _ConnectionState(
+        websocket=cast(Any, alive),
+        client_id="alive",
+        client_type="overlay",
+        capabilities=[],
+    )
+    hub._connections["dead"] = _ConnectionState(
+        websocket=cast(Any, dead),
+        client_id="dead",
+        client_type="overlay",
+        capabilities=[],
+    )
 
     await hub.broadcast("status_update", {"state": "idle"})
 

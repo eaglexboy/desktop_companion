@@ -75,7 +75,7 @@ Current look:
 Available base templates: {template_ids}
 Available outfits: {outfits}
 Available footwear: {footwear}
-Available accessories per socket: {accessories}
+{wardrobe_notes}Available accessories per socket: {accessories}
 {budget_block}
 Context for this change: {trigger_context}
 
@@ -87,6 +87,34 @@ Respond with ONLY compact JSON representing the delta (a partial LookSpec; \
 omit anything unchanged). Example shape:
 {{"wardrobe": {{"outfit": "wizard_robe"}}, "accessories": {{"socket_eyes": "glasses"}}, "palette": {{"primary": "#1E1E2E"}}}}
 """
+
+def describe_wearables(deploy_dir, template_ids: list[str]) -> tuple[str, Any]:
+    """What the designer is told it can put on a body. Bodies differ (an
+    installed model keeps its own clothes and may lack hands or a neck), so
+    when every template offers the same accessories they are listed once, and
+    otherwise per group of templates. Returns (extra prompt lines, accessories)."""
+    from brain.appearance.models import effective_wardrobe_catalog
+
+    per_template = {t: effective_wardrobe_catalog(deploy_dir, t) for t in template_ids}
+    keep_clothes = [t for t, c in per_template.items() if c["outfits"] == ["none"]]
+    own_outfits = {t: [o for o in c["outfits"] if o != "none"] for t, c in per_template.items() if c["outfits"] != ["none"] and c["footwear"] == ["none"]}
+    notes = ""
+    if keep_clothes and len(keep_clothes) < len(per_template):
+        notes += f"Outfits and footwear apply only to procedural bodies; {', '.join(keep_clothes)} keep their own clothes.\n"
+    if own_outfits:
+        listed = "; ".join(f"{t}: {', '.join(names)}" for t, names in own_outfits.items())
+        notes += f"These bodies keep their own clothes unless given one of their own outfits (the generic outfit and footwear lists do not apply to them): {listed}.\n"
+    groups: dict[str, list[str]] = {}
+    by_key: dict[str, Any] = {}
+    for template, catalog in per_template.items():
+        key = json.dumps(catalog["accessories"], sort_keys=True)
+        groups.setdefault(key, []).append(template)
+        by_key[key] = catalog["accessories"]
+    if len(groups) <= 1:
+        return notes, next(iter(by_key.values()), {})
+    lines = "; ".join(f"on {', '.join(ts)}: {by_key[key]}" for key, ts in groups.items())
+    return notes, lines
+
 
 _RETRY_SUFFIX = "\n\nYour previous answer was invalid: {error}\nRespond again with ONLY corrected compact JSON, same shape as before."
 
@@ -364,12 +392,16 @@ class AvatarEvolution:
         catalogs_dir = self._settings.catalogs_dir
         templates = load_templates_catalog(catalogs_dir)["templates"]
         wardrobe_catalog = load_wardrobe_catalog(catalogs_dir)
+        wardrobe_notes, accessories = describe_wearables(
+            self._settings.deploy_dir, [*sorted(templates), *available_custom_templates(self._settings.deploy_dir)]
+        )
         prompt = _DELTA_SYNTHESIS_PROMPT.format(
             current_look_json=current.model_dump_json(),
             template_ids=", ".join([*sorted(templates), *available_custom_templates(self._settings.deploy_dir)]),
             outfits=", ".join(wardrobe_catalog["outfits"]),
             footwear=", ".join(wardrobe_catalog["footwear"]),
-            accessories=wardrobe_catalog["accessories"],
+            wardrobe_notes=wardrobe_notes,
+            accessories=accessories,
             budget_block=budget_block,
             trigger_context=trigger_context,
         )
@@ -559,6 +591,7 @@ class AvatarEvolution:
         save_manifest(self._settings.deploy_dir, reverted)
         self._refresh_lock()
         self._store.set_agent_state("last_redesign_timestamp", str(self._clock()))
+        await self._progress("done", "user", version=target_version)  # the overlay hot-reloads on "done"
         return f"Done -- back to how I looked before: {look_summary(LookSpec.model_validate(target_entry.look_spec))}."
 
     async def _restore_version(self, manifest: AssetManifest | None, version: int) -> str:
@@ -572,6 +605,7 @@ class AvatarEvolution:
             save_manifest(self._settings.deploy_dir, revert_to_version(manifest, version))
             self._refresh_lock()
             self._store.set_agent_state("last_redesign_timestamp", str(self._clock()))
+            await self._progress("done", "user", version=version)  # the overlay hot-reloads on "done"
             return f"Done -- back to version {version}: {look_summary(spec)}."
         cancel_running_build()
         self._schedule_background(self._rebuild_version(version, spec))

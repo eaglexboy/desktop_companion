@@ -25,6 +25,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from brain.appearance.models import animation_matrix
 from brain.config import Settings, get_settings
 
 logger = logging.getLogger("deskmate.status")
@@ -355,6 +356,16 @@ def _look_summary(spec: dict) -> str:
 @app.get("/api/looks")
 async def looks() -> dict:
     return await asyncio.to_thread(_looks, _settings())
+
+
+@app.get("/api/animations")
+async def animations() -> dict:
+    """Which animations each installed body gets from each installed library. Read-only:
+    computed from the files under the deploy directory."""
+    try:
+        return await asyncio.to_thread(animation_matrix, _settings().deploy_dir)
+    except (OSError, ValueError, KeyError):
+        return {"libraries": [], "bodies": []}
 
 
 @app.get("/api/looks/{version}.png")

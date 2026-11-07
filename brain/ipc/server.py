@@ -134,6 +134,8 @@ _WIRE_VERSION_FIELDS = (
     "blink_shape_keys",
     "run_shape_keys",
     "gesture_shape_keys",
+    "skeletal_clips",
+    "library_clips",
     "animation_clips",
     "bounds",
 )

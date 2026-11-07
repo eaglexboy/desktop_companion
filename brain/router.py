@@ -117,6 +117,16 @@ _REVERT_APPEARANCE_KEYWORDS = (
     "roll back to version",
 )
 
+# A rollback that names a look by number ("go back to version 44", "restore look #7") is
+# unambiguous, so it never goes to the model, even when the model picks tools (skills on):
+# it sometimes answers in conversation instead of calling the tool, and the look stays put.
+# A vaguer request ("go back to how you looked") is left to the model.
+_ROLLBACK_TO_VERSION = re.compile(
+    r"\b(?:go back|revert|roll ?back|restore|switch back|change back)\b(?:\s+(?:to|your|the|my|that|this|old))*"
+    r"\s+(?:version|look|appearance|v)\s*(?:number\s*)?#?\s*\d+\s*(?:[.!?,]|$|\s+(?:please|pls|thanks|now)\b)",
+    re.IGNORECASE,
+)
+
 
 class Router:
     """Classify-then-route between a local and a cloud LLMPool, plus an
@@ -152,6 +162,8 @@ class Router:
         return dict(self._tools)
 
     def _match_tool_keyword(self, user_text: str) -> str | None:
+        if _ROLLBACK_TO_VERSION.search(user_text):
+            return "revert_appearance"
         if not self._keyword_tools:
             return None
         lowered = user_text.lower()

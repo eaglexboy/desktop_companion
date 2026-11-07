@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "avatar_controller.h"
 
 #include <QQmlListReference>
@@ -65,6 +66,14 @@ bool AvatarController::isGestureModel(int targetCount) const
         && targetCount != m_runKeyNames.size();
 }
 
+bool AvatarController::isRunGestureModel(int targetCount) const
+{
+    return !m_runKeyNames.isEmpty() && !m_gestureKeyNames.isEmpty()
+        && targetCount == m_runKeyNames.size() + m_gestureKeyNames.size()
+        && targetCount != m_shapeKeyNames.size() && targetCount != m_blinkKeyNames.size()
+        && targetCount != m_runKeyNames.size() && targetCount != m_gestureKeyNames.size();
+}
+
 bool AvatarController::hasGestureTargets() const
 {
     if (!m_root || m_gestureKeyNames.isEmpty())
@@ -74,7 +83,7 @@ bool AvatarController::hasGestureTargets() const
     while (!stack.isEmpty()) {
         QObject *node = stack.takeLast();
         QQmlListReference ref(node, "morphTargets");
-        if (ref.isValid() && isGestureModel(int(ref.count())))
+        if (ref.isValid() && (isGestureModel(int(ref.count())) || isRunGestureModel(int(ref.count()))))
             return true;
         stack.append(node->children());
     }
@@ -90,9 +99,12 @@ void AvatarController::setGestureWeights(const QVariantList &weights)
     while (!stack.isEmpty()) {
         QObject *node = stack.takeLast();
         QQmlListReference ref(node, "morphTargets");
-        if (ref.isValid() && isGestureModel(int(ref.count()))) {
-            for (qsizetype i = 0; i < ref.count() && i < weights.size(); ++i) {
-                if (QObject *target = ref.at(i))
+        const bool gestureOnly = ref.isValid() && isGestureModel(int(ref.count()));
+        const bool runAndGesture = ref.isValid() && isRunGestureModel(int(ref.count()));
+        if (gestureOnly || runAndGesture) {
+            const qsizetype first = runAndGesture ? m_runKeyNames.size() : 0; // the run targets come first
+            for (qsizetype i = 0; i < m_gestureKeyNames.size() && i < weights.size(); ++i) {
+                if (QObject *target = ref.at(first + i))
                     target->setProperty("weight", float(weights.at(i).toDouble()));
             }
         }
@@ -109,7 +121,7 @@ bool AvatarController::hasRunTargets() const
     while (!stack.isEmpty()) {
         QObject *node = stack.takeLast();
         QQmlListReference ref(node, "morphTargets");
-        if (ref.isValid() && isRunModel(int(ref.count())))
+        if (ref.isValid() && (isRunModel(int(ref.count())) || isRunGestureModel(int(ref.count()))))
             return true;
         stack.append(node->children());
     }
@@ -125,7 +137,7 @@ void AvatarController::setRunWeights(double a, double b)
     while (!stack.isEmpty()) {
         QObject *node = stack.takeLast();
         QQmlListReference ref(node, "morphTargets");
-        if (ref.isValid() && isRunModel(int(ref.count()))) {
+        if (ref.isValid() && (isRunModel(int(ref.count())) || isRunGestureModel(int(ref.count())))) {
             if (QObject *t = ref.at(0))
                 t->setProperty("weight", float(a));
             if (QObject *t = ref.at(1))
@@ -211,6 +223,8 @@ void AvatarController::resetStep(int generation, int attempt, int passesAfterFou
     const int found = zeroAllMorphWeights();
     // New clip objects may appear late too, each starting out looping.
     stopAllClips();
+    // A body's sit chair is only there while it sits (and the zeroing above brought it back).
+    setSitPropShown(false);
     const bool done = (found > 0 && passesAfterFound >= 5) || attempt >= 50;
     if (done)
         return;
@@ -260,8 +274,13 @@ void AvatarController::rewindClip(QObject *anim)
     anim->setProperty("running", false);
     // The animation is a child of the Timeline it drives (its `timeline`
     // property is not readable as a QObject* from here).
-    if (QObject *timeline = timelineOf(anim))
+    if (QObject *timeline = timelineOf(anim)) {
         timeline->setProperty("currentFrame", anim->property("from"));
+        // A timeline keeps applying its keyframes at the frame it was left on, and
+        // they all write the same bones: a clip that is not playing must not
+        // be evaluated, or the last one in the file wins over the one that is.
+        timeline->setProperty("enabled", false);
+    }
 }
 
 int AvatarController::stopAllClips()
@@ -273,13 +292,44 @@ int AvatarController::stopAllClips()
     return int(anims.size());
 }
 
+int AvatarController::setSitPropShown(double amount)
+{
+    constexpr int kSitPropTargets = 3;
+    if (!m_root || kSitPropTargets == m_shapeKeyNames.size() || kSitPropTargets == m_blinkKeyNames.size()
+        || kSitPropTargets == m_runKeyNames.size() || kSitPropTargets == m_gestureKeyNames.size())
+        return 0;
+    int found = 0;
+    QList<QObject *> stack;
+    stack.append(m_root);
+    while (!stack.isEmpty()) {
+        QObject *node = stack.takeLast();
+        QQmlListReference ref(node, "morphTargets");
+        if (ref.isValid() && ref.count() == kSitPropTargets) {
+            if (QObject *collapse = ref.at(0))
+                collapse->setProperty("weight", float(1.0 - std::clamp(amount, 0.0, 1.0)));
+            ++found;
+        }
+        stack.append(node->children());
+    }
+    return found;
+}
+
+bool AvatarController::clipRunning(const QString &name) const
+{
+    for (QObject *anim : clipAnimations(name)) {
+        if (anim->property("running").toBool())
+            return true;
+    }
+    return false;
+}
+
 int AvatarController::clipDurationMs(const QString &name) const
 {
     const QList<QObject *> anims = clipAnimations(name);
     return anims.isEmpty() ? 0 : anims.first()->property("duration").toInt();
 }
 
-bool AvatarController::playClip(const QString &name, int loops)
+bool AvatarController::playClip(const QString &name, int loops, bool hold)
 {
     const QList<QObject *> anims = clipAnimations(name);
     if (anims.isEmpty())
@@ -287,10 +337,12 @@ bool AvatarController::playClip(const QString &name, int loops)
     stopAllClips();
     const int generation = m_clipGeneration;
     for (QObject *anim : anims) {
+        if (QObject *timeline = timelineOf(anim))
+            timeline->setProperty("enabled", true);
         anim->setProperty("loops", loops);
         anim->setProperty("running", true);
     }
-    if (loops > 0) {
+    if (loops > 0 && !hold) {
         const int totalMs = clipDurationMs(name) * loops + 50;
         QTimer::singleShot(totalMs, this, [this, generation, name]() {
             // Only if nothing else has been played/stopped since.

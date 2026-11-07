@@ -48,6 +48,15 @@ int main(int argc, char *argv[])
     // only exists once the daemon's `welcome` handshake hands us its real
     // asset_dir.
     engine.rootContext()->setContextProperty(QStringLiteral("dataDir"), QString());
+    // Testing only: DESKMATE_SIT_TEST_SECONDS makes the companion sit after that many idle seconds, for as long.
+    engine.rootContext()->setContextProperty(QStringLiteral("testSitSeconds"),
+                                             qEnvironmentVariableIntValue("DESKMATE_SIT_TEST_SECONDS"));
+    // Likewise DESKMATE_SLEEP_TEST_SECONDS (lie down and sleep after that many idle seconds) and
+    // DESKMATE_WORKOUT_TEST_SECONDS (work out after that many).
+    engine.rootContext()->setContextProperty(QStringLiteral("testSleepSeconds"),
+                                             qEnvironmentVariableIntValue("DESKMATE_SLEEP_TEST_SECONDS"));
+    engine.rootContext()->setContextProperty(QStringLiteral("testWorkoutSeconds"),
+                                             qEnvironmentVariableIntValue("DESKMATE_WORKOUT_TEST_SECONDS"));
 
     QObject::connect(&ipc, &IpcClient::welcomeReceived, &engine,
                       [&engine](const QVariantMap &, const QVariantMap &, const QString &assetDir) {

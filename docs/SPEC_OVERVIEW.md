@@ -16,6 +16,8 @@ The project is built as a reusable, modular system where all machine-specific pa
 
 * **Autonomous Voice Selection & Cloning (V2+ Roadmap):** In V1, the user configures the voice model, while the daemon supports per-call voice overrides. Autonomous acoustic evolution (allowing the companion to evolve its voice alongside its appearance) and voice cloning safeguards are detailed in [ADR_AUTONOMOUS_VOICE_SELECTION.md](ADR_AUTONOMOUS_VOICE_SELECTION.md).
 
+* **Remote Model Processing (Proposed, not implemented):** Running the Blender jobs (look builds, thumbnails, model conversion, library retargeting) on a separate worker machine, for setups that split the companion, the model work and the LLM across hosts, is proposed in [ADR_REMOTE_MODEL_PROCESSING.md](ADR_REMOTE_MODEL_PROCESSING.md).
+
 * **Skills & Sub-Agent Orchestration (V2+ Roadmap):** Deterministic script DAG execution and cognitive multi-turn sub-agents governed by the Inference Capacity Governor (ICG) are detailed in [ADR_SKILLS_AND_AGENT_ORCHESTRATION.md](ADR_SKILLS_AND_AGENT_ORCHESTRATION.md).
 
 * **Configuration Interface:** V1 relies on direct editing of `$XDG_CONFIG_HOME/deskmate/config.toml` with live zero-downtime hot-reloading. Dedicated graphical settings interfaces are deferred to V2+.
@@ -125,6 +127,7 @@ deskmate/
 │   ├── DESIGN_AVATAR_EVOLUTION_FLOW.md
 │   ├── ADR_NETWORK_AND_MOBILE_STRATEGY.md
 │   ├── ADR_AUTONOMOUS_VOICE_SELECTION.md
+│   ├── ADR_REMOTE_MODEL_PROCESSING.md
 │   └── ADR_SKILLS_AND_AGENT_ORCHESTRATION.md
 │
 ├── examples/

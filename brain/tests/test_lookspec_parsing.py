@@ -68,9 +68,12 @@ def test_rejects_unknown_surface_material():
         LookSpec.model_validate(_minimal_spec(surface_material="shiny"))
 
 
-def test_rejects_unknown_outfit_enum_value():
-    with pytest.raises(ValidationError):
-        LookSpec.model_validate(_minimal_spec(wardrobe={"outfit": "tuxedo", "footwear": "none"}))
+def test_rejects_unknown_outfit_value(tmp_path):
+    # The schema takes any outfit id (an installed outfit model adds its own); which ones
+    # exist for a body is the catalog check's job.
+    spec = LookSpec.model_validate(_minimal_spec(wardrobe={"outfit": "tuxedo", "footwear": "none"}))
+    with pytest.raises(CatalogError, match="tuxedo"):
+        validate_against_catalogs(spec, tmp_path)
 
 
 def test_rejects_unknown_accessory_socket_key():

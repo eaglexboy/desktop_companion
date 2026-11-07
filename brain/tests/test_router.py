@@ -489,3 +489,58 @@ async def test_local_question_never_touches_capability_routing() -> None:
 
     assert result.escalated is False
     assert result.capability is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "go back to version 44",
+        "Please revert to look #7",
+        "roll back to v12",
+        "could you switch back to look number 5?",
+        "restore version 3",
+    ],
+)
+async def test_a_numbered_rollback_goes_to_the_tool_even_when_the_model_picks_tools(text: str) -> None:
+    router = Router(_pool("the model must not answer this"), LLMPool([]), keyword_tools=False)  # skills on
+    seen: list[str] = []
+
+    async def handler(request: str) -> str:
+        seen.append(request)
+        return "reverted"
+
+    router.register_tool("revert_appearance", "desc", {"type": "object"}, handler)
+
+    result = await router.handle(text, system_prompt="sys")
+
+    assert result.source == "tool:revert_appearance" and result.text == "reverted"
+    assert seen == [text]  # the handler gets the whole request, so it can read the number
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "go back to sleep",
+        "can you go back to how you looked yesterday?",  # vague: the model decides
+        "I restored my old laptop on version day",
+        "what is version 3 of the plan?",
+        "revert to version 2 of the python script",  # numbered, but not about the look
+        "roll back the deploy to v3",
+        "go back to look 5 minutes ago",
+        "wear a wizard hat",  # a look request, not a rollback: still the model's call with skills on
+    ],
+)
+async def test_other_requests_still_go_to_the_model_when_it_picks_tools(text: str) -> None:
+    router = Router(_pool("model reply"), LLMPool([]), keyword_tools=False)
+
+    async def handler(request: str) -> str:
+        raise AssertionError("the tool must not be called")
+
+    router.register_tool("revert_appearance", "desc", {"type": "object"}, handler)
+    router.register_tool("change_appearance", "desc", {"type": "object"}, handler)
+
+    result = await router.handle(text, system_prompt="sys")
+
+    assert result.text == "model reply"
