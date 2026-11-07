@@ -27,15 +27,22 @@ from brain.presence.desktop_bridge import (
 from brain.presence.placement import Rect, ScreenInfo, WindowState
 
 HAS_SESSION_BUS = bool(os.environ.get("DBUS_SESSION_BUS_ADDRESS"))
-HAS_LOGIN1_SESSION = bool(os.environ.get("XDG_SESSION_ID")) and shutil.which("busctl") is not None
+HAS_LOGIN1_SESSION = (
+    bool(os.environ.get("XDG_SESSION_ID")) and shutil.which("busctl") is not None
+)
 
 
 # --- PresenceStateMachine: full transition table (pure, no D-Bus) -----------
 
 
-def _signals(*, screensaver=False, locked=False, idle_hint=False, seconds=0.0) -> PresenceSignals:
+def _signals(
+    *, screensaver=False, locked=False, idle_hint=False, seconds=0.0
+) -> PresenceSignals:
     return PresenceSignals(
-        screensaver_active=screensaver, locked_hint=locked, idle_hint=idle_hint, seconds_since_activity=seconds
+        screensaver_active=screensaver,
+        locked_hint=locked,
+        idle_hint=idle_hint,
+        seconds_since_activity=seconds,
     )
 
 
@@ -83,7 +90,10 @@ async def test_on_transition_fires_only_on_actual_state_change():
     assert transitions == [(PresenceState.ACTIVE, PresenceState.AWAY)]
 
     await machine.update(_signals())  # Away -> Active
-    assert transitions == [(PresenceState.ACTIVE, PresenceState.AWAY), (PresenceState.AWAY, PresenceState.ACTIVE)]
+    assert transitions == [
+        (PresenceState.ACTIVE, PresenceState.AWAY),
+        (PresenceState.AWAY, PresenceState.ACTIVE),
+    ]
 
 
 @pytest.mark.asyncio
@@ -115,7 +125,9 @@ def test_parse_payload_with_window():
                 "fullscreen": False,
                 "desktop": 2,
             },
-            "screens": [{"name": "DP-1", "x": 0, "y": 0, "width": 1920, "height": 1080}],
+            "screens": [
+                {"name": "DP-1", "x": 0, "y": 0, "width": 1920, "height": 1080}
+            ],
         }
     )
     window, screens = _parse_payload(raw)
@@ -146,7 +158,9 @@ async def test_service_receives_real_dbus_call_and_updates_presence():
     async def on_update(window, screens):
         received.append((window, screens))
 
-    bridge = DesktopPresenceBridge(service_name, object_path, idle_after_s=600, on_update=on_update)
+    bridge = DesktopPresenceBridge(
+        service_name, object_path, idle_after_s=600, on_update=on_update
+    )
     run_task = asyncio.create_task(bridge._run_kwin_server())
     await asyncio.sleep(0.3)  # let it claim the bus name and start listening
 
@@ -163,12 +177,16 @@ async def test_service_receives_real_dbus_call_and_updates_presence():
                     "fullscreen": False,
                     "desktop": 1,
                 },
-                "screens": [{"name": "DP-1", "x": 0, "y": 0, "width": 1920, "height": 1080}],
+                "screens": [
+                    {"name": "DP-1", "x": 0, "y": 0, "width": 1920, "height": 1080}
+                ],
             }
         )
         call = new_method_call(addr, "UpdateState", "s", (payload,))
         async with open_dbus_router(bus="SESSION") as client_router:
-            reply = await asyncio.wait_for(client_router.send_and_get_reply(call), timeout=5)
+            reply = await asyncio.wait_for(
+                client_router.send_and_get_reply(call), timeout=5
+            )
             assert reply.body == ()  # empty method-return
 
         await asyncio.sleep(0.2)
@@ -199,7 +217,11 @@ async def test_fake_screensaver_signal_source_updates_presence():
     from jeepney.wrappers import new_signal
 
     fake_name = "org.deskmate.FakeScreenSaverTest"
-    fake_addr = DBusAddress("/org/freedesktop/ScreenSaver", bus_name=fake_name, interface="org.freedesktop.ScreenSaver")
+    fake_addr = DBusAddress(
+        "/org/freedesktop/ScreenSaver",
+        bus_name=fake_name,
+        interface="org.freedesktop.ScreenSaver",
+    )
 
     import brain.presence.desktop_bridge as module
 
@@ -216,18 +238,26 @@ async def test_fake_screensaver_signal_source_updates_presence():
             (result,) = await bus.RequestName(fake_name)
             assert result in (1, 2)
 
-            rule = MatchRule(type="method_call", interface=fake_addr.interface, path=fake_addr.object_path)
+            rule = MatchRule(
+                type="method_call",
+                interface=fake_addr.interface,
+                path=fake_addr.object_path,
+            )
             with fake_router.filter(rule) as queue:
                 bridge = DesktopPresenceBridge(
                     "org.deskmate.PresenceTest2",
                     "/org/deskmate/PresenceTest2",
                     idle_after_s=600,
-                    on_update=lambda *_: None,
+                    on_update=lambda *_: None,  # pyright: ignore[reportArgumentType]
                 )
                 watcher_task = asyncio.create_task(bridge._run_screensaver_watcher())
 
-                msg = await asyncio.wait_for(queue.get(), timeout=2)  # the bridge's GetActive() call
-                await fake_router.send(new_method_return(msg, signature="b", body=(False,)))
+                msg = await asyncio.wait_for(
+                    queue.get(), timeout=2
+                )  # the bridge's GetActive() call
+                await fake_router.send(
+                    new_method_return(msg, signature="b", body=(False,))
+                )
 
             await asyncio.sleep(0.2)
             assert bridge.state == PresenceState.ACTIVE
@@ -265,35 +295,64 @@ async def test_real_login1_idle_hint_signal_updates_presence():
     "state == ACTIVE before toggling" flaky for reasons that have nothing
     to do with whether this code works. The flag itself is what this test
     exists to prove gets updated from a real signal."""
+
     def _busctl(*args: str, check: bool = True) -> subprocess.CompletedProcess:
-        return subprocess.run(["busctl", *args], capture_output=True, text=True, check=check)
+        return subprocess.run(
+            ["busctl", *args], capture_output=True, text=True, check=check
+        )
 
     session_id = os.environ["XDG_SESSION_ID"]
     path_result = await asyncio.to_thread(
-        _busctl, "call", "org.freedesktop.login1", "/org/freedesktop/login1",
-        "org.freedesktop.login1.Manager", "GetSession", "s", session_id,
+        _busctl,
+        "call",
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+        "GetSession",
+        "s",
+        session_id,
     )
     session_path = path_result.stdout.split('"')[1]
 
     bridge = DesktopPresenceBridge(
-        "org.deskmate.Login1Test", "/org/deskmate/Login1Test", idle_after_s=600, on_update=lambda *_: None
+        "org.deskmate.Login1Test",
+        "/org/deskmate/Login1Test",
+        idle_after_s=600,
+        on_update=lambda *_: None,  # pyright: ignore[reportArgumentType]
     )
     watcher_task = asyncio.create_task(bridge._run_login1_watcher())
     try:
         await asyncio.sleep(0.5)
-        assert bridge._idle_hint is False  # real session's actual starting value, read at startup
+        assert (
+            bridge._idle_hint is False
+        )  # real session's actual starting value, read at startup
 
         await asyncio.to_thread(
-            _busctl, "call", "org.freedesktop.login1", session_path,
-            "org.freedesktop.login1.Session", "SetIdleHint", "b", "true",
+            _busctl,
+            "call",
+            "org.freedesktop.login1",
+            session_path,
+            "org.freedesktop.login1.Session",
+            "SetIdleHint",
+            "b",
+            "true",
         )
         await asyncio.sleep(0.5)
         assert bridge._idle_hint is True
-        assert bridge.state == PresenceState.AWAY  # idle_hint alone is enough to force Away
+        assert (
+            bridge.state == PresenceState.AWAY
+        )  # idle_hint alone is enough to force Away
     finally:
         await asyncio.to_thread(
-            _busctl, "call", "org.freedesktop.login1", session_path,
-            "org.freedesktop.login1.Session", "SetIdleHint", "b", "false", check=False,
+            _busctl,
+            "call",
+            "org.freedesktop.login1",
+            session_path,
+            "org.freedesktop.login1.Session",
+            "SetIdleHint",
+            "b",
+            "false",
+            check=False,
         )
         watcher_task.cancel()
         with pytest.raises(asyncio.CancelledError):

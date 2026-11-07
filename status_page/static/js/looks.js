@@ -25,7 +25,7 @@ async function load() {
       const picture = look.has_picture
         ? `<img loading="lazy" src="/api/looks/${look.version}.png" alt="Version ${look.version}">`
         : "picture pending…";
-      const when = look.created_at ? new Date(look.created_at * 1000).toLocaleString() : "";
+      const when = look.created_at ? new Date(look.created_at * 1_000).toLocaleString() : "";
       return `<div class="look${look.version === data.current ? " current" : ""}">
         <div class="pic">${picture}</div>
         <div class="meta">

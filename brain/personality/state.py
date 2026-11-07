@@ -139,22 +139,38 @@ class PersonalityStore:
         self._conn.commit()
         self._last_snapshot: dict[str, tuple[float, dict[str, float]]] = {}
         with self._conn:
-            self._conn.execute("DELETE FROM personality_history WHERE ts < ?", (time.time() - HISTORY_RETENTION_S,))
+            self._conn.execute(
+                "DELETE FROM personality_history WHERE ts < ?",
+                (time.time() - HISTORY_RETENTION_S,),
+            )
         self._record("mood", self.get_mood(), {}, "startup")
         self._record("traits", self.get_traits(), {}, "startup")
 
-    def _record(self, kind: str, values: dict[str, float], deltas: dict[str, float], cause: str) -> None:
+    def _record(
+        self, kind: str, values: dict[str, float], deltas: dict[str, float], cause: str
+    ) -> None:
         """Announce a change on the event bus and, if it is worth a point on
         the timeline, persist it. Never raises: observation must not be able
         to break a mood update."""
         try:
             now = time.time()
             last = self._last_snapshot.get(kind)
-            drifted = last is None or any(abs(v - last[1].get(n, v)) >= _HISTORY_MIN_DRIFT for n, v in values.items())
-            if cause != "decay" or drifted or now - last[0] >= _HISTORY_MAX_GAP_S:
+            drifted = last is None or any(
+                abs(v - last[1].get(n, v)) >= _HISTORY_MIN_DRIFT
+                for n, v in values.items()
+            )
+            if (
+                cause != "decay"
+                or last is None
+                or drifted
+                or now - last[0] >= _HISTORY_MAX_GAP_S
+            ):
                 # Routine decay is announced only when it is also worth a point
                 # on the timeline; per-minute drift of a few hundredths isn't.
-                emit(f"personality.{kind}", {"values": values, "deltas": deltas, "cause": cause})
+                emit(
+                    f"personality.{kind}",
+                    {"values": values, "deltas": deltas, "cause": cause},
+                )
                 with self._conn:
                     self._conn.executemany(
                         "INSERT INTO personality_history(ts, kind, name, value) VALUES (?, ?, ?, ?)",
@@ -164,12 +180,18 @@ class PersonalityStore:
         except Exception:
             logger.debug("could not record personality history", exc_info=True)
 
-    def _seed(self, trait_names: tuple[str, ...], mood_names: tuple[str, ...], identity_name: str) -> None:
+    def _seed(
+        self,
+        trait_names: tuple[str, ...],
+        mood_names: tuple[str, ...],
+        identity_name: str,
+    ) -> None:
         now = time.time()
         with self._conn:
             for name in trait_names:
                 self._conn.execute(
-                    "INSERT OR IGNORE INTO traits(name, value) VALUES (?, ?)", (name, NEUTRAL_TRAIT)
+                    "INSERT OR IGNORE INTO traits(name, value) VALUES (?, ?)",
+                    (name, NEUTRAL_TRAIT),
                 )
             for name in mood_names:
                 self._conn.execute(
@@ -181,12 +203,15 @@ class PersonalityStore:
             # (set_identity_name()) persists across restarts instead of
             # being stomped back to whatever config.toml currently says.
             self._conn.execute(
-                "INSERT OR IGNORE INTO identity(key, value) VALUES (?, ?)", (_NAME_KEY, identity_name)
+                "INSERT OR IGNORE INTO identity(key, value) VALUES (?, ?)",
+                (_NAME_KEY, identity_name),
             )
 
     # --- identity ---
     def get_identity_name(self) -> str:
-        row = self._conn.execute("SELECT value FROM identity WHERE key = ?", (_NAME_KEY,)).fetchone()
+        row = self._conn.execute(
+            "SELECT value FROM identity WHERE key = ?", (_NAME_KEY,)
+        ).fetchone()
         return row["value"] if row else DEFAULT_NAME
 
     def set_identity_name(self, name: str) -> None:
@@ -202,7 +227,9 @@ class PersonalityStore:
         rows = self._conn.execute("SELECT name, value FROM traits").fetchall()
         return {row["name"]: row["value"] for row in rows}
 
-    def adjust_traits(self, deltas: dict[str, float], cause: str = "") -> dict[str, float]:
+    def adjust_traits(
+        self, deltas: dict[str, float], cause: str = ""
+    ) -> dict[str, float]:
         """Apply small deltas, clamped to [0, 100]. Returns the new values."""
         with self._conn:
             for name, delta in deltas.items():
@@ -238,14 +265,17 @@ class PersonalityStore:
         weighting, tone). Baseline is baked into the row rather than passed
         as a runtime argument, so it can't drift out of sync between calls."""
         now = time.time()
-        rows = self._conn.execute("SELECT name, value, baseline, updated_at FROM mood").fetchall()
+        rows = self._conn.execute(
+            "SELECT name, value, baseline, updated_at FROM mood"
+        ).fetchall()
         with self._conn:
             for row in rows:
                 elapsed = max(0.0, now - row["updated_at"])
                 factor = 0.5 ** (elapsed / half_life_s) if half_life_s > 0 else 0.0
                 new_value = row["baseline"] + (row["value"] - row["baseline"]) * factor
                 self._conn.execute(
-                    "UPDATE mood SET value = ?, updated_at = ? WHERE name = ?", (new_value, now, row["name"])
+                    "UPDATE mood SET value = ?, updated_at = ? WHERE name = ?",
+                    (new_value, now, row["name"]),
                 )
         values = self.get_mood()
         self._record("mood", values, {}, "decay")
@@ -255,7 +285,9 @@ class PersonalityStore:
     # overlap, computed in brain/personality/prompts.py, not stored here) ---
     def add_memory_note(self, note: str) -> None:
         with self._conn:
-            self._conn.execute("INSERT INTO memories(ts, note) VALUES (?, ?)", (time.time(), note))
+            self._conn.execute(
+                "INSERT INTO memories(ts, note) VALUES (?, ?)", (time.time(), note)
+            )
 
     def recent_memory_notes(self, limit: int = 20) -> list[MemoryNote]:
         rows = self._conn.execute(
@@ -295,9 +327,12 @@ class PersonalityStore:
                     "INSERT INTO reply_raw(interaction_id, raw) VALUES (?, ?)",
                     (interaction_id, raw_text[:RAW_REPLY_MAX_CHARS]),
                 )
+        assert interaction_id is not None  # an INSERT always sets it
         return interaction_id
 
-    def recent_conversation(self, limit: int = 12, max_age_s: float = 3600.0) -> list[dict[str, str]]:
+    def recent_conversation(
+        self, limit: int = 12, max_age_s: float = 3600.0
+    ) -> list[dict[str, str]]:
         """The latest chat turns, oldest first, as LLM messages. Call before
         logging the current user turn. Turns older than `max_age_s` are
         dropped (a new conversation, not a continuation), and the window
@@ -313,18 +348,24 @@ class PersonalityStore:
 
     def pending_interactions(self, limit: int = 200) -> list[sqlite3.Row]:
         return self._conn.execute(
-            "SELECT * FROM interactions WHERE reflected = 0 ORDER BY ts ASC LIMIT ?", (limit,)
+            "SELECT * FROM interactions WHERE reflected = 0 ORDER BY ts ASC LIMIT ?",
+            (limit,),
         ).fetchall()
 
     def mark_reflected(self, ids: list[int]) -> None:
         if not ids:
             return
         with self._conn:
-            self._conn.executemany("UPDATE interactions SET reflected = 1 WHERE id = ?", [(i,) for i in ids])
+            self._conn.executemany(
+                "UPDATE interactions SET reflected = 1 WHERE id = ?",
+                [(i,) for i in ids],
+            )
 
     # --- agent_state (generic KV, V2+ accommodation -- see AGENT_STATE_KEYS) ---
     def get_agent_state(self, key: str) -> str | None:
-        row = self._conn.execute("SELECT value FROM agent_state WHERE key = ?", (key,)).fetchone()
+        row = self._conn.execute(
+            "SELECT value FROM agent_state WHERE key = ?", (key,)
+        ).fetchone()
         return row["value"] if row else None
 
     def set_agent_state(self, key: str, value: str | None) -> None:

@@ -103,7 +103,7 @@ A model under `custom_templates/` (Tier 1) is imported, then:
    * On failure: exits with code `1`, emitting `DESKMATE_BUILD_FAIL <reason>` on the final stdout line.
    * On budget breach: exits with code `1`, emitting:
      ```
-     DESKMATE_BUILD_FAIL budget_exceeded: triangles={n} (max 30000) or size_bytes={s} (max 10485760)
+     DESKMATE_BUILD_FAIL budget_exceeded: triangles={n} (max 30000) or size_bytes={s} (max 15728640)
      ```
    * Non-fatal warnings and diagnostic logs are written into `<out>.build.json` under `warnings`.
 
@@ -354,6 +354,9 @@ To guarantee zero geometry clipping and avoid runtime morph overhead:
 * **Modular Socket Attachments:**
   * Sockets: `socket_head_top`, `socket_eyes`, `socket_neck`, `socket_chest`, `socket_waist`, `socket_hand_R`, `socket_hand_L`, `socket_orbit`.
   * Discovers pre-modeled assets under `<deploy_dir>/assets/wardrobe/<socket>/<item>.glb`. If absent, builds parametric primitives (beveled rings for glasses, extruded cones for pointy hats).
+  * Which sockets a body can carry is read from its rig (`blender/sockets.py`, `--inspect`), an accessory model's `<item>.json` sidecar sets its scale/offset/rotation and what it needs, and on an installed body accessories are bound rigidly to the socket's bone. See [ADR_ACCESSORY_MODELS.md](ADR_ACCESSORY_MODELS.md); Outfit models made for a body's skeleton (`assets/outfit_models/<body>/`) are re-bound to it, replacing the body below the neck; `--convert` shrinks and decimates a downloaded model to the budgets, and `--face-landmarks` writes the face sidecar (lip-sync/blink) for a body with real eyes and lips (`"patch": false`, `"oval": true` in the sidecar keep the lips and draw a round mouth). **Supported models: Quaternius first.** The pipeline is built and tested for Quaternius content: the Universal Base Characters (bodies), the Modular Character Outfits, the Universal Animation Library and the Animated Mech Pack. Its conventions are the reference: the bone names (`pelvis`, `spine_01`..`spine_03`, `neck_01`, `Head`, `clavicle_l`, `upperarm_l`, `lowerarm_l`, `hand_l`, `thigh_l`, `calf_l`, `foot_l`, `ball_l`, the `_r` side, fingers), the T-pose rest pose, the proportions the clip hips are scaled against, and the clip names in `blender/animation_library.py`. Models and animations from anywhere else (Mixamo, Poly Pizza, a hand-made rig) are only as supported as they follow that convention: each source needs its own identifier (recognise it by its rig) and its own converter that renames or retargets its bones, rest pose and clips to the Quaternius ones before an outfit, an accessory or a clip can use it. Converters: Mixamo is built (`blender/mixamo_convert.py`, ADR_ACCESSORY_MODELS 16: `add-body` and `add-animations` take .fbx; it can also reverse, ease and join clips, for the floor work: lying down, sleeping, waking, workouts); Sketchfab downloads are imported (ADR_ACCESSORY_MODELS 17: `add-body` cleans one up with `blender/sketchfab_convert.py` and records its licence in `<model>.credits.json`), and a body of a known rig family (Character Creator, Auto-Rig Pro) is converted to the Quaternius skeleton with the libraries retargeted onto it (ADR 18: `blender/rig_convert.py`, `blender/rigs.py`; the retargeted libraries are in `assets/animation_library_body/<body>/`, `<body>.rig.json` marks the body), and no other source is. What works for any rig is limited to what is read from the rig itself: the socket bones (`blender/sockets.py`), the face sidecar, the baked limb poses and the skeletal head idles; an outfit or an animation library only fits a body with the Quaternius bones.
+
+An animation library in `assets/animation_library/` (`add-animations`) gives a body that has the core of its bones (hips, legs, arms; the tracks of any other bone it lacks are dropped) the clips for the roles in `LIBRARY_ROLES`, as actions named for the clip; the build reports them as `library_clips`, and such a body is not relaxed and gets no baked head idles or morph-target limb poses, and, with the Sitting_* clips, a chair named `SitProp` (ADR_ACCESSORY_MODELS 14). A mesh that heat-map weighting leaves unweighted is bound whole to its nearest bone, and `<model>.pose.json` (`roll_bones`, `face_yaw`) corrects one model's rest pose and facing. `python -m brain.appearance.models list|add-body|add-outfit|add-accessory` manages them, and `export <file.zip>` / `import <file.zip>` carry all of them to another install (ADR_ACCESSORY_MODELS 19: a hashed bundle of models only, no companion).
 
 ---
 
@@ -445,10 +448,10 @@ bpy.ops.export_scene.gltf(
     export_draco_mesh_compression_enable=False
 )
 
-# 4. Programmatic File Size Assertion (filesize <= 10,485,760 bytes)
+# 4. Programmatic File Size Assertion (filesize <= 15,728,640 bytes)
 file_size_bytes = os.path.getsize(out_path)
-if file_size_bytes > 10485760:
-    error_msg = f"budget_exceeded: size_bytes={file_size_bytes} (max 10485760)"
+if file_size_bytes > 15728640:
+    error_msg = f"budget_exceeded: size_bytes={file_size_bytes} (max 15728640)"
     write_build_failure(out_build_json, error_msg)
     print(f"DESKMATE_BUILD_FAIL {error_msg}")
     sys.exit(1)
@@ -470,5 +473,5 @@ if file_size_bytes > 10485760:
 * **`test_faceless_pulse`:** Asserts `talk_pulse` baked and `viseme_shape_keys` empty when `has_face: false`.
 * **`test_state_loops`:** Asserts `move` and `think` exist across all compiled avatars.
 * **`test_environment_isolation`:** Asserts clean build execution when host venv has mismatched packages and asserts `--factory-startup` is passed.
-* **`test_budget_enforcement`:** Injects high-subdivision mesh (>30k triangles) or oversized texture payload (>10MB); asserts generator aborts with exit code `1`, writes failure details to `<out>.build.json`, and outputs `DESKMATE_BUILD_FAIL budget_exceeded`.
+* **`test_budget_enforcement`:** Injects high-subdivision mesh (>30k triangles) or oversized texture payload (>15MB); asserts generator aborts with exit code `1`, writes failure details to `<out>.build.json`, and outputs `DESKMATE_BUILD_FAIL budget_exceeded`.
 * **`test_seed_determinism`:** Compiles procedural primitive twice with identical seed integer; asserts generated `.glb` SHA256 hashes match bit-for-bit.

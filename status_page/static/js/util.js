@@ -8,10 +8,10 @@ export const esc = (s) =>
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c],
   );
 
-export const fmtTime = (ts) => new Date(ts * 1000).toLocaleTimeString();
+export const fmtTime = (ts) => new Date(ts * 1_000).toLocaleTimeString();
 
 export const fmtClock = (ts, rangeHours) => {
-  const d = new Date(ts * 1000);
+  const d = new Date(ts * 1_000);
   const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   return rangeHours > 24
     ? d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + time
@@ -21,14 +21,14 @@ export const fmtClock = (ts, rangeHours) => {
 export const ago = (s) =>
   s < 90
     ? `${Math.round(s)}s`
-    : s < 5400
+    : s < 5_400
       ? `${Math.round(s / 60)}m`
-      : s < 172800
-        ? `${(s / 3600).toFixed(1)}h`
-        : `${Math.round(s / 86400)}d`;
+      : s < 172_800
+        ? `${(s / 3_600).toFixed(1)}h`
+        : `${Math.round(s / 86_400)}d`;
 
 export const sec = (ms) =>
-  ms == null ? "" : ms >= 1000 ? (ms / 1000).toFixed(1) + " s" : ms + " ms";
+  ms == null ? "" : ms >= 1_000 ? (ms / 1_000).toFixed(1) + " s" : ms + " ms";
 
 export const chips = (list) =>
   list

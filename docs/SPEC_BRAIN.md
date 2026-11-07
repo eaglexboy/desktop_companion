@@ -7,6 +7,7 @@ The Brain Daemon is the central orchestration and control plane for the Deskmate
 * Managing system configuration with zero-downtime hot reloading.
 * Multi-tier, capability-aware language model routing (Local vs. Cloud providers).
 * Persistent personality evolution, mood decay, and memory reflection.
+* The mood is sent to the overlay every 30 s as `mood_update` with a one-word label (`brain/personality/mood_label.py`: `fidget` when stressed, `sad`, `bored`, `content`, `curious`, else `neutral`) that picks which idles the overlay plays.
 * Voice pipeline orchestration: pluggable local/remote speech-to-text (STT), pluggable local/remote text-to-speech (TTS), and audio-to-viseme lip-sync generation.
 * Headless procedural 3D asset generation orchestration via Blender, governing runtime redesigns per [DESIGN_AVATAR_EVOLUTION_FLOW.md](DESIGN_AVATAR_EVOLUTION_FLOW.md).
 * Window awareness, user presence tracking (`User_Active`, `User_Idle`, `User_Away`), and non-intrusive placement calculation via an abstracted desktop D-Bus bridge.
@@ -447,8 +448,8 @@ Returns screen-local `Placement(x, y, screen_name, hidden)`:
 {"type": "set_position", "timestamp": 1718000000.0, "payload": {"x": 100, "y": 200, "screen_name": "DP-1", "duration_ms": 900, "hidden": false}}
 {"type": "status_update", "timestamp": 1718000000.0, "payload": {"state": "idle" | "thinking" | "rebuilding" | "listening" | "speaking"}}
 {"type": "appearance_progress", "timestamp": 1718000000.0, "payload": {"stage": "designing" | "building" | "done" | "staged" | "failed", "label": "Building the 3D model...", "source": "user" | "api" | "autonomous", "version": 4, "error": "..."}}
-{"type": "mood_update", "timestamp": 1718000000.0, "payload": {"energy": 60.0, "valence": 50.0, "stress": 20.0}}
-{"type": "play_gesture", "timestamp": 1718000000.0, "payload": {"clip": "greet", "loop": false}}
+{"type": "mood_update", "timestamp": 1718000000.0, "payload": {"mood": "content", "energy": 60.0, "valence": 50.0, "stress": 20.0}}
+{"type": "play_gesture", "timestamp": 1718000000.0, "payload": {"clip": "greet", "loop": false, "intensity": 0.5}}
 {"type": "config_update", "timestamp": 1718000000.0, "payload": {"presence": {}, "shortcuts": {}}}
 
 // Reserved V2+ Sub-Agent Task & Permission Events (Daemon -> Client):

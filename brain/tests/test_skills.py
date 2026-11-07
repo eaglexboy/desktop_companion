@@ -75,7 +75,7 @@ def _registry(**kw) -> SkillRegistry:
 
 def test_prompt_block_lists_enabled_skills_only():
     block = _registry(disabled={"change_look"}).prompt_block()
-    assert "gesture(name: greet|agree|disagree|celebrate|shrug)" in block
+    assert "gesture(name: greet|agree|disagree|celebrate|shrug|angry|hip_thrust)" in block
     assert "change_look" not in block
     assert SkillRegistry().prompt_block() == ""
 
@@ -104,7 +104,7 @@ async def test_run_all_executes_valid_calls_and_refuses_the_rest():
     ]
     results = await reg.run_all(calls, state)
     assert [r["ok"] for r in results] == [True, False]
-    assert state.hub.sent == [("play_gesture", {"name": "greet", "clip": "greet", "loop": False})]
+    assert state.hub.sent == [("play_gesture", {"name": "greet", "clip": "greet", "loop": False, "intensity": 0.5})]  # a store with no mood: resting
     assert state.store.notes == []
 
 
@@ -144,5 +144,26 @@ async def test_describe_reports_every_skill_with_usage_counters():
     assert set(by_name) == {"gesture", "remember", "change_look", "revert_look", "unlock_look"}
     assert by_name["change_look"]["enabled"] is False and by_name["gesture"]["enabled"] is True
     assert (by_name["gesture"]["calls"], by_name["gesture"]["refused"]) == (1, 1)
-    assert by_name["gesture"]["params"][0]["enum"] == ["greet", "agree", "disagree", "celebrate", "shrug"]
+    assert by_name["gesture"]["params"][0]["enum"] == ["greet", "agree", "disagree", "celebrate", "shrug", "angry", "hip_thrust"]
     assert by_name["gesture"]["last_used"] is not None and by_name["remember"]["last_used"] is None
+
+
+def test_a_gesture_is_more_animated_when_the_companion_is_happy_and_less_when_it_is_low():
+    from brain.skills.builtin import gesture_intensity
+
+    class Store:
+        def __init__(self, **mood):
+            self.mood = {"energy": 50.0, "valence": 50.0, "stress": 50.0, **mood}
+
+        def get_mood(self):
+            return self.mood
+
+    class State:
+        def __init__(self, **mood):
+            self.store = Store(**mood)
+
+    assert gesture_intensity(State()) == pytest.approx(0.5)
+    assert gesture_intensity(State(valence=85.0, energy=75.0)) > 0.65   # very happy to see you
+    assert gesture_intensity(State(valence=20.0, energy=30.0, stress=70.0)) < 0.35
+    assert gesture_intensity(State(valence=100.0, energy=100.0, stress=0.0)) <= 1.0
+    assert gesture_intensity(object()) == 0.5   # no store: a gesture never fails for want of a mood

@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="/static/css/chat.css">
   <link rel="stylesheet" href="/static/css/logs.css">
   <link rel="stylesheet" href="/static/css/looks.css">
+  <link rel="stylesheet" href="/static/css/animations.css">
 </head>
 
 <body>
@@ -25,6 +26,7 @@
       <button role="tab" data-tab="skills">Skills</button>
       <button role="tab" data-tab="timeline">Mood timeline</button>
       <button role="tab" data-tab="looks">Looks</button>
+      <button role="tab" data-tab="animations">Animations</button>
       <button role="tab" data-tab="chat">Chat &amp; memory</button>
       <button role="tab" data-tab="logs">Logs</button>
     </nav>
@@ -60,9 +62,11 @@
       <section>
         <h2>Backup</h2>
         <dl class="kv" id="backup"></dl>
+        <p class="backup-next" id="backupNext"></p>
       </section>
       <section>
         <h2>Placement</h2>
+        <img class="placement-pic" id="placementPic" alt="" hidden>
         <dl class="kv" id="placement"></dl>
       </section>
     </div>
@@ -149,6 +153,17 @@
         <div class="looks" id="looksGrid">
           <div class="empty">Loading…</div>
         </div>
+      </section>
+    </div>
+
+    <div class="tab" id="tab-animations">
+      <section class="wide">
+        <h2>Animations <span class="sp"></span><span class="muted" id="animationsSummary"></span></h2>
+        <p class="reasoning-note">Which animations each body gets from each installed library. A body needs the core of the
+          Quaternius skeleton to play a library; a body missing some bones (fingers, toes...) plays it without those. Read-only:
+          libraries are installed with <code>python -m brain.appearance.models add-animations</code>.</p>
+        <div id="animationsLibraries"></div>
+        <div id="animationsBodies"></div>
       </section>
     </div>
 

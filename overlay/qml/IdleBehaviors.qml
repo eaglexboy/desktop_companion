@@ -51,7 +51,7 @@ Item {
     SequentialAnimation {
         id: hopLoop
         loops: Animation.Infinite
-        running: root.avatar !== null && root.moving
+        running: root.avatar !== null && root.moving && !root.libraryMode
         NumberAnimation { target: root.avatar; property: "position.y"; to: root.pivotHeight + 0.14; duration: 150; easing.type: Easing.OutQuad }
         NumberAnimation { target: root.avatar; property: "position.y"; to: root.pivotHeight; duration: 150; easing.type: Easing.InQuad }
         onRunningChanged: if (!running) root.restoreRestHeight()
@@ -132,48 +132,99 @@ Item {
 
     // Arm gestures while she speaks, for a model rigged with its own arms: the
     // generator bakes four arm poses as morph targets (gesture_l_out/_l_in for the
-    // first arm, gesture_r_out/_r_in for the other) and each arm swings between its
-    // two, like the run's pair of legs. Phrases of one arm, the other or both, with
-    // a pause between; not while she runs.
+    // first arm, gesture_r_out/_r_in for the other). Their weights are driven as
+    // beats rather than a wave, because a constant-period swing between two poses
+    // reads as a metronome: an arm lifts quickly and settles (a little overshoot),
+    // holds with small flicks of random size and timing, then lowers slowly, and a
+    // pause follows. The second arm of a two-armed phrase starts a moment later and
+    // flicks on its own. Phrases of one arm, the other or both; not while she runs.
     property bool speaking: false
     property bool canGesture: false
     property bool gesturing: false
-    property real gestEnvL: 0     // 0 = arm at rest, 1 = full swing
-    property real gestEnvR: 0
-    property real gestPhaseL: 0
-    property real gestPhaseR: 0
-    Behavior on gestEnvL { NumberAnimation { duration: 260; easing.type: Easing.InOutQuad } }
-    Behavior on gestEnvR { NumberAnimation { duration: 260; easing.type: Easing.InOutQuad } }
+    property real gOutL: 0        // the four morph weights as driven now (0 = arm at rest)
+    property real gInL: 0
+    property real gOutR: 0
+    property real gInR: 0
+    property real phraseOut: 0.8  // where this phrase's arms are held, before the flicks
+    property bool phraseL: false
+    property bool phraseR: false
+
     function applyGesturePose() {
         if (!root.controller || !root.canGesture)
             return
-        const kL = 0.5 + 0.5 * Math.sin(2 * Math.PI * root.gestPhaseL)
-        const kR = 0.5 + 0.5 * Math.sin(2 * Math.PI * root.gestPhaseR)
-        root.controller.setGestureWeights([root.gestEnvL * kL, root.gestEnvL * (1 - kL),
-                                           root.gestEnvR * kR, root.gestEnvR * (1 - kR)])
+        root.controller.setGestureWeights([root.gOutL, root.gInL, root.gOutR, root.gInR])
     }
-    onGestEnvLChanged: applyGesturePose()
-    onGestEnvRChanged: applyGesturePose()
-    onGestPhaseLChanged: applyGesturePose()
-    onGestPhaseRChanged: applyGesturePose()
-    NumberAnimation {
-        id: gestCycleL
-        target: root; property: "gestPhaseL"; from: 0; to: 1; duration: 900
-        loops: Animation.Infinite
-        running: root.canGesture && root.gestEnvL > 0
+    onGOutLChanged: applyGesturePose()
+    onGInLChanged: applyGesturePose()
+    onGOutRChanged: applyGesturePose()
+    onGInRChanged: applyGesturePose()
+
+    ParallelAnimation {
+        id: armLAnim
+        NumberAnimation { id: armLOut; target: root; property: "gOutL" }
+        NumberAnimation { id: armLIn; target: root; property: "gInL" }
     }
-    NumberAnimation {
-        id: gestCycleR
-        target: root; property: "gestPhaseR"; from: 0; to: 1; duration: 1300
-        loops: Animation.Infinite
-        running: root.canGesture && root.gestEnvR > 0
+    ParallelAnimation {
+        id: armRAnim
+        NumberAnimation { id: armROut; target: root; property: "gOutR" }
+        NumberAnimation { id: armRIn; target: root; property: "gInR" }
+    }
+    // Moves one arm ("L" or "R") to the weights (out, inn) over `ms`, from wherever it is now.
+    function moveArm(side, out, inn, ms, easing) {
+        const group = side === "L" ? armLAnim : armRAnim
+        const outAnim = side === "L" ? armLOut : armROut
+        const inAnim = side === "L" ? armLIn : armRIn
+        outAnim.to = out
+        outAnim.duration = ms
+        outAnim.easing.type = easing
+        inAnim.to = inn
+        inAnim.duration = ms * (0.85 + 0.3 * Math.random())   // the two poses blend, not in lockstep
+        inAnim.easing.type = easing
+        group.restart()
+    }
+    function lowerArms(slow) {
+        const ms = (slow ? 650 : 420) + 250 * Math.random()
+        moveArm("L", 0, 0, ms, Easing.InOutSine)
+        moveArm("R", 0, 0, ms * (0.9 + 0.2 * Math.random()), Easing.InOutSine)
+    }
+    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)) }
+
+    // One beat of a held gesture: a small move to a nearby pose.
+    function flickArm(side) {
+        const out = clamp(root.phraseOut + (Math.random() - 0.5) * 0.5, 0.25, 1.0)
+        const inn = Math.random() < 0.45 ? 0 : Math.random() * 0.45
+        moveArm(side, out, inn, 200 + Math.random() * 260, Easing.OutCubic)
+    }
+    Timer {
+        id: beatTimer
+        onTriggered: {
+            if (!root.gesturing)
+                return
+            // The lead arm flicks most beats; the other, less often.
+            if (root.phraseL && (!root.phraseR || Math.random() < 0.8))
+                root.flickArm("L")
+            if (root.phraseR && (!root.phraseL || Math.random() < 0.6))
+                root.flickArm("R")
+            beatTimer.interval = 280 + Math.random() * 620
+            beatTimer.restart()
+        }
+    }
+    Timer {
+        id: lagTimer   // the second arm of a phrase follows the first
+        property string side: "R"
+        onTriggered: if (root.gesturing)
+            root.moveArm(side, root.phraseOut * (0.7 + 0.2 * Math.random()), 0.1 * Math.random(),
+                         260 + Math.random() * 220, Easing.OutBack)
     }
     Timer { id: gestureTimer; onTriggered: root.nextGesturePhase() }
     function endGesture() {
         gestureTimer.stop()
+        beatTimer.stop()
+        lagTimer.stop()
         root.gesturing = false
-        root.gestEnvL = 0
-        root.gestEnvR = 0
+        root.phraseL = false
+        root.phraseR = false
+        lowerArms(false)
     }
     function nextGesturePhase() {
         if (!root.speaking) {
@@ -184,26 +235,38 @@ Item {
             endGesture()
             return
         }
-        if (root.gesturing) {   // a phrase is ending: arms settle, then a pause
+        if (root.gesturing) {   // a phrase is ending: the arms settle slowly, then a pause
             root.gesturing = false
-            root.gestEnvL = 0
-            root.gestEnvR = 0
-            gestureTimer.interval = 350 + Math.random() * 750
+            beatTimer.stop()
+            lagTimer.stop()
+            lowerArms(true)
+            gestureTimer.interval = 450 + Math.random() * 1300
         } else {
-            const pick = Math.floor(Math.random() * 3)   // 0: first arm, 1: other arm, 2: both
-            gestCycleL.duration = 700 + Math.random() * 500
-            gestCycleR.duration = 1000 + Math.random() * 600
+            const pick = Math.random()               // one arm, the other, or both
+            const both = pick > 0.72
+            const leftLeads = both ? Math.random() < 0.5 : pick < 0.36
+            root.phraseL = both || leftLeads
+            root.phraseR = both || !leftLeads
+            root.phraseOut = 0.6 + 0.4 * Math.random()
             root.gesturing = true
-            root.gestEnvL = pick !== 1 ? 0.75 + 0.25 * Math.random() : 0
-            root.gestEnvR = pick !== 0 ? 0.7 + 0.3 * Math.random() : 0
-            gestureTimer.interval = 1100 + Math.random() * 1400
+            const lead = leftLeads ? "L" : "R"
+            // The lift is quick and settles with a little overshoot.
+            moveArm(lead, root.phraseOut, 0.15 * Math.random(), 240 + Math.random() * 180, Easing.OutBack)
+            if (both) {
+                lagTimer.side = leftLeads ? "R" : "L"
+                lagTimer.interval = 110 + Math.random() * 150
+                lagTimer.restart()
+            }
+            beatTimer.interval = 450 + Math.random() * 450
+            beatTimer.restart()
+            gestureTimer.interval = 1300 + Math.random() * 1900
         }
         gestureTimer.restart()
     }
-    // Idle arms: while she is just standing there the same two poses are driven
-    // gently, a slow drift most of the time and now and then a bigger wave or
-    // shift, scaled by mood. Anything that takes over the body (speech, running,
-    // thinking, the turn) puts the arms back at rest.
+    // Idle arms: while she is just standing there the arms drift gently to a small
+    // new pose now and then, and sometimes make a bigger move (a shift, a half-wave),
+    // scaled by mood. Anything that takes over the body (speech, running, thinking,
+    // the turn) puts the arms back at rest.
     readonly property real armMood: ({ "fidget": 1.4, "curious": 1.15, "neutral": 1.0, "content": 0.85, "bored": 0.6 })[root.mood] || 1.0
     property bool armIdle: false
     readonly property bool idleArmsOk: root.avatar !== null && !root.speaking && !root.moving
@@ -233,24 +296,33 @@ Item {
             return
         }
         root.armIdle = true
-        if (Math.random() < 0.22 * root.armMood) {   // a bigger move: a wave or a shift
-            const pick = Math.floor(Math.random() * 3)
-            gestCycleL.duration = 800 + Math.random() * 600
-            gestCycleR.duration = 1000 + Math.random() * 600
-            root.gestEnvL = pick !== 1 ? 0.5 + 0.3 * Math.random() : 0
-            root.gestEnvR = pick !== 0 ? 0.45 + 0.3 * Math.random() : 0
-            gestureTimer.interval = 1800 + Math.random() * 1400
-        } else {                                      // the slow drift
-            gestCycleL.duration = 4200 + Math.random() * 2600
-            gestCycleR.duration = 5200 + Math.random() * 3000
-            root.gestEnvL = Math.min(0.5, (0.15 + 0.15 * Math.random()) * root.armMood)
-            root.gestEnvR = Math.min(0.5, (0.12 + 0.15 * Math.random()) * root.armMood)
-            gestureTimer.interval = 5000 + Math.random() * 6000
+        const big = Math.random() < 0.22 * root.armMood   // a shift or a half-wave
+        const which = Math.floor(Math.random() * 3)       // first arm, other arm, both
+        for (const side of ["L", "R"]) {
+            if (which === (side === "L" ? 1 : 0))
+                continue
+            const mood = root.armMood
+            if (big) {
+                moveArm(side, 0.4 + 0.3 * Math.random(), 0.1 * Math.random(), 600 + Math.random() * 500, Easing.InOutSine)
+            } else {   // a slow drift to somewhere near rest
+                moveArm(side, Math.min(0.3, (0.04 + 0.16 * Math.random()) * mood), Math.min(0.25, 0.12 * Math.random() * mood),
+                        1800 + Math.random() * 2200, Easing.InOutSine)
+            }
         }
+        gestureTimer.interval = big ? 1900 + Math.random() * 1200 : 3500 + Math.random() * 5000
         gestureTimer.restart()
+        if (big)   // and settle back before the next drift
+            idleSettle.restart()
+    }
+    Timer {
+        id: idleSettle
+        interval: 1700
+        onTriggered: if (root.armIdle && !root.gesturing)
+            root.lowerArms(true)
     }
 
     onSpeakingChanged: {
+        root.libraryStateChanged()
         root.armIdle = false
         if (speaking) {
             root.canGesture = root.controller !== null && root.controller.hasGestureTargets()
@@ -265,6 +337,7 @@ Item {
     }
 
     onMovingChanged: {
+        root.libraryStateChanged()
         if (moving) {
             cancelMicroIdle()
             endGesture()
@@ -295,7 +368,7 @@ Item {
     SequentialAnimation {
         id: idleLoop
         loops: Animation.Infinite
-        running: root.avatar !== null && !root.thinking && !root.swayPaused && !root.turned
+        running: root.avatar !== null && !root.thinking && !root.swayPaused && !root.turned && !root.libraryMode
         NumberAnimation {
             target: root.avatar
             property: "eulerRotation.y"
@@ -315,6 +388,461 @@ Item {
     }
 
 
+    // --- Animation library ------------------------------------------------
+    // A body that wears an animation library (the manifest's `library_clips`, role ->
+    // clip) is animated by those clips rather than by the transform stand-ins below:
+    // the idle loop whenever nothing else is going on, the talking loop while it
+    // speaks, a run while it crosses the screen, and now and then a different idle or a
+    // nod. One clip plays at a time, so each change of state is a change of clip.
+    property var libraryClips: ({})
+    readonly property bool libraryMode: root.avatar !== null && root.controller !== null
+        && root.libraryClips !== undefined && root.libraryClips.idle !== undefined
+    property string libraryPlaying: ""
+    property string libraryOneShot: ""   // a clip that plays once, then the loop resumes
+
+    // A role may have several clips to choose from: its own and `<role>.alt1`, `.alt2`... The one
+    // played is picked at random, and kept for as long as the thing it is for lasts (one reply, one
+    // sleep). `.mirror` is the same clip with the other hand, played half the time.
+    function optionKeys(role) {
+        const c = root.libraryClips
+        const keys = c[role] !== undefined ? [role] : []
+        for (let n = 1; c[role + ".alt" + n] !== undefined; ++n)
+            keys.push(role + ".alt" + n)
+        return keys
+    }
+    function pickOption(role) {
+        const keys = root.optionKeys(role)
+        return keys.length ? keys[Math.floor(Math.random() * keys.length)] : ""
+    }
+    function mirrored(key) {
+        return root.libraryClips[key + ".mirror"] !== undefined && Math.random() < 0.5 ? key + ".mirror" : key
+    }
+    property string talkKey: ""
+    property string sleepKey: ""
+    // sitting is on a chair or on the floor: the roles of the kind chosen
+    property string sitKind: ""      // "", "chair", "floor"
+    function sitRole(base) { return root.sitKind === "floor" ? "floor_" + base : base }
+    // On a chair, with a clip for talking from it, it does not stand up to talk or to think about
+    // what to say: it talks sitting down, and stands up when it has finished (a move still has it
+    // stand first). `talkedSeated` remembers that it talked, so that it gets up afterwards.
+    readonly property bool seatedTalk: root.sitKind === "chair" && root.libraryClips.sit_talk !== undefined
+    property bool talkedSeated: false
+    function staysSeated() { return root.sitState === "sitting" && root.seatedTalk && !root.moving && !root.standRequested }
+
+    function libraryWanted() {
+        const c = root.libraryClips
+        if (root.sleepState === "asleep")
+            return c[root.sleepKey] || c.sleep
+        if (root.sitState === "sitting") {
+            if (root.speaking && root.seatedTalk)   // it talks to you from the chair
+                return c.sit_talk
+            return c[root.sitRole("sit_idle")]
+        }
+        if (root.moving)
+            return c.run || c.walk || c.idle
+        if (root.speaking) {
+            if (!root.talkKey || c[root.talkKey] === undefined)
+                root.talkKey = root.pickOption("talk")
+            return c[root.talkKey] || c.idle
+        }
+        root.talkKey = ""
+        if (root.mood === "sad" && c.idle_sad)   // low: it droops
+            return c.idle_sad
+        return c.idle
+    }
+    // Makes sure the clip for the current state is the one playing (restarting it if a
+    // reload or reset stopped it).
+    function syncLibrary() {
+        if (!root.libraryMode || root.libraryOneShot !== "")
+            return
+        // A rebuilt scene (the window moved to another output) starts with the chair showing.
+        if (root.propAmount === 0)
+            root.applyProp()
+        const want = root.libraryWanted()
+        if (want && (want !== root.libraryPlaying || !root.controller.clipRunning(want)))
+            root.libraryPlaying = root.controller.playClip(want, -1) ? want : ""
+
+    }
+    function endLibraryOneShot() {
+        const was = root.sitState
+        const slept = root.sleepState
+        root.libraryOneShot = ""
+        libraryOneShotTimer.stop()
+        if (root.workoutActive) {   // up on its feet again
+            root.workoutActive = false
+            root.nextWorkout = root.workoutAt()
+        }
+        if (slept === "lying") {
+            root.sleepState = "asleep"
+            root.nextSleepVariation = Date.now() + root.sleepShiftDelay(true)
+            root.wakesAt = Date.now() + (root.testSleepMs > 0 ? 3 * root.testSleepMs : (45 + Math.random() * 75) * 60000)
+            if (root.isBusy() || root.wakeRequested) {   // something started while it was lying down: straight back up
+                root.wake()
+                return
+            }
+        } else if (slept === "waking") {
+            root.sleepState = ""
+            root.wakeRequested = false
+            root.lastUserActivity = Date.now()
+            root.nextSleepAt = root.sleepAfterMs()
+        } else if (slept === "asleep" && (root.wakeRequested || root.isBusy())) {
+            root.wake()   // asked to get up while a variation played
+            return
+        }
+        if (was === "entering") {
+            root.sitState = "sitting"
+            root.sitUntil = Date.now() + (root.testSitMs > 0 ? root.testSitMs : (60 + Math.random() * 180) * 1000)   // sits for 1-4 minutes
+            root.nextSitVariation = Date.now() + (30 + Math.random() * 60) * 1000
+            if (root.standRequested || (root.isBusy() && !root.staysSeated())) {   // something started while it was sitting down: straight back up
+                root.standUp()
+                return
+            }
+        } else if (was === "exiting") {
+            root.sitState = ""
+            root.sitKind = ""
+            root.talkedSeated = false
+            root.standRequested = false
+            root.noteActivity()
+        } else if (was === "sitting" && (root.standRequested || (root.isBusy() && !root.staysSeated()))) {
+            root.standUp()   // asked to stand while a seated variation played
+            return
+        }
+        syncLibrary()
+    }
+    function playLibraryClip(clip) {
+        if (!clip || !root.controller.playClip(clip, 1, true))
+            return false
+        root.libraryOneShot = clip
+        root.libraryPlaying = ""
+        const ms = root.controller.clipDurationMs(clip)
+        root.sitClipEndsAt = Date.now() + ms + 80
+        libraryOneShotTimer.interval = ms + 80
+        libraryOneShotTimer.restart()
+        return true
+    }
+    function playLibraryOneShot(role) {
+        const key = root.pickOption(role)
+        return key !== "" && playLibraryClip(root.libraryClips[root.mirrored(key)])
+    }
+
+    // Gestures the brain asks for (`play_gesture`) that have a clip of their own, by role. The
+    // clip played is the variant that goes with how the companion feels: `intensity` is 0..1
+    // from its mood (0.5 at rest); a role converted with variants has `.low` and `.high` clips.
+    readonly property var libraryGestures: ({ greet: "greet", celebrate: "celebrate", angry: "angry", hip_thrust: "hip_thrust" })
+    function libraryGestureClip(name, intensity) {
+        const role = root.libraryGestures[name]
+        if (!role)
+            return ""
+        const c = root.libraryClips
+        let key = root.pickOption(role)   // one of the ways to do it
+        if (key === "")
+            return ""
+        if (intensity >= 0.65 && c[key + ".high"])
+            key += ".high"
+        else if (intensity <= 0.35 && c[key + ".low"])
+            key += ".low"
+        return c[root.mirrored(key)] || c[key] || ""
+    }
+    Timer { id: libraryOneShotTimer; onTriggered: root.endLibraryOneShot() }
+
+    // --- Sitting down ---------------------------------------------------------
+    // After a long idle it may sit on the ground: the enter clip, then the sit idle loop for a
+    // while (nothing else plays), then the exit clip, which also plays before anything that
+    // has it interact with the user (speaking, moving, thinking) so it never talks from the
+    // floor. Needs all three clips (the manifest's sit_enter / sit_idle / sit_exit).
+    readonly property bool chairSet: root.libraryClips.sit_enter !== undefined
+        && root.libraryClips.sit_idle !== undefined && root.libraryClips.sit_exit !== undefined
+    readonly property bool floorSet: root.libraryClips.floor_sit_enter !== undefined
+        && root.libraryClips.floor_sit_idle !== undefined && root.libraryClips.floor_sit_exit !== undefined
+    readonly property bool canSit: root.libraryMode && (root.chairSet || root.floorSet)
+    property string sitState: ""      // "", "entering", "sitting", "exiting"
+    // A function, not a binding: the handlers that call it run before a binding on the same
+    // properties has been re-evaluated.
+    function isBusy() { return root.speaking || root.moving || root.thinking }
+    property double lastActivity: Date.now()
+    // DESKMATE_SIT_TEST_SECONDS (testing): sit after that long idle, for that long, checked every 2 s.
+    readonly property int testSitMs: typeof testSitSeconds === "number" ? testSitSeconds * 1000 : 0
+    function nextSitAfter() { return root.testSitMs > 0 ? root.testSitMs : (4 + Math.random() * 8) * 60000 }
+    property double sitAfter: nextSitAfter()    // idle for 4-12 minutes first
+    property double sitUntil: 0
+    property double nextSitVariation: 0   // now and then, while it sits, a different seated clip
+    property int sitCheckMs: root.testSitMs > 0 ? 2000 : 10000
+
+    // The chair under a sitting body (the manifest's sit_prop) is shown from partway through
+    // the sit-down (just behind where it stands) to partway through the stand-up.
+    property bool propShown: false
+    property real propAmount: propShown ? 1 : 0   // it grows in and shrinks away, not pops
+    Behavior on propAmount { NumberAnimation { duration: 300; easing.type: Easing.OutQuad } }
+    function applyProp() {
+        if (root.libraryClips.sit_prop && root.controller)
+            root.controller.setSitPropShown(root.propAmount)
+    }
+    onPropAmountChanged: applyProp()
+    Timer { id: propShowTimer; onTriggered: root.propShown = true }
+    Timer { id: propHideTimer; onTriggered: root.propShown = false }
+
+    // The body is to move: asks it to get up first (and, if it is still sitting down, to do
+    // that straight afterwards) and returns how many ms until it is standing with the chair
+    // gone, 0 when it is not sitting. The caller holds the turn and the run back that long, so
+    // it does not turn or run while still sitting on the chair.
+    property bool standRequested: false
+    property double sitClipEndsAt: 0
+    function sitExitMs() {
+        const exit = root.libraryClips[root.sitRole("sit_exit")]
+        return exit ? root.controller.clipDurationMs(exit) + 80 : 0
+    }
+    function requestStand() {
+        if (root.sleepState !== "" || root.workoutActive) {   // it is on the floor: up first, and the move waits
+            const left = Math.max(0, root.sitClipEndsAt - Date.now())
+            const wakeMs = root.libraryClips.wake ? root.controller.clipDurationMs(root.libraryClips.wake) + 80 : 0
+            if (root.workoutActive)
+                return left
+            root.wakeRequested = true
+            if (root.sleepState === "asleep") {
+                const variationPlaying = root.libraryOneShot !== ""   // it gets up when that ends
+                root.wake()
+                return Math.max(0, root.sitClipEndsAt - Date.now()) + (variationPlaying ? wakeMs : 0)
+            }
+            return root.sleepState === "lying" ? left + wakeMs : left
+        }
+        if (!root.canSit || root.sitState === "")
+            return 0
+        root.standRequested = true
+        const left = Math.max(0, root.sitClipEndsAt - Date.now())
+        if (root.sitState === "sitting") {
+            root.standUp()   // (it waits for a seated variation in progress)
+            return left + root.sitExitMs()
+        }
+        return root.sitState === "entering" ? left + root.sitExitMs() : left
+    }
+
+    function noteActivity() {
+        root.lastActivity = Date.now()
+        root.sitAfter = root.nextSitAfter()
+    }
+    function playSitClip(role, state) {
+        const clip = root.libraryClips[role]
+        if (!clip || !root.controller.playClip(clip, 1, true))
+            return false
+        root.sitState = state
+        root.libraryOneShot = clip
+        root.libraryPlaying = ""
+        const ms = root.controller.clipDurationMs(clip)
+        root.sitClipEndsAt = Date.now() + ms + 80
+        libraryOneShotTimer.interval = ms + 80
+        libraryOneShotTimer.restart()
+        if (root.sitKind !== "chair") {   // on the floor there is no chair
+            // nothing to show
+        } else if (state === "entering") {   // the chair appears as it sits down, and goes as it stands up
+            propHideTimer.stop()
+            propShowTimer.interval = ms * 0.1
+            propShowTimer.restart()
+        } else if (state === "exiting") {
+            propShowTimer.stop()
+            propHideTimer.interval = ms * 0.5
+            propHideTimer.restart()
+        }
+        return true
+    }
+    function sitDown() {
+        if (!(root.canSit && root.sitState === "" && root.sleepState === "" && !root.workoutActive && !root.isBusy() && root.libraryOneShot === ""))
+            return
+        const kinds = (root.chairSet ? ["chair"] : []).concat(root.floorSet ? ["floor"] : [])
+        root.sitKind = kinds[Math.floor(Math.random() * kinds.length)]   // a chair or the floor, as it feels
+        if (!playSitClip(root.sitRole("sit_enter"), "entering"))
+            root.sitKind = ""
+    }
+    function standUp() {
+        if (root.libraryOneShot !== "")   // a seated variation is playing: it stands up when that ends
+            return
+        if (root.sitState === "sitting" && !playSitClip(root.sitRole("sit_exit"), "exiting")) {
+            root.sitState = ""   // no clip to play: carry on from wherever it is
+            syncLibrary()
+        }
+    }
+
+    // --- Sleeping and working out ---------------------------------------------
+    // Gone for a long time (nothing said, no move, no thinking for 30-60 minutes) it lies down
+    // (`lie_down`: the stand-up played backwards, eased into the sleeping pose), sleeps (the
+    // `sleep` loop, with `sleep_alt` now and then) and, when anything starts, gets up first
+    // (`wake`, which ends standing like the idle) before it speaks, moves or thinks. From the
+    // chair it stands up first. Now and then, standing idle, it works out (`workout`,
+    // `workout_floor`: each lies down, does the exercise and stands again, in one clip, which
+    // nothing interrupts).
+    readonly property bool canSleep: root.libraryMode && root.libraryClips.lie_down !== undefined
+        && root.libraryClips.sleep !== undefined && root.libraryClips.wake !== undefined
+    property string sleepState: ""   // "", "lying", "asleep", "waking"
+    property bool wakeRequested: false
+    property bool workoutActive: false
+    readonly property bool floorBusy: root.sleepState !== "" || root.workoutActive
+    // DESKMATE_SLEEP_TEST_SECONDS / DESKMATE_WORKOUT_TEST_SECONDS (testing): sleep after that long
+    // idle, work out after that long; checked every 2 s.
+    readonly property int testSleepMs: typeof testSleepSeconds === "number" ? testSleepSeconds * 1000 : 0
+    readonly property int testWorkoutMs: typeof testWorkoutSeconds === "number" ? testWorkoutSeconds * 1000 : 0
+    function sleepAfterMs() { return root.testSleepMs > 0 ? root.testSleepMs : (30 + Math.random() * 30) * 60000 }
+    function workoutAt() { return Date.now() + (root.testWorkoutMs > 0 ? root.testWorkoutMs : (10 + Math.random() * 20) * 60000) }
+    property double lastUserActivity: Date.now()
+    property double nextSleepAt: sleepAfterMs()
+    property double nextWorkout: workoutAt()
+    property double nextSleepVariation: 0
+    // How long it lies breathing before it shifts in its sleep (`sleep_alt`: a slow turn and back,
+    // 20 s): 2.5-5 minutes the first time, then 3-8 minutes between shifts. When testing, N * 1.2 s.
+    function sleepShiftDelay(first) {
+        if (root.testSleepMs > 0)
+            return root.testSleepMs * 1.2
+        return (first ? 150 + Math.random() * 150 : 180 + Math.random() * 300) * 1000
+    }
+    property double wakesAt: 0   // it sleeps for an hour or so, and then gets up by itself
+    function playSleepClip(role, state) {
+        if (!playLibraryClip(root.libraryClips[role]))
+            return false
+        root.sleepState = state
+        return true
+    }
+    function fallAsleep() {
+        if (root.canSleep && root.sleepState === "" && root.sitState === "" && !root.isBusy() && root.libraryOneShot === "") {
+            root.sleepKey = root.pickOption("sleep")   // one of the ways to sleep, for this sleep
+            playSleepClip("lie_down", "lying")
+        }
+    }
+    function wake() {
+        if (root.libraryOneShot !== "")   // lying down or a variation is playing: it gets up when that ends
+            return
+        // Called to be up and about: the quick stand-up. Left to wake itself, the slow one.
+        const slow = !root.isBusy() && !root.wakeRequested && root.libraryClips.wake_slow !== undefined
+        if (root.sleepState === "asleep" && !playSleepClip(slow ? "wake_slow" : "wake", "waking")) {
+            root.sleepState = ""   // no clip to play: carry on from wherever it is
+            syncLibrary()
+        }
+    }
+    function startWorkout() {
+        if (!root.libraryMode || root.sleepState !== "" || root.sitState !== "" || root.isBusy() || root.libraryOneShot !== "")
+            return
+        const roles = ["workout", "workout_floor"].filter(r => root.libraryClips[r] !== undefined)
+        if (!roles.length)
+            return
+        const role = roles[Math.floor(Math.random() * roles.length)]
+        if (playLibraryClip(root.libraryClips[role])) {
+            root.workoutActive = true
+            cancelMicroIdle()
+        }
+    }
+    Timer {
+        interval: root.testSleepMs > 0 || root.testWorkoutMs > 0 ? 2000 : 10000
+        repeat: true
+        running: root.libraryMode
+        onTriggered: {
+            if (root.sleepState === "asleep") {
+                if (root.libraryOneShot === "" && Date.now() >= root.wakesAt && !root.isBusy()) {
+                    root.wake()
+                    return
+                }
+                if (root.libraryOneShot === "" && root.libraryClips.sleep_alt && Date.now() >= root.nextSleepVariation && !root.isBusy()) {
+                    root.nextSleepVariation = Date.now() + root.sleepShiftDelay(false)
+                    root.playLibraryOneShot("sleep_alt")
+                }
+                return
+            }
+            if (root.sleepState !== "" || root.workoutActive || root.isBusy() || root.libraryOneShot !== "")
+                return
+            const idleFor = Date.now() - root.lastUserActivity
+            if (root.canSleep && idleFor > root.nextSleepAt) {
+                if (root.sitState === "sitting")
+                    root.standUp()   // gets up from the chair first; it lies down next time round
+                else
+                    root.fallAsleep()
+            } else if (root.sitState === "" && Date.now() >= root.nextWorkout) {
+                root.nextWorkout = root.workoutAt()
+                root.startWorkout()
+            }
+        }
+    }
+
+    // Speech, a move or thinking started or ended.
+    function libraryStateChanged() {
+        if (!root.libraryMode)
+            return
+        root.noteActivity()
+        root.lastUserActivity = Date.now()
+        root.nextSleepAt = root.sleepAfterMs()
+        if (root.sleepState === "asleep" && root.isBusy()) {
+            wake()
+            return
+        }
+        if (root.sleepState !== "" || root.workoutActive)
+            return   // it finishes first, and then looks at what is going on
+        if (root.staysSeated() && root.sitState === "sitting") {
+            if (root.speaking)
+                root.talkedSeated = true
+            else if (root.talkedSeated && !root.thinking) {   // it has said what it had to say: up
+                root.talkedSeated = false
+                if (root.libraryOneShot === "") {
+                    standUp()
+                    return
+                }
+            }
+            if (root.libraryOneShot !== "" && root.speaking) {   // a seated variation is playing: it stops for the talk
+                root.libraryOneShot = ""
+                libraryOneShotTimer.stop()
+            }
+            syncLibrary()
+            return
+        }
+        if (root.sitState === "sitting" && root.isBusy()) {
+            standUp()
+            return
+        }
+        if (root.sitState === "entering" || root.sitState === "exiting")
+            return   // it finishes first, and then looks at what is going on
+        root.libraryOneShot = ""
+        libraryOneShotTimer.stop()
+        syncLibrary()
+    }
+    Timer {
+        interval: root.sitCheckMs
+        repeat: true
+        running: root.canSit
+        onTriggered: {
+            if (root.sitState === "sitting") {
+                if (Date.now() >= root.sitUntil && !root.isBusy())
+                    root.standUp()
+                else if (root.sitKind === "chair" && Date.now() >= root.nextSitVariation && root.libraryOneShot === "" && !root.isBusy()) {
+                    root.nextSitVariation = Date.now() + (40 + Math.random() * 80) * 1000
+                    root.playLibraryOneShot("sit_alt")
+                }
+            } else if (root.sitState === "" && !root.isBusy() && root.libraryOneShot === ""
+                       && Date.now() - root.lastActivity > root.sitAfter) {
+                root.sitDown()
+            }
+        }
+    }
+    // A hot reload or a reset can stop the clip from underneath it: look again now and then.
+    Timer {
+        interval: 700
+        repeat: true
+        running: root.libraryMode
+        onTriggered: {
+            root.syncLibrary()
+            root.applyProp()   // a reload makes new nodes, which start out visible
+        }
+    }
+    onLibraryModeChanged: {
+        root.libraryPlaying = ""
+        root.libraryOneShot = ""
+        root.sitState = ""
+        root.sitKind = ""
+        root.talkedSeated = false
+        root.sleepState = ""
+        root.wakeRequested = false
+        root.workoutActive = false
+        root.standRequested = false
+        propShowTimer.stop()
+        propHideTimer.stop()
+        root.propShown = false
+        root.applyProp()
+        if (libraryMode)
+            syncLibrary()
+    }
     // --- Tier 1/2 idle variety ------------------------------------------
     // Every so often the avatar performs one short, randomly chosen idle
     // (look around, stretch, peek, sleepy nod, fidget) on top of the
@@ -359,10 +887,11 @@ Item {
         "nod": "idle_sleepy",
         "fidget": "idle_fidget"
     })
-    // Off: played through Qt's glTF import, the generator's idle clips move
-    // nothing visible on a skinned avatar (checked frame by frame), so using
-    // them replaced the working transform idles below with a motionless one.
-    // Turn on for models whose own clips are known to play.
+    // Off by default: the generator's own idle clips drive bones named root/spine/head,
+    // and on a skinned avatar built that way they move nothing visible (checked frame by
+    // frame), so using them replaced the working transform idles below with a motionless
+    // one. Main.qml turns it on for a model whose manifest entry says `skeletal_clips`:
+    // an imported rig whose head/neck/spine clips were baked on its own bones, which move.
     property bool preferBakedClips: false
     property bool clipBusy: false
     Timer {
@@ -371,6 +900,19 @@ Item {
     }
 
     function playMicroIdle(name) {
+        if (root.libraryMode) {
+            // The folded-arms idle only when bored: crossed arms read as impatient or upset, so
+            // they would be wrong at any other mood. Otherwise the idle loop just carries on.
+            if (root.mood === "bored") {
+                if (!playLibraryOneShot("idle_alt"))
+                    syncLibrary()
+            } else if ((name === "lookaround" || name === "peek") && playLibraryOneShot("idle_look")) {
+                return   // it looks about
+            } else {
+                syncLibrary()
+            }
+            return
+        }
         const clip = bakedIdleClips[name]
         if (root.preferBakedClips && clip && root.controller && root.controller.playClip(clip, 1)) {
             root.clipBusy = true
@@ -389,6 +931,8 @@ Item {
     // neutral. Called when a higher tier (thinking, moving, speech,
     // gesture) takes over the transform.
     function cancelMicroIdle() {
+        if (root.libraryOneShot !== "" && root.sitState === "" && !root.floorBusy)
+            root.endLibraryOneShot()
         if (root.clipBusy && root.controller)
             root.controller.stopAllClips()
         root.clipBusy = false
@@ -408,9 +952,13 @@ Item {
     }
 
     readonly property bool microBlocked: root.avatar === null || root.thinking || root.moving || root.turned
-        || root.pulsing || gestureAnim.running || root.microRunning
+        || root.pulsing || gestureAnim.running || root.microRunning || root.libraryOneShot !== "" || root.sitState !== "" || root.floorBusy
 
-    onThinkingChanged: if (thinking) cancelMicroIdle()
+    onThinkingChanged: {
+        root.libraryStateChanged()
+        if (thinking)
+            cancelMicroIdle()
+    }
 
     Timer {
         id: microTimer
@@ -532,7 +1080,16 @@ Item {
         "shrug": { property: "eulerRotation.z", to: 8, duration: 220 }
     })
 
-    function playGesture(name) {
+    function playGesture(name, intensity) {
+        if (root.libraryMode) {
+            if (root.sitState !== "" || root.floorBusy)   // it does not wave from its chair or the floor
+                return
+            const clip = root.libraryGestureClip(name, intensity === undefined ? 0.5 : intensity)
+            if (clip && !root.moving && playLibraryClip(clip)) {
+                cancelMicroIdle()
+                return
+            }
+        }
         const preset = gesturePresets[name]
         if (!preset || !root.avatar)
             return

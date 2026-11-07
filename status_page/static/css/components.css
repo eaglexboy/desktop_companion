@@ -47,6 +47,26 @@
   margin: 0;
   overflow-wrap: anywhere;
 }
+.backup-next {
+  margin: 0.5rem 0 0;
+  font-variant-numeric: tabular-nums;
+}
+.backup-next.soon {
+  font-weight: 700;
+}
+.backup-next:empty {
+  display: none;
+}
+.placement-pic {
+  display: block;
+  width: 100%;
+  max-height: 14rem;
+  object-fit: contain;
+  margin-bottom: 0.5rem;
+}
+.placement-pic[hidden] {
+  display: none;
+}
 .bars {
   display: grid;
   grid-template-columns: max-content 1fr 3.2ch 5ch;

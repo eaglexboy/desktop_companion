@@ -22,11 +22,21 @@ SEEDS = {
 }
 
 
-def _settings(tmp_path: Path, *, seeds=SEEDS, active_backend="remote", provider_type="tts_serve") -> Settings:
+def _settings(
+    tmp_path: Path, *, seeds=SEEDS, active_backend="remote", provider_type="tts_serve"
+) -> Settings:
     return Settings.model_validate(
         {
-            "storage": {"workspace_dir": str(tmp_path / "ws"), "deploy_dir": str(tmp_path / "deploy")},
-            "llm": {"local": {"base_url": "http://127.0.0.1:11434/v1", "model": "test-model"}},
+            "storage": {
+                "workspace_dir": str(tmp_path / "ws"),
+                "deploy_dir": str(tmp_path / "deploy"),
+            },
+            "llm": {
+                "local": {
+                    "base_url": "http://127.0.0.1:11434/v1",
+                    "model": "test-model",
+                }
+            },
             "voice": {
                 "tts": {
                     "active_backend": active_backend,
@@ -48,7 +58,9 @@ def _look(base_template="primitive_blob", femininity=0.5):
     return look.model_copy(
         update={
             "base_template": base_template,
-            "proportions": look.proportions.model_copy(update={"femininity": femininity}),
+            "proportions": look.proportions.model_copy(
+                update={"femininity": femininity}
+            ),
         }
     )
 
@@ -57,7 +69,10 @@ def _selector(tmp_path, look, **settings_kwargs):
     store = PersonalityStore(tmp_path / "state.db", ("openness",), ("energy",))
     holder = {"look": look}
     selector = SeedVoiceSelector(
-        _settings(tmp_path, **settings_kwargs), store, lambda: holder["look"], rng=random.Random(1)
+        _settings(tmp_path, **settings_kwargs),
+        store,
+        lambda: holder["look"],
+        rng=random.Random(1),
     )
     return selector, store, holder
 
@@ -86,9 +101,15 @@ def test_voice_id_round_trip_and_garbage():
     assert parse_voice_id("remote:vox:seed:abc") is None
 
 
+def _pick(selector):
+    chosen = selector.select()
+    assert chosen is not None
+    return chosen
+
+
 def test_picks_from_matching_group_and_persists(tmp_path):
     selector, store, _ = _selector(tmp_path, _look("standard_humanoid_male"))
-    first = selector.select()
+    first = _pick(selector)
     assert first.seed in SEEDS["male"]
     assert store.get_agent_state("current_voice_id") == first.voice_id
     # stable across calls -- the voice must not change between sentences/utterances
@@ -97,18 +118,20 @@ def test_picks_from_matching_group_and_persists(tmp_path):
 
 def test_reselects_when_redesign_moves_to_another_group(tmp_path):
     selector, store, holder = _selector(tmp_path, _look("standard_humanoid_male"))
-    male = selector.select()
+    male = _pick(selector)
     holder["look"] = _look("standard_humanoid_female")
-    female = selector.select()
+    female = _pick(selector)
     assert female.seed in SEEDS["female"]
     assert store.get_agent_state("previous_voice_id") == male.voice_id
 
 
 def test_robot_uses_robot_pool_and_falls_back_to_gendered_pool(tmp_path):
     selector, _store, holder = _selector(tmp_path, _look("primitive_mechanical", 0.1))
-    assert selector.select().seed == 500
-    holder["look"] = _look("primitive_mechanical", 0.9)  # no female_robot pool -> female
-    assert selector.select().seed in SEEDS["female"]
+    assert _pick(selector).seed == 500
+    holder["look"] = _look(
+        "primitive_mechanical", 0.9
+    )  # no female_robot pool -> female
+    assert _pick(selector).seed in SEEDS["female"]
 
 
 def test_no_selection_when_local_backend_or_no_pools_or_wrong_provider(tmp_path):
@@ -144,22 +167,33 @@ async def test_pool_sends_remote_params_only_to_their_instance(tmp_path):
 def test_seed_voices_defaults_empty_and_rejects_unknown_group():
     assert TTSRemoteEntry(base_url="http://x").seed_voices.is_empty()
     with pytest.raises(ValidationError):
-        TTSRemoteEntry(base_url="http://x", seed_voices={"alien": [1]})
+        TTSRemoteEntry(
+            base_url="http://x",
+            seed_voices={"alien": [1]},  # pyright: ignore[reportArgumentType]
+        )  
 
 
 def test_default_seed_used_for_default_femininity_only(tmp_path):
     seeds = {**SEEDS, "default_seed": 33}
     # default femininity (0.5) -> female pool -> the configured default, not random
-    selector, _store, _ = _selector(tmp_path / "a", _look("primitive_blob", 0.5), seeds=seeds)
-    assert selector.select().seed == 33
+    selector, _store, _ = _selector(
+        tmp_path / "a", _look("primitive_blob", 0.5), seeds=seeds
+    )
+    assert _pick(selector).seed == 33
     # customized femininity -> random pick from the pool (rng seeded, but any pool member is valid)
-    selector, _store, _ = _selector(tmp_path / "b", _look("primitive_blob", 0.9), seeds=seeds)
-    assert selector.select().seed in SEEDS["female"]
+    selector, _store, _ = _selector(
+        tmp_path / "b", _look("primitive_blob", 0.9), seeds=seeds
+    )
+    assert _pick(selector).seed in SEEDS["female"]
     # default_seed not in the matching pool -> ignored
-    selector, _store, _ = _selector(tmp_path / "c", _look("standard_humanoid_male", 0.5), seeds=seeds)
-    assert selector.select().seed in SEEDS["male"]
+    selector, _store, _ = _selector(
+        tmp_path / "c", _look("standard_humanoid_male", 0.5), seeds=seeds
+    )
+    assert _pick(selector).seed in SEEDS["male"]
 
 
 def test_default_seed_survives_as_stable_voice(tmp_path):
-    selector, _store, _ = _selector(tmp_path, _look("primitive_blob", 0.5), seeds={**SEEDS, "default_seed": 5})
-    assert [selector.select().seed for _ in range(5)] == [5] * 5
+    selector, _store, _ = _selector(
+        tmp_path, _look("primitive_blob", 0.5), seeds={**SEEDS, "default_seed": 5}
+    )
+    assert [_pick(selector).seed for _ in range(5)] == [5] * 5

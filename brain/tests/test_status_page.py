@@ -125,6 +125,19 @@ async def test_backup_state_reports_the_snapshot_age_and_missing_config(settings
     assert 3500 < time.time() - state["last_ts"] < 3700
 
 
+async def test_backup_state_parses_the_timers_next_run(settings, monkeypatch):
+    outputs = {"is-active": "active", "show": "@1793690261\n"}
+
+    async def fake_run(*argv):
+        return 0, outputs["show" if "show" in argv else "is-active"]
+
+    monkeypatch.setattr(status_app, "_run", fake_run)
+    assert (await status_app._backup_state(settings))["next"] == 1793690261.0
+
+    outputs["show"] = "@0\n"  # nothing scheduled
+    assert (await status_app._backup_state(settings))["next"] is None
+
+
 def test_ui_sizes_are_rem_not_px(settings):
     """The UI scales with the viewer's root font size; a stray px length would not."""
     import re
@@ -240,3 +253,38 @@ def test_looks_reports_the_lock_on_an_imported_model_until_it_is_unlocked(settin
     entry["look_spec"]["base_template"] = "primitive_blob"
     (settings.deploy_dir / "manifest.json").write_text(json.dumps({"current_version": 1, "versions": [entry]}))
     assert _client().get("/api/looks").json()["locked"] is False
+
+
+def test_animations_lists_libraries_and_what_each_body_gets(settings):
+    import json
+    import struct
+
+    from blender.animation_library import REQUIRED_BONES
+
+    def glb(doc: dict) -> bytes:
+        body = json.dumps(doc).encode()
+        body += b" " * (-len(body) % 4)
+        return b"glTF" + struct.pack("<II", 2, 20 + len(body)) + struct.pack("<I", len(body)) + b"JSON" + body
+
+    core = sorted(REQUIRED_BONES)
+    library = settings.deploy_dir / "assets" / "animation_library"
+    library.mkdir(parents=True)
+    (library / "pack.glb").write_bytes(glb({
+        "asset": {"version": "2.0"}, "nodes": [{"name": n} for n in core],
+        "skins": [{"joints": list(range(len(core)))}], "animations": [{"name": "Idle_Loop"}],
+    }))
+    custom = settings.deploy_dir / "assets" / "custom_templates"
+    custom.mkdir()
+    (custom / "hero.glb").write_bytes(b"glTF")
+    (custom / "hero.caps.json").write_text(json.dumps({"bone_names": core, "has_head": True, "has_arms": True, "has_legs": True, "has_face": False}))
+
+    data = _client().get("/api/animations").json()
+
+    assert data["libraries"] == [{"name": "pack", "clips": ["Idle_Loop"], "joints": len(core)}]
+    hero = next(b for b in data["bodies"] if b["body"] == "custom:hero")
+    assert hero["libraries"]["pack"]["fits"] is True and hero["libraries"]["pack"]["roles"] == ["idle"]
+
+
+def test_animations_is_empty_without_a_deploy_directory(settings):
+    data = _client().get("/api/animations").json()
+    assert data["libraries"] == []

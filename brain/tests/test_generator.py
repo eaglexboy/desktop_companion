@@ -211,7 +211,7 @@ def _box_glb_under_rotated_parent(path: Path) -> None:
 def test_rigless_model_keeps_the_orientation_its_parent_nodes_carry(tmp_path):
     """The model's world shape, not its raw vertices, is what gets scaled and
     bound to the rig; losing a parent's rotation stood this box up instead of
-    laying it down (and flattened real models: Miss Minutes came out a disc)."""
+    laying it down (and flattened real models: a mascot came out a disc)."""
     custom_dir = tmp_path / "deploy" / "assets" / "custom_templates"
     custom_dir.mkdir(parents=True)
     _box_glb_under_rotated_parent(custom_dir / "box.glb")
@@ -357,7 +357,11 @@ def test_rigged_model_gets_run_and_gesture_targets_from_its_limb_bones(tmp_path)
     by_name = {n.get("name"): n for n in gltf["nodes"]}
     targets = lambda name: len(gltf["meshes"][by_name[name]["mesh"]]["primitives"][0].get("targets", []))  # noqa: E731
     assert targets("Legs") == 2
-    assert targets("Arms") == 4
+    # This rig's arms are modelled straight out, so they are relaxed to hang and then swing in the
+    # run poses: the arms mesh carries the two run targets and then the four gesture targets.
+    assert targets("Arms") == 6
+    names = next(m["extras"]["targetNames"] for m in gltf["meshes"] if len(m.get("extras", {}).get("targetNames", [])) == 6)
+    assert names == ["run_a", "run_b", "gesture_l_out", "gesture_l_in", "gesture_r_out", "gesture_r_in"]
 
 
 def test_rigged_model_without_limb_bones_gets_no_limb_targets(tmp_path):
@@ -561,3 +565,565 @@ def test_seed_determinism(tmp_path):
     assert a["animation_clips"] == b["animation_clips"]
     assert a["bounds"] == b["bounds"]
     assert a["capabilities"] == b["capabilities"]
+
+
+def _install_body(tmp_path: Path, name: str = "robot") -> Path:
+    """A body that is an installed model: this generator's own humanoid build, put
+    under custom_templates (its bones are named root/spine/head)."""
+    _, source_glb, _ = _compile(_minimal_spec(base_template="standard_humanoid_female"), tmp_path, "source")
+    custom_dir = tmp_path / "deploy" / "assets" / "custom_templates"
+    custom_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy(source_glb, custom_dir / f"{name}.glb")
+    return source_glb
+
+
+def test_inspect_reports_which_bone_carries_each_socket(tmp_path):
+    source = _install_body(tmp_path)
+    out = tmp_path / "caps.json"
+    result = _run_generator("--inspect", str(source), "--out", str(out))
+    assert result.returncode == 0, result.stderr
+    caps = json.loads(out.read_text())
+    assert caps["socket_bones"]["socket_head_top"] == "head" and caps["socket_bones"]["socket_chest"] == "spine"
+    assert "socket_hand_R" not in caps["supported_sockets"]  # no hand bones in this rig
+    assert caps["capabilities"]["has_head"] is True
+
+
+def test_installed_body_wears_accessories_on_their_bones_and_warns_for_missing_ones(tmp_path):
+    _install_body(tmp_path)
+    spec = _minimal_spec(
+        base_template="custom:robot",
+        accessories={"socket_head_top": "pointy_hat", "socket_eyes": "glasses", "socket_hand_R": "wand"},
+    )
+    result, out_path, build_json = _compile(spec, tmp_path, "worn")
+    assert result.returncode == 0, result.stderr
+    warnings = " ".join(build_json["warnings"])
+    assert "socket_hand_R" in warnings and "socket_head_top" not in warnings and "socket_eyes" not in warnings
+
+    data = out_path.read_bytes()
+    gltf = json.loads(data[20 : 20 + struct.unpack("<I", data[12:16])[0]])
+    nodes = {n.get("name"): n for n in gltf["nodes"]}
+    assert "skin" in nodes["Accessory_socket_head_top_pointy_hat"]  # bound to the rig, not loose
+
+
+def _static_model_glb(path: Path, size: float) -> None:
+    """A plain one-mesh model (a cube `size` metres wide, origin at its base) as an
+    accessory author would export it."""
+    code = (
+        "import bpy;"
+        "bpy.ops.wm.read_factory_settings(use_empty=True);"
+        f"bpy.ops.mesh.primitive_cube_add(size={size}, location=(0, 0, {size / 2}));"
+        f"bpy.ops.export_scene.gltf(filepath={str(path)!r})"
+    )
+    subprocess.run([BLENDER_BIN, "--background", "--factory-startup", "--python-expr", code], capture_output=True, check=True, timeout=60)
+
+
+def test_accessory_model_is_placed_scaled_and_bound_from_its_sidecar(tmp_path):
+    _install_body(tmp_path)
+    folder = tmp_path / "deploy" / "assets" / "wardrobe" / "socket_head_top"
+    folder.mkdir(parents=True)
+    _static_model_glb(folder / "big_hat.glb", size=4.0)  # as large as the whole figure
+    (folder / "big_hat.json").write_text(json.dumps({"scale": 0.1}))
+
+    spec = _minimal_spec(base_template="custom:robot", accessories={"socket_head_top": "big_hat"})
+    result, out_path, build_json = _compile(spec, tmp_path, "modelhat")
+    assert result.returncode == 0, result.stderr
+    data = out_path.read_bytes()
+    gltf = json.loads(data[20 : 20 + struct.unpack("<I", data[12:16])[0]])
+    nodes = {n.get("name"): n for n in gltf["nodes"]}
+    assert "skin" in nodes["Accessory_socket_head_top_big_hat"]
+    # scale 0.1 makes the 4 m cube a 0.4 m hat on a 2.5 m figure; unscaled it would double the height
+    assert build_json["bounds"]["height_m"] < 3.2
+
+
+def _glb_gltf(path: Path) -> dict:
+    data = path.read_bytes()
+    return json.loads(data[20 : 20 + struct.unpack("<I", data[12:16])[0]])
+
+
+def _skinned_mesh_nodes(path: Path) -> list[str]:
+    return [n["name"] for n in _glb_gltf(path)["nodes"] if "skin" in n and "mesh" in n]
+
+
+def _install_outfit(tmp_path: Path, source_glb: Path, name: str = "suit", body: str = "custom_robot") -> None:
+    folder = tmp_path / "deploy" / "assets" / "outfit_models" / body
+    folder.mkdir(parents=True, exist_ok=True)
+    shutil.copy(source_glb, folder / f"{name}.glb")
+
+
+def test_installed_body_wears_an_outfit_model_on_its_own_skeleton(tmp_path):
+    source = _install_body(tmp_path)
+    _install_outfit(tmp_path, source)  # an outfit skinned to the same rig (here, the body itself)
+    bare, bare_path, _ = _compile(_minimal_spec(base_template="custom:robot"), tmp_path, "bare")
+    assert bare.returncode == 0, bare.stderr
+
+    spec = _minimal_spec(base_template="custom:robot", wardrobe={"outfit": "suit", "footwear": "none"})
+    result, out_path, build_json = _compile(spec, tmp_path, "dressed")
+    assert result.returncode == 0, result.stderr
+    assert not [w for w in build_json["warnings"] if "outfit" in w or "not layered" in w], build_json["warnings"]
+    assert len(_skinned_mesh_nodes(out_path)) > len(_skinned_mesh_nodes(bare_path))
+    assert len(_glb_gltf(out_path)["skins"]) == 1  # all of it hangs on the body's one skeleton
+
+
+def test_outfit_that_cannot_be_worn_is_skipped_with_a_warning(tmp_path):
+    _install_body(tmp_path)
+    static = tmp_path / "cube.glb"
+    _static_model_glb(static, size=1.0)  # no rig, so it cannot be bound to the body's skeleton
+    _install_outfit(tmp_path, static)
+
+    spec = _minimal_spec(base_template="custom:robot", wardrobe={"outfit": "suit", "footwear": "none"})
+    result, _, build_json = _compile(spec, tmp_path, "skipped")
+    assert result.returncode == 0, result.stderr
+    assert any("outfit suit" in w and "not worn" in w for w in build_json["warnings"]), build_json["warnings"]
+
+
+def _triangles(path: Path) -> int:
+    gltf = _glb_gltf(path)
+    return sum(
+        gltf["accessors"][prim["indices"]]["count"] // 3 for mesh in gltf["meshes"] for prim in mesh["primitives"] if "indices" in prim
+    )
+
+
+def test_convert_mode_reencodes_a_model_and_decimates_to_a_triangle_cap(tmp_path):
+    source = _install_body(tmp_path)
+    out = tmp_path / "converted.glb"
+    full = _run_generator("--convert", str(source), "--out", str(out))
+    assert full.returncode == 0 and out.is_file(), full.stderr
+    full_triangles = _triangles(out)
+    assert full_triangles > 1_500  # a cap below this will have something to remove
+
+    capped = tmp_path / "capped.glb"
+    result = _run_generator("--convert", str(source), "--out", str(capped), "--max-triangles", "1500")
+    assert result.returncode == 0 and capped.is_file(), result.stderr
+    assert _triangles(capped) < full_triangles
+
+
+def test_face_landmarks_mode_finds_the_eyes_and_puts_the_mouth_below_them(tmp_path):
+    source = _install_body(tmp_path)  # this generator's own figure: it has eyes
+    out = tmp_path / "face.json"
+    result = _run_generator("--face-landmarks", str(source), "--out", str(out))
+    assert result.returncode == 0, result.stderr
+    face = json.loads(out.read_text())
+    assert face["eye_l"]["x"] < face["eye_r"]["x"]  # the same left/right convention as a hand-made sidecar
+    assert face["mouth"]["z"] < face["eye_l"]["z"] and 0 < face["mouth"]["z"] < 1
+    assert abs(face["mouth"]["x"] - (face["eye_l"]["x"] + face["eye_r"]["x"]) / 2) < 0.02  # on the face's midline
+    assert face["patch"] is False  # real lips are kept; the mouth is drawn over them
+
+
+def test_face_landmarks_mode_says_so_when_the_model_has_no_eyes(tmp_path):
+    static = tmp_path / "cube.glb"
+    _static_model_glb(static, size=1.0)
+    result = _run_generator("--face-landmarks", str(static), "--out", str(tmp_path / "face.json"))
+    assert not (tmp_path / "face.json").exists()  # (blender exits 0 when a script raises; no file is the signal)
+    assert "no eye mesh found" in result.stderr + result.stdout
+
+
+def test_a_sidecar_with_no_patch_keeps_the_lips_and_draws_an_oval_mouth(tmp_path):
+    source = _install_body(tmp_path)
+    out = tmp_path / "face.json"
+    assert _run_generator("--face-landmarks", str(source), "--out", str(out)).returncode == 0
+    body = tmp_path / "deploy" / "assets" / "custom_templates" / "robot.glb"
+    shutil.copy(out, body.with_name("robot.face.json"))
+    # the installed copy has visemes of its own, so build it without them via a spec that asks for a face
+    spec = _minimal_spec(base_template="custom:robot", has_face=True)
+    result, out_path, build_json = _compile(spec, tmp_path, "lips")
+    assert result.returncode == 0, result.stderr
+    assert build_json["has_face"] is True and len(build_json["viseme_shape_keys"]) == 9
+    names = {n.get("name") for n in _glb_gltf(out_path)["nodes"]}
+    assert "MouthPatch" not in names and "Mouth" in names
+
+
+def test_glasses_on_an_installed_body_are_centred_on_its_eyes_and_sized_by_their_spacing(tmp_path):
+    source = _install_body(tmp_path)  # a figure with a pair of eyes
+    face = tmp_path / "face.json"
+    assert _run_generator("--face-landmarks", str(source), "--out", str(face)).returncode == 0
+    eyes = json.loads(face.read_text())
+
+    spec = _minimal_spec(base_template="custom:robot", accessories={"socket_eyes": "glasses"})
+    result, out_path, build_json = _compile(spec, tmp_path, "specs")
+    assert result.returncode == 0, result.stderr
+    assert not [w for w in build_json["warnings"] if "socket_eyes" in w]
+
+    # Both lenses must lie within the box the two eyes span, not float off to the sides:
+    # the accessory's width is about the eyes' spacing plus a lens.
+    gltf = _glb_gltf(out_path)
+    node = next(n for n in gltf["nodes"] if (n.get("name") or "").startswith("Accessory_socket_eyes"))
+    accessor = gltf["accessors"][gltf["meshes"][node["mesh"]]["primitives"][0]["attributes"]["POSITION"]]
+    width = accessor["max"][0] - accessor["min"][0]
+    figure = build_json["bounds"]["width_m"]
+    spacing = (eyes["eye_r"]["x"] - eyes["eye_l"]["x"]) * figure
+    assert 1.0 * spacing < width < 1.8 * spacing, (width, spacing)
+
+
+_LIMBED_MODEL_SCRIPT = """
+import bpy
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.object.armature_add(location=(0, 0, 0))
+arm = bpy.context.active_object
+arm.name = "Rig"
+bpy.ops.object.mode_set(mode="EDIT")
+eb = arm.data.edit_bones
+for b in list(eb):
+    eb.remove(b)
+def bone(name, head, tail, parent=None):
+    b = eb.new(name); b.head, b.tail = head, tail
+    if parent: b.parent = eb[parent]; b.use_connect = False
+    return b
+bone("root", (0, 0, 0.9), (0, 0, 1.0))
+bone("spine", (0, 0, 1.0), (0, 0, 1.5), "root")
+bone("head", (0, 0, 1.5), (0, 0, 1.75), "spine")
+for side, x in (("l", 0.25), ("r", -0.25)):
+    bone(f"upperarm_{side}", (x, 0, 1.45), (x * 2.2, 0, 1.45), "spine")
+    bone(f"lowerarm_{side}", (x * 2.2, 0, 1.45), (x * 3.2, 0, 1.45), f"upperarm_{side}")
+    bone(f"thigh_{side}", (x * 0.4, 0, 0.9), (x * 0.4, 0, 0.5), "root")
+    bone(f"calf_{side}", (x * 0.4, 0, 0.5), (x * 0.4, 0, 0.08), f"thigh_{side}")
+bpy.ops.object.mode_set(mode="OBJECT")
+bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0.9))
+body = bpy.context.active_object
+body.name = "Body"
+body.scale = (1.4, 0.3, 1.8)
+bpy.ops.object.transform_apply(scale=True)
+bpy.ops.object.mode_set(mode="EDIT")
+bpy.ops.mesh.subdivide(number_cuts=6)
+bpy.ops.object.mode_set(mode="OBJECT")
+bpy.ops.object.select_all(action="DESELECT")
+body.select_set(True); arm.select_set(True); bpy.context.view_layer.objects.active = arm
+bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+bpy.ops.export_scene.gltf(filepath=%r)
+"""
+
+
+def _limbed_model_glb(path: Path, trunk_only: bool = False, hands: bool = False) -> None:
+    """One mesh for the whole body, skinned to a rig with arm and leg bones: the shape
+    of most downloaded characters (and of the free Quaternius bodies). `trunk_only` swaps
+    the spine and head for a single bone called Body, like a floating mascot's rig."""
+    script = _LIMBED_MODEL_SCRIPT
+    if hands:  # a hand bone at the end of each forearm
+        script = script.replace(
+            '    bone(f"thigh_{side}"',
+            '    bone(f"hand_{side}", (x * 3.2, 0, 1.45), (x * 3.7, 0, 1.45), f"lowerarm_{side}")\n    bone(f"thigh_{side}"',
+        )
+    if trunk_only:
+        script = (
+            script.replace('bone("spine", (0, 0, 1.0), (0, 0, 1.5), "root")', 'bone("Body", (0, 0, 1.0), (0, 0, 1.75), "root")')
+            .replace('bone("head", (0, 0, 1.5), (0, 0, 1.75), "spine")\n', "")
+            .replace('"spine")\n    bone(f"lowerarm', '"Body")\n    bone(f"lowerarm')
+        )
+    subprocess.run(
+        [BLENDER_BIN, "--background", "--factory-startup", "--python-expr", script % str(path)],
+        capture_output=True, check=True, timeout=120,
+    )
+
+
+_LIBRARY_ACTIONS = """
+arm.animation_data_create()
+for clip in ("Idle_Loop", "Sprint_Loop", "Dance_Loop", "Sitting_Enter", "Sitting_Idle_Loop", "Sitting_Exit", "Standing_Greeting", "Standing_Greeting_Low", "Standing_Greeting_High", "Unwanted_Clip"):
+    action = bpy.data.actions.new(clip)
+    action.use_fake_user = True
+    arm.animation_data.action = action
+    pose_bone = arm.pose.bones["upperarm_l"]
+    pose_bone.rotation_mode = "XYZ"
+    for frame, angle in ((1, 0.0), (20, 0.6)):
+        pose_bone.rotation_euler = (0.0, angle, 0.0)
+        pose_bone.keyframe_insert("rotation_euler", frame=frame)
+bpy.ops.export_scene.gltf(filepath=%r, export_animation_mode="ACTIONS")
+"""
+
+
+def _animation_library_glb(path: Path, trunk_only: bool = False, extra_bone: bool = False) -> None:
+    """A pack of clips made for the limbed test rig: a skeleton with four actions."""
+    script = _LIMBED_MODEL_SCRIPT.replace("bpy.ops.export_scene.gltf(filepath=%r)", _LIBRARY_ACTIONS.strip())
+    script = script.replace('bone("spine", (0, 0, 1.0), (0, 0, 1.5), "root")', 'bone("pelvis", (0, 0, 0.9), (0, 0, 1.0), "root")\nbone("spine", (0, 0, 1.0), (0, 0, 1.5), "root")')
+    if extra_bone:  # a bone the body lacks, with a track of its own on every clip
+        script = script.replace('bone("head", (0, 0, 1.5), (0, 0, 1.75), "spine")', 'bone("head", (0, 0, 1.5), (0, 0, 1.75), "spine")\nbone("tail", (0, 0, 1.0), (0, -0.3, 1.0), "spine")')
+        script = script.replace("    for frame, angle in ((1, 0.0), (20, 0.6)):", '    tail = arm.pose.bones["tail"]\n    tail.rotation_mode = "XYZ"\n    for frame, angle in ((1, 0.0), (20, 0.6)):\n        tail.rotation_euler = (angle, 0.0, 0.0)\n        tail.keyframe_insert("rotation_euler", frame=frame)')
+    if trunk_only:  # a different rig (a Body bone for the spine and head)
+        script = (
+            script.replace('bone("spine", (0, 0, 1.0), (0, 0, 1.5), "root")', 'bone("Body", (0, 0, 1.0), (0, 0, 1.75), "root")')
+            .replace('bone("head", (0, 0, 1.5), (0, 0, 1.75), "spine")\n', "")
+            .replace('"spine")\n    bone(f"lowerarm', '"Body")\n    bone(f"lowerarm')
+        )
+    subprocess.run(
+        [BLENDER_BIN, "--background", "--factory-startup", "--python-expr", script % str(path)],
+        capture_output=True, check=True, timeout=120,
+    )
+
+
+def _limbed_model_with_pelvis_glb(path: Path) -> None:
+    """The limbed test body plus a pelvis bone, which a chair is placed from."""
+    script = _LIMBED_MODEL_SCRIPT.replace('bone("spine", (0, 0, 1.0), (0, 0, 1.5), "root")', 'bone("pelvis", (0, 0, 0.9), (0, 0, 1.0), "root")\nbone("spine", (0, 0, 1.0), (0, 0, 1.5), "root")')
+    subprocess.run([BLENDER_BIN, "--background", "--factory-startup", "--python-expr", script % str(path)], capture_output=True, check=True, timeout=120)
+
+
+def test_a_body_with_a_librarys_bones_plays_the_clips_it_gives_and_gets_no_morph_limb_poses(tmp_path):
+    deploy = tmp_path / "deploy" / "assets"
+    (deploy / "custom_templates").mkdir(parents=True)
+    (deploy / "animation_library").mkdir()
+    _limbed_model_with_pelvis_glb(deploy / "custom_templates" / "limbed.glb")
+    _animation_library_glb(deploy / "animation_library" / "pack.glb")
+
+    result, out_path, build_json = _compile(_minimal_spec(base_template="custom:limbed", has_face=False), tmp_path, "library")
+    assert result.returncode == 0, result.stderr
+    assert build_json["library_clips"] == {
+        "idle": "Idle_Loop", "run": "Sprint_Loop", "celebrate": "Dance_Loop",
+        "sit_enter": "Sitting_Enter", "sit_idle": "Sitting_Idle_Loop", "sit_exit": "Sitting_Exit", "sit_prop": "SitProp",
+        "greet": "Standing_Greeting", "greet.low": "Standing_Greeting_Low", "greet.high": "Standing_Greeting_High",  # a clip with intensity variants
+    }
+    gltf_nodes = {node.get("name") for node in _glb_gltf(out_path)["nodes"]}
+    assert "SitProp" in gltf_nodes  # the chair the sitting clips are for
+    clips = {anim["name"] for anim in _glb_gltf(out_path)["animations"]}
+    assert {"Idle_Loop", "Sprint_Loop", "Dance_Loop"} <= clips
+    assert "Unwanted_Clip" not in clips  # only the clips that fill a role are taken
+    assert build_json["run_shape_keys"] == [] and build_json["gesture_shape_keys"] == []  # the clips move the limbs
+    assert build_json["skeletal_clips"] is False  # and they replace the baked head idles
+    assert not [w for w in build_json["warnings"] if "library" in w or "chair" in w], build_json["warnings"]
+
+    # the idle loop is played slower than it was made (the pack's breathes about 48 times a minute)
+    gltf = _glb_gltf(out_path)
+    seconds = {
+        anim["name"]: max(gltf["accessors"][sampler["input"]]["max"][0] for sampler in anim["samplers"]) for anim in gltf["animations"]
+    }
+    assert seconds["Idle_Loop"] == pytest.approx(seconds["Sprint_Loop"] * 2.5, rel=0.05), seconds
+
+
+def test_a_body_without_the_core_bones_gets_no_library_at_all(tmp_path):
+    deploy = tmp_path / "deploy" / "assets"
+    (deploy / "custom_templates").mkdir(parents=True)
+    (deploy / "animation_library").mkdir()
+    _limbed_model_glb(deploy / "custom_templates" / "limbed.glb")  # no pelvis bone
+    _animation_library_glb(deploy / "animation_library" / "pack.glb")
+
+    result, out_path, build_json = _compile(_minimal_spec(base_template="custom:limbed", has_face=False), tmp_path, "no_chair")
+    assert result.returncode == 0, result.stderr
+    assert build_json["library_clips"] == {}   # no pelvis: nothing to hang the hips' clips on, and no chair to place
+    assert "SitProp" not in {node.get("name") for node in _glb_gltf(out_path)["nodes"]}
+
+
+def test_a_body_missing_a_bone_of_the_library_plays_it_without_that_bones_track(tmp_path):
+    deploy = tmp_path / "deploy" / "assets"
+    (deploy / "custom_templates").mkdir(parents=True)
+    (deploy / "animation_library").mkdir()
+    _limbed_model_with_pelvis_glb(deploy / "custom_templates" / "limbed.glb")   # no tail
+    _animation_library_glb(deploy / "animation_library" / "pack.glb", extra_bone=True)
+
+    result, out_path, build_json = _compile(_minimal_spec(base_template="custom:limbed", has_face=False), tmp_path, "partial")
+    assert result.returncode == 0, result.stderr
+    assert build_json["library_clips"]["idle"] == "Idle_Loop"
+    gltf = _glb_gltf(out_path)
+    names = [node.get("name") for node in gltf["nodes"]]
+    idle = next(a for a in gltf["animations"] if a["name"] == "Idle_Loop")
+    animated = {names[channel["target"]["node"]] for channel in idle["channels"]}
+    assert "upperarm_l" in animated and "tail" not in animated and "tail" not in names
+
+
+def test_a_library_made_for_another_rig_is_left_alone(tmp_path):
+    deploy = tmp_path / "deploy" / "assets"
+    (deploy / "custom_templates").mkdir(parents=True)
+    (deploy / "animation_library").mkdir()
+    _limbed_model_glb(deploy / "custom_templates" / "limbed.glb")
+    _animation_library_glb(deploy / "animation_library" / "pack.glb", trunk_only=True)
+
+    result, out_path, build_json = _compile(_minimal_spec(base_template="custom:limbed", has_face=False), tmp_path, "other_rig")
+    assert result.returncode == 0, result.stderr
+    assert build_json["library_clips"] == {}
+    assert "Idle_Loop" not in {anim["name"] for anim in _glb_gltf(out_path)["animations"]}
+    assert build_json["run_shape_keys"] == ["run_a", "run_b"]  # it keeps the morph-target limb poses
+
+
+def test_a_single_mesh_body_gets_run_and_gesture_targets_in_that_order(tmp_path):
+    folder = tmp_path / "deploy" / "assets" / "custom_templates"
+    folder.mkdir(parents=True)
+    _limbed_model_glb(folder / "limbed.glb")
+
+    result, out_path, build_json = _compile(_minimal_spec(base_template="custom:limbed", has_face=False), tmp_path, "limbed")
+    assert result.returncode == 0, result.stderr
+    assert build_json["run_shape_keys"] == ["run_a", "run_b"]
+    assert build_json["gesture_shape_keys"] == ["gesture_l_out", "gesture_l_in", "gesture_r_out", "gesture_r_in"]
+    assert not [w for w in build_json["warnings"] if "left out" in w], build_json["warnings"]
+
+    gltf = _glb_gltf(out_path)
+    # the overlay reads a mesh's targets by count and order: 2 run, then 4 gesture
+    counts = {len(prim["targets"]) for mesh in gltf["meshes"] for prim in mesh["primitives"] if prim.get("targets")}
+    assert 6 in counts, counts
+    names = next(mesh["extras"]["targetNames"] for mesh in gltf["meshes"] if mesh.get("extras", {}).get("targetNames") and len(mesh["extras"]["targetNames"]) == 6)
+    assert names == ["run_a", "run_b", "gesture_l_out", "gesture_l_in", "gesture_r_out", "gesture_r_in"]
+
+
+def _animation_targets(gltf: dict) -> dict[str, set[str]]:
+    """{clip name: names of the nodes (bones) it animates}."""
+    return {
+        anim["name"]: {gltf["nodes"][ch["target"]["node"]].get("name") for ch in anim["channels"]}
+        for anim in gltf.get("animations", [])
+    }
+
+
+def test_an_imported_rig_gets_idle_clips_on_its_own_head_bone_and_says_so(tmp_path):
+    folder = tmp_path / "deploy" / "assets" / "custom_templates"
+    folder.mkdir(parents=True)
+    _limbed_model_glb(folder / "limbed.glb")  # bones root, spine, head, arms and legs
+
+    result, out_path, build_json = _compile(_minimal_spec(base_template="custom:limbed", has_face=False), tmp_path, "skeletal")
+    assert result.returncode == 0, result.stderr
+    assert build_json["skeletal_clips"] is True
+    names = {c["name"] for c in build_json["animation_clips"]}
+    assert {"idle_lookaround", "idle_peek", "agree", "disagree"} <= names
+    assert not [w for w in build_json["warnings"] if "animations are empty" in w], build_json["warnings"]
+    targets = _animation_targets(_glb_gltf(out_path))
+    assert "head" in targets["idle_lookaround"]  # the model's own head bone, not a canonical stand-in
+    assert len([a for a in _glb_gltf(out_path)["animations"] if a["name"] == "idle_lookaround"]) == 1  # not also the canonical one
+
+    # the brain refuses a build that lacks any core clip (it once rejected exactly this build)
+    from brain.appearance.blender_gen import _verify_build_output
+
+    _verify_build_output(out_path, build_json, build_json["has_face"])
+
+
+def test_a_generated_body_keeps_its_canonical_clips_and_is_not_marked_skeletal(tmp_path):
+    result, _, build_json = _compile(_minimal_spec(), tmp_path, "generated")
+    assert result.returncode == 0, result.stderr
+    assert build_json["skeletal_clips"] is False
+    assert "idle_lookaround" in {c["name"] for c in build_json["animation_clips"]}
+
+
+def test_a_rig_whose_trunk_stands_in_for_its_head_gets_no_skeletal_idles(tmp_path):
+    """A mascot rig can have a bone called Body and no head: turning it would swivel the whole figure."""
+    folder = tmp_path / "deploy" / "assets" / "custom_templates"
+    folder.mkdir(parents=True)
+    _limbed_model_glb(folder / "mascot.glb", trunk_only=True)
+
+    result, out_path, build_json = _compile(_minimal_spec(base_template="custom:mascot", has_face=False), tmp_path, "mascot")
+    assert result.returncode == 0, result.stderr
+    assert build_json["skeletal_clips"] is False
+    assert "idle_lookaround" in {c["name"] for c in build_json["animation_clips"]}  # the canonical catalog is still listed
+    targets = _animation_targets(_glb_gltf(out_path))
+    assert "Body" not in targets.get("idle_lookaround", set())  # and nothing turns the trunk
+
+
+def _node_world_position(gltf: dict, index: int, parents: dict[int, int]) -> tuple[float, float, float]:
+    """World position of a node from the glTF's own translations and rotations (no scale
+    handling beyond what the nodes carry), composed up the parent chain."""
+    def rotate(q, v):
+        x, y, z, w = q
+        # v' = v + 2w(q x v) + 2 q x (q x v)
+        cx, cy, cz = y * v[2] - z * v[1], z * v[0] - x * v[2], x * v[1] - y * v[0]
+        dx, dy, dz = y * cz - z * cy, z * cx - x * cz, x * cy - y * cx
+        return (v[0] + 2 * (w * cx + dx), v[1] + 2 * (w * cy + dy), v[2] + 2 * (w * cz + dz))
+
+    chain = [index]
+    while chain[-1] in parents:
+        chain.append(parents[chain[-1]])
+    position = (0.0, 0.0, 0.0)
+    for i in chain:  # from the node up to the root: apply each node's own transform
+        node = gltf["nodes"][i]
+        scale = node.get("scale", (1, 1, 1))
+        position = tuple(position[k] * scale[k] for k in range(3))
+        position = rotate(node.get("rotation", (0, 0, 0, 1)), position)
+        t = node.get("translation", (0, 0, 0))
+        position = tuple(position[k] + t[k] for k in range(3))
+    return position
+
+
+def test_arms_held_out_are_relaxed_to_hang_and_that_is_the_rest_pose(tmp_path):
+    folder = tmp_path / "deploy" / "assets" / "custom_templates"
+    folder.mkdir(parents=True)
+    _limbed_model_glb(folder / "limbed.glb")  # arms modelled straight out sideways, a T-pose
+
+    result, out_path, build_json = _compile(_minimal_spec(base_template="custom:limbed", has_face=False), tmp_path, "relaxed")
+    assert result.returncode == 0, result.stderr
+    assert not [w for w in build_json["warnings"] if "relax" in w], build_json["warnings"]
+
+    gltf = _glb_gltf(out_path)
+    parents = {child: i for i, node in enumerate(gltf["nodes"]) for child in node.get("children", [])}
+    names = {node.get("name"): i for i, node in enumerate(gltf["nodes"])}
+    for side in ("l", "r"):
+        shoulder = _node_world_position(gltf, names[f"upperarm_{side}"], parents)
+        elbow = _node_world_position(gltf, names[f"lowerarm_{side}"], parents)
+        arm = tuple(elbow[k] - shoulder[k] for k in range(3))
+        length = sum(c * c for c in arm) ** 0.5
+        assert -arm[1] / length > 0.7, (side, arm)  # glTF is Y-up: more than ~45 degrees below level, hanging
+
+    # and the gestures and run poses that start from it are still there
+    assert build_json["run_shape_keys"] == ["run_a", "run_b"] and len(build_json["gesture_shape_keys"]) == 4
+
+
+def _target_extent(gltf: dict, mesh: dict, name: str) -> tuple[float, float, float]:
+    """The largest offset a morph target makes along each glTF axis (x sideways, y up, z
+    toward the viewer, i.e. forward for a figure facing -Y in Blender), from its accessor's bounds."""
+    index = mesh["extras"]["targetNames"].index(name)
+    accessor = gltf["accessors"][mesh["primitives"][0]["targets"][index]["POSITION"]]
+    return tuple(max(abs(accessor["min"][k]), abs(accessor["max"][k])) for k in range(3))  # type: ignore[return-value]
+
+
+def test_a_relaxed_body_gestures_with_the_elbow_bending_forward_and_both_arms_alike(tmp_path):
+    """The gestures were tuned on a mascot's own arms (one raised, one on its hip), where
+    the forearm swings in the plane of the body. On a person that is an elbow hinging sideways,
+    and the overlay blends each arm between its two poses about once a second, which reads as
+    flopping. A body whose arms were relaxed gets talking gestures: the forearm comes forward,
+    the same for both arms, the "out" pose bigger than the "in" pose."""
+    folder = tmp_path / "deploy" / "assets" / "custom_templates"
+    folder.mkdir(parents=True)
+    _limbed_model_glb(folder / "limbed.glb")
+
+    result, out_path, build_json = _compile(_minimal_spec(base_template="custom:limbed", has_face=False), tmp_path, "mirror")
+    assert result.returncode == 0, result.stderr
+    gltf = _glb_gltf(out_path)
+    mesh = next(m for m in gltf["meshes"] if "gesture_l_out" in m.get("extras", {}).get("targetNames", []))
+    extent = {name: _target_extent(gltf, mesh, name) for name in ("gesture_l_out", "gesture_r_out", "gesture_l_in", "gesture_r_in")}
+
+    for side in ("l", "r"):
+        side_reach, up_reach, forward_reach = extent[f"gesture_{side}_out"]
+        assert forward_reach > 0.5 * up_reach, (side, extent)  # the forearm comes forward (it was 0 sideways-only)
+        assert side_reach < up_reach, (side, extent)  # and the upper arm does not swing far out
+    assert max(extent["gesture_l_out"]) == pytest.approx(max(extent["gesture_r_out"]), rel=0.12), extent
+    assert max(extent["gesture_l_out"]) > 1.3 * max(extent["gesture_l_in"]), extent
+
+
+def _node_rotation(gltf: dict, name: str) -> tuple[float, float, float, float]:
+    node = next(n for n in gltf["nodes"] if n.get("name") == name)
+    return tuple(node.get("rotation", (0, 0, 0, 1)))  # type: ignore[return-value]
+
+
+def test_a_pose_sidecar_turns_a_hand_about_its_own_length_in_the_rest_pose(tmp_path):
+    """A hand modelled with its fingers turned outward; `<model>.pose.json` rolls the bone."""
+    folder = tmp_path / "deploy" / "assets" / "custom_templates"
+    folder.mkdir(parents=True)
+    _limbed_model_glb(folder / "limbed.glb", hands=True)
+
+    result, plain_path, plain_build = _compile(_minimal_spec(base_template="custom:limbed", has_face=False), tmp_path, "plain")
+    assert result.returncode == 0, result.stderr
+    (folder / "limbed.pose.json").write_text(json.dumps({"roll_bones": {"hand_l": 180}}))
+    result, rolled_path, rolled_build = _compile(_minimal_spec(base_template="custom:limbed", has_face=False), tmp_path, "rolled")
+    assert result.returncode == 0, result.stderr
+    assert not [w for w in rolled_build["warnings"] if "pose.json" in w], rolled_build["warnings"]
+
+    def turn_between(a, b):
+        dot = abs(sum(x * y for x, y in zip(a, b)))  # |cos(half the angle between the two orientations)|
+        return 2 * __import__("math").degrees(__import__("math").acos(min(1.0, dot)))
+
+    plain, rolled = _glb_gltf(plain_path), _glb_gltf(rolled_path)
+    assert turn_between(_node_rotation(plain, "hand_l"), _node_rotation(rolled, "hand_l")) == pytest.approx(180, abs=3)
+    assert turn_between(_node_rotation(plain, "hand_r"), _node_rotation(rolled, "hand_r")) == pytest.approx(0, abs=3)  # only the named one
+
+
+def test_a_pose_sidecar_can_turn_a_model_that_does_not_face_the_front(tmp_path):
+    """The limbed model is wide (arms along X) and shallow; a quarter turn swaps that."""
+    folder = tmp_path / "deploy" / "assets" / "custom_templates"
+    folder.mkdir(parents=True)
+    _limbed_model_glb(folder / "limbed.glb")
+    result, _, plain = _compile(_minimal_spec(base_template="custom:limbed", has_face=False), tmp_path, "faces_front")
+    assert result.returncode == 0, result.stderr
+    (folder / "limbed.pose.json").write_text(json.dumps({"face_yaw": 90}))
+    result, _, turned = _compile(_minimal_spec(base_template="custom:limbed", has_face=False), tmp_path, "turned")
+    assert result.returncode == 0, result.stderr
+    assert plain["bounds"]["width_m"] > plain["bounds"]["depth_m"]
+    assert turned["bounds"]["depth_m"] > turned["bounds"]["width_m"]
+
+
+def test_a_pose_sidecar_naming_a_missing_bone_warns_and_builds_anyway(tmp_path):
+    folder = tmp_path / "deploy" / "assets" / "custom_templates"
+    folder.mkdir(parents=True)
+    _limbed_model_glb(folder / "limbed.glb")
+    (folder / "limbed.pose.json").write_text(json.dumps({"roll_bones": {"no_such_bone": 90}}))
+
+    result, _, build_json = _compile(_minimal_spec(base_template="custom:limbed", has_face=False), tmp_path, "missing")
+    assert result.returncode == 0, result.stderr
+    assert any("no_such_bone" in w for w in build_json["warnings"]), build_json["warnings"]

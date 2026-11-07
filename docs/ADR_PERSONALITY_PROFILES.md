@@ -19,11 +19,11 @@ The companion today is a single, continuously evolving character. Its parts live
 | Memory | `memories` table in `state.db` | brain, via reflection |
 | Voice | `[voice.tts.remote.*]` in `config.toml` (`voice_sample`, `params`), optionally `agent_state.current_voice_id` | user, by hand; the daemon never writes `config.toml` |
 
-Giving the companion a different character ("Miss Minutes", a stern butler, a jellyfish) currently means editing `config.toml` for the voice, restarting the brain because the TTS pool is built once at startup, rebuilding or importing a body, and either accepting the old traits and memories or resetting them. There is no way to go back to the earlier character without redoing all of it, and what it had earned is lost.
+Giving the companion a different character ("a cheerful mascot", a stern butler, a jellyfish) currently means editing `config.toml` for the voice, restarting the brain because the TTS pool is built once at startup, rebuilding or importing a body, and either accepting the old traits and memories or resetting them. There is no way to go back to the earlier character without redoing all of it, and what it had earned is lost.
 
 The wanted behaviour is one sentence: **"Load personality XXXX" and that character is the companion**, body, temperament and voice together, and it is still itself the next time it is loaded.
 
-A second pressure shapes the memory design. The user may want either *different characters* (Miss Minutes and a butler who should not share a past) or *different personas of one companion* (who should), and may later run several companions at once (section 2.8). The design must support both without two mechanisms.
+A second pressure shapes the memory design. The user may want either *different characters* (a mascot and a butler who should not share a past) or *different personas of one companion* (who should), and may later run several companions at once (section 2.8). The design must support both without two mechanisms.
 
 ## 2. Decision
 
@@ -47,7 +47,7 @@ Memory notes split by whose they are:
 
 * **User tier (shared by all personalities).** Facts about the user: name, projects, preferences, hardware. The existing `memories` table **is** this tier. Every note already in it stays there and is treated as a user fact, so no migration is needed. The user tells the companion something once and every character knows it.
 * **Self tier (per personality).** In-jokes, opinions, shared history, how this character feels about the user. A new table `self_memories(id, ts, note)` (created with `CREATE TABLE IF NOT EXISTS`, so still no ALTER) holds the **live** notes of the active personality; the profile file holds its **saved** notes. Same live/saved pattern as traits.
-* **Isolation.** A personality never reads another personality's self tier directly. The butler does not know what Miss Minutes said, and no cross-reading mechanism exists, because it breaks the illusion of separate characters and is the hardest to reason about.
+* **Isolation.** A personality never reads another personality's self tier directly. The butler does not know what the mascot said, and no cross-reading mechanism exists, because it breaks the illusion of separate characters and is the hardest to reason about.
 * **Memory mode is the one switch for "characters vs. personas".** `memory = "separate"` (default): this personality sees only the user tier and its own self tier. `memory = "shared"`: it additionally sees the saved self tier of every *other* profile that is also `shared`. Visibility is mutual and read-only; each persona still writes only its own notes. A family of personas of one companion is therefore just profiles all set to `shared`.
 * **Tagging.** Reflection classifies each proposed note as `user` or `self`. A wrong `self` costs the user one repeated sentence; a wrong `user` leaks a private memory across characters, so **any note the classifier is unsure of defaults to `self`**. The user can force a note into the shared tier ("remember this for everyone"), which writes it to `memories`.
 * **Retrieval** is unchanged in method (last 20 by recency, boosted by keyword overlap) over the union of the visible tiers.
@@ -67,16 +67,16 @@ Profiles are files, not rows, so one can be copied, backed up or shared as a fol
 ```json
 {
   "schema": 1,
-  "id": "miss-minutes",
-  "display_name": "Miss Minutes",
+  "id": "mascot",
+  "display_name": "Mascot",
   "created_at": 1730500000.0,
   "saved_at": 1730500000.0,
-  "identity_name": "Miss Minutes",
+  "identity_name": "Mascot",
   "traits": { "formality": 40, "extraversion": 85, "humor": 70 },
   "memory": { "mode": "separate", "notes": [ { "ts": 1730500000.0, "note": "..." } ] },
   "body": {
     "look_spec": { "...": "full LookSpec" },
-    "imported_template": "miss_minutes_rigged"
+    "imported_template": "mascot_rigged"
   },
   "voice": {
     "sample": "voice/reference.wav",
@@ -92,7 +92,7 @@ Writes are atomic (temp file in the same directory, then `os.replace`), matching
 
 ### 2.4 Load
 
-Triggered by the companion tool `load_personality(name)` ("load personality Miss Minutes"). Loading is **transactional from the user's point of view**: it either completes entirely or the previous personality stays active and unchanged.
+Triggered by the companion tool `load_personality(name)` ("load personality Mascot"). Loading is **transactional from the user's point of view**: it either completes entirely or the previous personality stays active and unchanged.
 
 1. **Resolve and validate** the profile: JSON parses, the voice sample exists, the imported template (if any) exists, the `LookSpec` validates against the current catalogs. Any failure aborts here with a plain explanation, before anything changes.
 2. **Snapshot the outgoing personality** (section 2.5). This happens first so nothing earned is lost even if the load then fails.
@@ -147,7 +147,7 @@ A separate ADR should cover scheduling (the Inference Capacity Governor already 
 
 ### 2.9 Migration
 
-Nothing changes until the user creates a profile. With `active_personality` unset the system is exactly V1. The first `create_personality` from the running companion is how Miss Minutes (template `miss_minutes_rigged`, `miss_minutes_dry.wav`, seed 1) becomes the first profile; that is the intended first use and doubles as the acceptance test, including the user-tier and self-tier split.
+Nothing changes until the user creates a profile. With `active_personality` unset the system is exactly V1. The first `create_personality` from the running companion is how the existing companion (its imported template, its reference voice sample and seed) becomes the first profile; that is the intended first use and doubles as the acceptance test, including the user-tier and self-tier split.
 
 ## 3. Consequences
 
@@ -166,7 +166,7 @@ Nothing changes until the user creates a profile. With `active_personality` unse
 * **Separate `state.db` per personality.** Perfect isolation and a trivially atomic swap of everything, but it multiplies the WAL/backup surface, breaks the status page's single-database reads, and forces the user to re-teach every character the same facts about them.
 * **Fully shared memory (everyone sees everything).** Simplest, but it makes characters indistinguishable in what they know, which defeats having a different character.
 * **Fully separate memory (nothing shared).** Strongest isolation, but the user must repeat their own name, projects and preferences to each character.
-* **Cross-readable private memories ("ask the butler what Miss Minutes said").** Rejected: it breaks character separation and is the most complex to build and explain. The `shared` mode covers the legitimate case (personas of one companion) without it.
+* **Cross-readable private memories ("ask the butler what the mascot said").** Rejected: it breaks character separation and is the most complex to build and explain. The `shared` mode covers the legitimate case (personas of one companion) without it.
 * **Load only a subset (body-only, voice-only).** Useful, but already possible: `change_appearance` and the voice config. A profile's value is that the parts are loaded together; partial loads can be added later as arguments.
 * **Queue swaps requested during a build.** Rejected: the user's conversation moves on during a 30 s build, and a swap that fires afterwards is surprising.
 

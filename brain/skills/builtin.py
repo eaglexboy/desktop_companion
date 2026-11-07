@@ -7,13 +7,25 @@ from typing import Any
 
 from brain.skills.registry import Param, Skill, SkillRegistry
 
-GESTURES = ("greet", "agree", "disagree", "celebrate", "shrug")
+GESTURES = ("greet", "agree", "disagree", "celebrate", "shrug", "angry", "hip_thrust")
+
+
+def gesture_intensity(state: Any) -> float:
+    """How animated a gesture should be, 0 (subdued) to 1 (eager): 0.5 at its resting mood, more
+    when the companion is happy and energetic, less when it is low or stressed. The overlay plays
+    the matching variant of a clip (a smaller or a bigger greeting wave)."""
+    try:
+        mood = state.store.get_mood()
+        lift = 0.6 * (mood.get("valence", 50.0) - 50.0) + 0.4 * (mood.get("energy", 50.0) - 50.0) - 0.3 * (mood.get("stress", 50.0) - 50.0)
+    except Exception:  # noqa: BLE001 -- a gesture must never fail for want of a mood
+        return 0.5
+    return max(0.0, min(1.0, 0.5 + lift / 100.0))
 
 
 async def _gesture(args: dict[str, Any], state: Any) -> str:
     name = args["name"]
     # `name` is what the overlay reads; `clip` is the documented protocol field.
-    await state.hub.broadcast("play_gesture", {"name": name, "clip": name, "loop": False})
+    await state.hub.broadcast("play_gesture", {"name": name, "clip": name, "loop": False, "intensity": gesture_intensity(state)})
     return f"played {name}"
 
 

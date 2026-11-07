@@ -53,6 +53,7 @@ Window {
     function slideTo(localX, localY, durationMs, animate, easing) {
         slideAnim.stop()
         slideStartTimer.stop()
+        standMoveTimer.stop()
         if (!animate || durationMs <= 0 || (localX === slideX && localY === slideY)) {
             slideX = localX
             slideY = localY
@@ -60,6 +61,15 @@ Window {
             if (!root.crossEntering)
                 idleBehaviors.turnBack()
             return 0
+        }
+        // A body sitting on its chair stands up first, the chair goes, and only then does it
+        // turn and run: the move is held back for that long and then made as normal.
+        const standMs = idleBehaviors.requestStand()
+        if (standMs > 0) {
+            standMoveTimer.args = [localX, localY, durationMs, animate, easing]
+            standMoveTimer.interval = standMs
+            standMoveTimer.start()
+            return standMs + idleBehaviors.turnMs
         }
         const dx = localX - slideX
         idleBehaviors.travelDir = dx >= 0 ? 1 : -1
@@ -78,6 +88,11 @@ Window {
     Timer {
         id: slideStartTimer
         onTriggered: slideAnim.start()
+    }
+    Timer {
+        id: standMoveTimer
+        property var args: []
+        onTriggered: root.slideTo(args[0], args[1], args[2], args[3], args[4])
     }
 
     property bool interactive: false
@@ -452,6 +467,7 @@ Window {
         root.awaitFrame = false
         entryFallbackTimer.stop()
         entrySettleTimer.stop()
+        idleBehaviors.applyProp()   // the recreated surface brought the scene back with the chair showing
         if (!t)
             return
         const to = root.screenByName(t.screen)
@@ -522,6 +538,10 @@ Window {
                 avatar3d.controller.blinkKeyNames = current.blink_shape_keys || []
                 avatar3d.controller.runKeyNames = current.run_shape_keys || []
                 avatar3d.controller.gestureKeyNames = current.gesture_shape_keys || []
+                // A model whose own bones carry the idle clips plays them; the rest keep the transform idles.
+                idleBehaviors.preferBakedClips = current.skeletal_clips === true
+                // A body wearing an animation library plays its clips by role (idle, talk, run...).
+                idleBehaviors.libraryClips = current.library_clips || ({})
                 avatar3d.pivotHeight = ((current.bounds && current.bounds.height_m) || 0) * 0.45
                 root.currentLookPath = "file://" + assetDir + "/" + current.glb_filename
             }
@@ -601,6 +621,10 @@ Window {
                 avatar3d.controller.blinkKeyNames = current.blink_shape_keys || []
                 avatar3d.controller.runKeyNames = current.run_shape_keys || []
                 avatar3d.controller.gestureKeyNames = current.gesture_shape_keys || []
+                // A model whose own bones carry the idle clips plays them; the rest keep the transform idles.
+                idleBehaviors.preferBakedClips = current.skeletal_clips === true
+                // A body wearing an animation library plays its clips by role (idle, talk, run...).
+                idleBehaviors.libraryClips = current.library_clips || ({})
                 avatar3d.pivotHeight = ((current.bounds && current.bounds.height_m) || 0) * 0.45
                 root.currentLookPath = "file://" + root.deskmateDataDir + "/" + current.glb_filename
             }
@@ -620,7 +644,7 @@ Window {
         }
 
         function onGestureReceived(payload) {
-            idleBehaviors.playGesture(payload.name || "")
+            idleBehaviors.playGesture(payload.name || "", payload.intensity)
         }
     }
 
