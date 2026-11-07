@@ -219,8 +219,16 @@ class Host:
             rest = (
                 self.pelvis_world
             )  # the hips travel is applied to this skeleton's own hips
+            up = (self.world @ self.rest["pelvis"]).to_quaternion()
             return Clip(
-                frames, quats, hips, clearance, {"hips_rest": (rest.x, rest.y, rest.z)}
+                frames,
+                quats,
+                hips,
+                clearance,
+                {
+                    "hips_rest": (rest.x, rest.y, rest.z),
+                    "pelvis_rest": (up.w, up.x, up.y, up.z),
+                },
             )
         finally:
             _remove(objects, [action])

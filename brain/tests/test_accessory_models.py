@@ -1172,6 +1172,51 @@ def test_a_ping_pong_clip_ends_where_it_began_and_is_still_at_the_turn():
     assert len(ping_pong(clip, 1.0)) == 9 and len(ping_pong(clip.copy(), 3.0)) == 25
 
 
+def test_a_body_that_lies_down_turns_on_the_floor_instead_of_over_its_head():
+    import math
+
+    from blender.animation_library import (
+        IDENTITY_Q,
+        lying_turn,
+        q_dot,
+        q_rotate,
+        q_slerp,
+    )
+
+    def about(axis, deg):
+        h, s = math.radians(deg) / 2, math.sin(math.radians(deg) / 2)
+        return (math.cos(h), axis[0] * s, axis[1] * s, axis[2] * s)
+
+    # the bone's y is the body's length and lies along the floor (z is up); the second pose has it
+    # turned right round, as from a push-up position with the head one way to lying on the back
+    # with the head the other
+    start, end = IDENTITY_Q, about((1, 0, 0), 180)
+    turn = lying_turn(start, end, IDENTITY_Q)
+    assert turn is not None
+
+    def height(q):
+        return abs(q_rotate(q, (0.0, 1.0, 0.0))[2])
+
+    ts = [k / 40 for k in range(41)]
+    plain = max(height(q_slerp(start, end, t)) for t in ts)
+    assert plain > 0.99  # the slerp stands the body on its head half way
+    assert max(height(turn(t)) for t in ts) < 0.15  # this stays on the floor
+    assert abs(abs(q_dot(turn(0.0), start)) - 1) < 1e-9
+    assert abs(abs(q_dot(turn(1.0), end)) - 1) < 1e-9
+    # and it is a turn, not a jump: no step is large
+    steps = [
+        2 * math.degrees(math.acos(min(1, abs(q_dot(turn(a), turn(b))))))
+        for a, b in zip(ts, ts[1:])
+    ]
+    assert max(steps) < 12
+
+    # the body's own rest orientation says which way is up: bone y up when standing
+    up = about((1, 0, 0), 90)
+    standing = lying_turn(IDENTITY_Q, about((0, 1, 0), 90), up)
+    assert standing is None  # standing in the first pose: the slerp will do
+    assert lying_turn(start, end, None) is None
+
+
 # --- clips that are options for an action -------------------------------------------------------
 
 

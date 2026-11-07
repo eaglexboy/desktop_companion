@@ -11,6 +11,7 @@ other cannot.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -366,6 +367,7 @@ def mixamo_clip_defaults(name: str) -> dict:
             mirror=False,
             ease_from="Sleeping_Idle",
             ease_to="@stand",
+            ease_frames=36,  # the spin and roll between the floor and the push-up position
             extract=[
                 {
                     "name": "Lie_Down",
@@ -450,7 +452,7 @@ def mixamo_derived_clips(names: "set[str] | list[str]") -> list[dict]:
                     "name": name,
                     "options": {
                         "compose": parts,
-                        "ease": 14,
+                        "ease": 30,  # ~1 s: the spin and the roll between the plank and the floor
                         "ease_from": "@stand",
                         "ease_to": "@stand",
                     },
@@ -522,6 +524,83 @@ def q_angle_deg(a: Quat, b: Quat) -> float:
     import math
 
     return math.degrees(2 * math.acos(min(1.0, abs(q_dot(a, b)))))
+
+
+IDENTITY_Q: Quat = (1.0, 0.0, 0.0, 0.0)
+
+
+def q_mul(a: Quat, b: Quat) -> Quat:
+    return (
+        a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+        a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+        a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+        a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0],
+    )
+
+
+def q_conj(a: Quat) -> Quat:
+    return (a[0], -a[1], -a[2], -a[3])
+
+
+def q_rotate(q: Quat, v: tuple[float, float, float]) -> tuple[float, float, float]:
+    r = q_mul(q_mul(q, (0.0, v[0], v[1], v[2])), q_conj(q))
+    return (r[1], r[2], r[3])
+
+
+def q_about_z(angle: float) -> Quat:
+    import math
+
+    return (math.cos(angle / 2), 0.0, 0.0, math.sin(angle / 2))
+
+
+def _smooth(x: float) -> float:
+    x = min(max(x, 0.0), 1.0)
+    return x * x * (3 - 2 * x)
+
+
+def lying_turn(a: Quat, b: Quat, rest: Quat | None) -> Callable[[float], Quat] | None:
+    """How the pelvis goes from rotation `a` to `b` when the body lies down in both (its long axis,
+    the bone's y, is within 37 degrees of the floor): `None` (the plain slerp will do) or a function
+    of t (0..1) giving the rotation. Turning from lying face down, head to one side, to lying on the
+    back, head to the other, the slerp takes the shortest way: head over heels, through a handstand.
+    This goes the way a body on the floor does: it spins about the vertical for the first 70 % of
+    the time and rolls about its own length (before that spin: the roll is about the body, then the
+    whole is turned) from 30 % on (`rest` is the pelvis bone's rest
+    orientation in world space, which says which way is up; `a` and `b` are in the bone's frame).
+    """
+    import math
+
+    if rest is None:
+        return None
+    base, goal = q_mul(rest, a), q_mul(rest, b)
+    l1, l2 = q_rotate(base, (0.0, 1.0, 0.0)), q_rotate(goal, (0.0, 1.0, 0.0))
+    if abs(l1[2]) > 0.6 or abs(l2[2]) > 0.6:
+        return None
+    yaw = math.atan2(l1[0] * l2[1] - l1[1] * l2[0], l1[0] * l2[0] + l1[1] * l2[1])
+    residual = q_mul(q_about_z(-yaw), q_mul(goal, q_conj(base)))
+    back = q_conj(rest)
+
+    def at(t: float) -> Quat:
+        spin = q_about_z(yaw * _smooth(t / 0.7))
+        roll = q_slerp(IDENTITY_Q, residual, _smooth((t - 0.3) / 0.7))
+        return q_mul(back, q_mul(q_mul(spin, roll), base))
+
+    return at
+
+
+def pelvis_rest(meta: dict) -> Quat | None:
+    value = meta.get("pelvis_rest")
+    return tuple(value) if value else None  # type: ignore[return-value]
+
+
+def blend_bone(
+    bone: str, a: Quat, b: Quat, t: float, turn: Callable[[float], Quat] | None
+) -> Quat:
+    """A bone's rotation `t` of the way from `a` to `b`: the pelvis goes by `turn` (`lying_turn`)
+    when there is one, every other bone by the shortest arc."""
+    if bone == "pelvis" and turn is not None:
+        return turn(t)
+    return q_slerp(a, b, t)
 
 
 def reduce_keys(
@@ -697,9 +776,18 @@ def ease_ends(clip: Clip, start: Pose | None, end: Pose | None, frames: int) -> 
     hips = list(clip.hips)
     if start is not None:
         ref_q, ref_h = start
+        turn = (
+            lying_turn(
+                ref_q.get("pelvis", clip.quats["pelvis"][0]),
+                clip.quats["pelvis"][0],
+                pelvis_rest(clip.meta),
+            )
+            if "pelvis" in clip.quats
+            else None
+        )
         for b, q in clip.quats.items():
             quats[b] = [
-                q_slerp(ref_q.get(b, q[0]), q[0], (k + 1) / (frames + 1))
+                blend_bone(b, ref_q.get(b, q[0]), q[0], (k + 1) / (frames + 1), turn)
                 for k in range(frames)
             ] + quats[b]
         hips = [
@@ -708,9 +796,18 @@ def ease_ends(clip: Clip, start: Pose | None, end: Pose | None, frames: int) -> 
         ] + hips
     if end is not None:
         ref_q, ref_h = end
+        turn = (
+            lying_turn(
+                clip.quats["pelvis"][-1],
+                ref_q.get("pelvis", clip.quats["pelvis"][-1]),
+                pelvis_rest(clip.meta),
+            )
+            if "pelvis" in clip.quats
+            else None
+        )
         for b, q in clip.quats.items():
             quats[b] += [
-                q_slerp(q[-1], ref_q.get(b, q[-1]), (k + 1) / (frames + 1))
+                blend_bone(b, q[-1], ref_q.get(b, q[-1]), (k + 1) / (frames + 1), turn)
                 for k in range(frames)
             ]
         hips += [
@@ -779,10 +876,21 @@ def join_clips(parts: list[Clip], ease: int) -> Clip:
             first = pose_at(part, 0)
             before = {b: quats[b][-1] for b in bones}
             before_hips = hips[-1]
+            turn = (
+                lying_turn(
+                    before["pelvis"],
+                    first[0].get("pelvis", before["pelvis"]),
+                    pelvis_rest(parts[0].meta),
+                )
+                if "pelvis" in bones
+                else None
+            )
             for k in range(ease):
                 t = (k + 1) / (ease + 1)
                 for b in bones:
-                    quats[b].append(q_slerp(before[b], first[0].get(b, before[b]), t))
+                    quats[b].append(
+                        blend_bone(b, before[b], first[0].get(b, before[b]), t, turn)
+                    )
                 hips.append(_mix_hips(before_hips, first[1], t))
         for j in range(len(part)):
             for b in bones:
