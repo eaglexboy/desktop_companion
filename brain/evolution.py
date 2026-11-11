@@ -362,6 +362,42 @@ def _wants_rebuild(request: str) -> bool:
     return bool(_REBUILD_WORDS & said) and bool(_REBUILD_TARGETS & said)
 
 
+# The companion says it is making the change: "switching to", "I'll swap", "let me become". Only its
+# own commitment counts, never the user's wording.
+_PROMISES_A_CHANGE = re.compile(
+    r"\b(?:switching|swapping|changing|shifting|becoming|transforming|morphing)\b"
+    r"|\b(?:i'll|i will|i'm going to|let me|here goes|going to)\s+"
+    r"(?:\w+\s+)?(?:switch|swap|change|shift|become|transform|morph|turn into)\b",
+    re.IGNORECASE,
+)
+
+
+def _model_the_user_named(text: str, templates: list[str]) -> str | None:
+    """The installed model whose whole name is among the words of `text`, wherever they are in it
+    ("now let's test the robot polygonal one"), when exactly one is: a part of a name several models
+    share ("robot") or two models named together name none."""
+    said = set(re.findall(r"[a-z0-9]+", (text or "").lower()))
+    names = {
+        template: [
+            w
+            for w in template.removeprefix(_CUSTOM_PREFIX).split("_")
+            if w not in _MODEL_NAME_NOISE
+        ]
+        for template in templates
+    }
+    vocabulary = {w for name in names.values() for w in name}
+    mentioned = said & vocabulary
+    if not mentioned:
+        return None
+    whole = [t for t, name in names.items() if name and set(name) <= said]
+    if len(whole) == 1:
+        return whole[0]
+    if whole:
+        return None
+    # a part of a name that only one model has ("milo")
+    return _model_of_words(mentioned, names)
+
+
 def _model_title(template: str) -> str:
     """ "custom:milo_robot_rigged" as "milo robot"."""
     return " ".join(
@@ -721,6 +757,19 @@ class AvatarEvolution:
                 _CUSTOM_PREFIX
             )
         )
+
+    def promised_look_change(self, user_text: str, reply: str) -> str | None:
+        """The installed model the companion said it is switching to, when the user's message names
+        exactly one: for a reply that says "switching to ..." but sent no action. The words of the
+        request are not looked at for a switch word (asking to "test" or "try" a model is a request
+        too); the companion's own promise is the check. Returns the model's name as a request for
+        `change_appearance`, or None."""
+        if not _PROMISES_A_CHANGE.search(reply or ""):
+            return None
+        template = _model_the_user_named(
+            user_text, available_custom_templates(self._settings.deploy_dir)
+        )
+        return _model_title(template) if template else None
 
     async def change_appearance(self, request: str) -> str:
         """The real `change_appearance` tool handler (replaces router.py's

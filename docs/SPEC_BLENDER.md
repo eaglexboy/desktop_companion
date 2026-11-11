@@ -335,6 +335,10 @@ Declares all allowable outfits, footwear options, and socket-mounted accessories
     "warnings": []
   }
   ```
+
+  Every imported material is drawn from both sides (the overlay's renderer drops the faces of a one-sided material that point away, which shows as holes in a low-poly model).
+
+  `bounds` also carries `fit_scale` (below 1; left out when 1) when the overlay is to draw the body smaller so that its gestures stay in the window.
 * **In `manifest.json` (`versions[]` entry):** Mirrors `<out>.build.json` with the addition of `version: N` and the full serialized `look_spec: {...}` (used to guarantee zero-recompile rollback for kept versions, and to rebuild a pruned version on request or for its thumbnail; builds are deterministic from `seed`).
 * **Over WebSocket IPC (`hot_reload_asset` & `welcome`):** The daemon broadcasts the active version entry **stripped of `look_spec` and `warnings`** to minimize payload overhead.
 

@@ -71,15 +71,15 @@ Item {
     // True when it started a turn (the caller waits `turnMs` before running);
     // false when already side-on that way, as on the second leg of a trip
     // between monitors.
-    function turnToward(dir) {
+    function turnToward(dir, degrees = 90) {
         if (!root.avatar)
             return false;
-        if (root.turned && !turnAnim.running && Math.abs(root.avatar.eulerRotation.y - 90 * dir) < 1)
+        if (root.turned && !turnAnim.running && Math.abs(root.avatar.eulerRotation.y - degrees * dir) < 1)
             return false;
         cancelMicroIdle();
         turnAnim.stop();   // before `turned = true`: its onStopped may clear it
         root.turned = true;
-        turnAnim.to = 90 * dir;
+        turnAnim.to = degrees * dir;
         turnAnim.start();
         return true;
     }
@@ -925,9 +925,11 @@ Item {
             return;
         const key = keys[Math.floor(Math.random() * keys.length)];
         const clip = root.libraryClips[key];
-        // A workout lies along the way the body faces, toward the camera, and a body that long and that near
-        // grows to half as big again: it turns side-on first (as for a run) and turns back when it is up.
-        if (root.turnToward(1)) {
+        // A workout lies along the way the body faces, toward the camera, and a body that long and that
+        // near grows to half as big again. Every workout (the one clip is the lying down, the exercise
+        // and the getting up) is done turned 45 degrees: half the growth, and still facing the user
+        // enough for the ones that look best that way (a burpee, jumping jacks). It turns back when up.
+        if (root.turnToward(1, root.workoutTurnDegrees)) {
             root.workoutActive = true;
             root.workoutClip = clip;
             cancelMicroIdle();
@@ -938,6 +940,7 @@ Item {
         }
     }
     property string workoutClip: ""
+    readonly property int workoutTurnDegrees: 45
     Timer {
         id: workoutDelay
         interval: root.turnMs + 40

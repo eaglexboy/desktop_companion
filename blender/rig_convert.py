@@ -32,6 +32,7 @@ sys.path.insert(
 from blender.animation_library import q_angle_deg, reduce_keys
 from blender.rigs import (
     folded_bones,
+    fold_target,
     prunes_extra_bones,
     quaternius_names,
     rig_family,
@@ -197,7 +198,14 @@ def _fold_bones(arm, nearest: dict[str, str | None]) -> int:
 
 
 def _prune_extra_bones(arm, keep: set[str]) -> int:
-    """Folds the bones that are not in `keep` into the nearest kept ancestor (see `_fold_bones`)."""
+    """Folds the bones that are not in `keep` into the nearest kept ancestor, or into the kept bone they
+    are nearest to when they have none but the root (see `rigs.fold_target` and `_fold_bones`)."""
+    kept = [
+        b for b in arm.data.bones if b.name in keep and b.name != "root"
+    ]
+    segments = {
+        b.name: (tuple(b.head_local), tuple(b.tail_local)) for b in kept
+    }
     nearest: dict[str, str | None] = {}
     for bone in arm.data.bones:
         if bone.name in keep:
@@ -205,7 +213,11 @@ def _prune_extra_bones(arm, keep: set[str]) -> int:
         ancestor = bone.parent
         while ancestor is not None and ancestor.name not in keep:
             ancestor = ancestor.parent
-        nearest[bone.name] = ancestor.name if ancestor else None
+        nearest[bone.name] = fold_target(
+            tuple(bone.head_local),
+            ancestor.name if ancestor else None,
+            segments,
+        )
     return _fold_bones(arm, nearest)
 
 

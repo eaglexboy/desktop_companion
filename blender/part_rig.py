@@ -40,11 +40,11 @@ import sys
 
 import bpy  # pyright: ignore[reportMissingImports]
 import numpy as np
-from mathutils import ( # pyright: ignore[reportMissingImports]
+from mathutils import (  # pyright: ignore[reportMissingImports]
     Matrix,
     Quaternion,
     Vector,
-)  
+)
 
 DEFAULT_ARM_DX = 0.14
 HEAD_TOP_FRACTION = 0.82
@@ -52,7 +52,9 @@ TORSO_FROM_FRACTION = 0.55
 ARM_FROM_FRACTION = 0.30
 HEAD_HALF_WIDTH = 0.12
 STRAY_TORSO_DEPTH = 0.15
-HEAD_SIDE_MARGIN = 0.05  # how far past the head's own width a piece at its side may sit (of the height)
+HEAD_SIDE_MARGIN = 0.05
+SMALL_PIECE_VERTS = 20  # a piece this small, out along an arm, is a finger
+HAND_FROM_ALONG = 0.55  # how far along the arm (0 shoulder, 1 fingertip) a hand may start  # how far past the head's own width a piece at its side may sit (of the height)
 LIMBLESS_HEAD_FROM = 0.60
 LIMBLESS_NECK_FROM = 0.40
 SPINE_BANDS = (
@@ -520,6 +522,17 @@ def main() -> None:
             nearest = min(
                 range(3), key=lambda i: _distance_to_segment(p.c, *chain[i])
             )
+            # a hand is often several small pieces (fingers, a thumb), and some of them lie nearer the
+            # forearm's segment than the hand's: a small piece out in the arm's outer half is the hand's
+            sh, tip = arms[side][0], arms[side][3]
+            reach = float(np.linalg.norm(tip - sh))
+            along = float((p.c - sh) @ (tip - sh)) / max(reach * reach, 1e-12)
+            if (
+                nearest != 2
+                and len(p.v) <= SMALL_PIECE_VERTS
+                and along >= HAND_FROM_ALONG
+            ):
+                nearest = 2
             p.bone = ("upperarm", "lowerarm", "hand")[nearest] + sfx
         hip, knee, ankle, _ = legs[side]
         for p in of("leg" + side):
@@ -551,6 +564,13 @@ def main() -> None:
             rot_between(wr2 - el2, (sign, 0, 0)),
         )
         wr3, tip3 = ((x - el2) @ m2.T + el2 for x in (wr2, tip2))
+        # The hand points along the arm too, as it does in a T-pose: a hand that hung down at the end
+        # of the arm was carried to point forward or back, and when the clips lower the arm it
+        # stayed that way, like a foot. (Only the hand's own pieces turn, about the wrist.)
+        m3 = rotate_parts(
+            following("hand" + sfx), wr3, rot_between(tip3 - wr3, (sign, 0, 0))
+        )
+        tip3 = (tip3 - wr3) @ m3.T + wr3
         joints["arm" + side] = (sh, el2, wr3, tip3)
 
         hip, knee, ankle, toe_y = legs[side]

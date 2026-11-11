@@ -89,7 +89,10 @@ def test_rejects_disallowed_origin():
         pytest.raises(WebSocketDisconnect) as exc_info,
         client.websocket_connect(
             "/ws/overlay",
-            headers={"host": DEFAULT_HOST_HEADER, "origin": "https://evil.example.com"},
+            headers={
+                "host": DEFAULT_HOST_HEADER,
+                "origin": "https://evil.example.com",
+            },
         ),
     ):
         pass
@@ -103,7 +106,10 @@ def test_accepts_allowed_origin():
     client = TestClient(_app(hub))
     with client.websocket_connect(
         "/ws/overlay",
-        headers={"host": DEFAULT_HOST_HEADER, "origin": "https://trusted.example.com"},
+        headers={
+            "host": DEFAULT_HOST_HEADER,
+            "origin": "https://trusted.example.com",
+        },
     ) as ws:
         ws.send_json(_hello())
         welcome = ws.receive_json()
@@ -154,7 +160,9 @@ def test_welcome_contains_expected_fields():
             "avatar_height_px": 240,
             "show_speech_bubble": True,
         }
-        assert payload["config"]["shortcuts"]["toggle_interaction"] == "Meta+Alt+D"
+        assert (
+            payload["config"]["shortcuts"]["toggle_interaction"] == "Meta+Alt+D"
+        )
         assert payload["config"]["voice"] == {"volume": 1.0}
 
 
@@ -165,7 +173,9 @@ def test_welcome_carries_the_configured_voice_volume():
         "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
     ) as ws:
         ws.send_json(_hello())
-        assert ws.receive_json()["payload"]["config"]["voice"] == {"volume": 0.4}
+        assert ws.receive_json()["payload"]["config"]["voice"] == {
+            "volume": 0.4
+        }
 
 
 def test_update_settings_changes_what_later_clients_are_welcomed_with():
@@ -177,11 +187,15 @@ def test_update_settings_changes_what_later_clients_are_welcomed_with():
         "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
     ) as ws:
         ws.send_json(_hello())
-        assert ws.receive_json()["payload"]["config"]["voice"] == {"volume": 0.25}
+        assert ws.receive_json()["payload"]["config"]["voice"] == {
+            "volume": 0.25
+        }
 
 
 def test_welcome_includes_real_manifest_with_look_spec_and_warnings():
-    manifest = append_version(None, _build_json(), {"base_template": "primitive_blob"})
+    manifest = append_version(
+        None, _build_json(), {"base_template": "primitive_blob"}
+    )
     hub = OverlayHub(_settings(), get_manifest=lambda: manifest)
     client = TestClient(_app(hub))
     with client.websocket_connect(
@@ -200,7 +214,8 @@ def test_welcome_includes_real_manifest_with_look_spec_and_warnings():
 
 def test_the_overlay_is_told_which_clips_a_body_plays():
     """`skeletal_clips` and `library_clips` decide how the overlay animates a body (its own clips
-    by role, or its transform stand-ins); they were missing from the wire fields."""
+    by role, or its transform stand-ins); they were missing from the wire fields.
+    """
     build = {
         **_build_json(),
         "skeletal_clips": True,
@@ -214,7 +229,10 @@ def test_the_overlay_is_told_which_clips_a_body_plays():
     ) as ws:
         ws.send_json(_hello())
         entry = ws.receive_json()["payload"]["manifest"]["versions"][0]
-        assert entry["library_clips"] == {"idle": "Idle_Loop", "run": "Sprint_Loop"}
+        assert entry["library_clips"] == {
+            "idle": "Idle_Loop",
+            "run": "Sprint_Loop",
+        }
         assert entry["skeletal_clips"] is True
 
 
@@ -265,7 +283,11 @@ def test_rejects_malformed_hello_payload():
         ) as ws,
     ):
         ws.send_json(
-            {"type": "hello", "timestamp": time.time(), "payload": {"client_id": "x"}}
+            {
+                "type": "hello",
+                "timestamp": time.time(),
+                "payload": {"client_id": "x"},
+            }
         )
         ws.receive_json()
     assert exc_info.value.code == 1008
@@ -293,6 +315,32 @@ def test_duplicate_client_id_closes_older_socket_with_4409():
             with pytest.raises(WebSocketDisconnect) as exc_info:
                 ws1.receive_json()
             assert exc_info.value.code == 4409
+
+
+# --- the daemon stopping --------------------------------------------------------
+
+
+def test_close_all_sends_every_client_away_so_the_server_can_stop():
+    """uvicorn waits for open connections before it stops, and an overlay never closes its own."""
+    hub = OverlayHub(_settings())
+    app = _app(hub)
+
+    @app.post("/stop")
+    async def stop() -> dict:
+        await hub.close_all()
+        return {"left": hub.connected_client_ids}
+
+    with TestClient(app) as client:
+        with client.websocket_connect(
+            "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
+        ) as ws:
+            ws.send_json(_hello("desktop_primary"))
+            ws.receive_json()  # welcome
+            assert hub.connected_client_ids == ["desktop_primary"]
+            assert client.post("/stop").json() == {"left": []}
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                ws.receive_json()
+            assert exc_info.value.code == 1001
 
 
 # --- client -> daemon event dispatch --------------------------------------------
@@ -501,10 +549,14 @@ def test_audio_stream_routes_binary_frames_and_finalizes_on_end():
     async def on_user_text_input(client_id, text):
         received.append((client_id, text))
 
-    coordinator = STTCoordinator("local", _FakeSTTBackend("transcribed speech"), None)
+    coordinator = STTCoordinator(
+        "local", _FakeSTTBackend("transcribed speech"), None
+    )
     streaming = StreamingSTT(coordinator, silence_threshold_ms=800)
     hub = OverlayHub(
-        _settings(), streaming_stt=streaming, on_user_text_input=on_user_text_input
+        _settings(),
+        streaming_stt=streaming,
+        on_user_text_input=on_user_text_input,
     )
     client = TestClient(_app(hub))
 
@@ -651,7 +703,9 @@ async def test_broadcast_prunes_dead_connections_without_failing_the_rest():
 
 
 def test_hot_reload_asset_strips_look_spec_and_warnings():
-    manifest = append_version(None, _build_json(), {"base_template": "primitive_blob"})
+    manifest = append_version(
+        None, _build_json(), {"base_template": "primitive_blob"}
+    )
     stripped = project_manifest(manifest, include_look_spec_and_warnings=False)
     entry = stripped["versions"][0]
     assert "look_spec" not in entry

@@ -13,7 +13,10 @@ Item {
     // Hidden from the moment a look starts loading until Main.qml says its first clip is
     // playing: a freshly loaded body stands in its bind pose (a T) until then.
     property bool concealed: false
-    onLookSourceChanged: root.concealed = true
+    onLookSourceChanged: {
+        root.concealed = true;
+        root.fit = null;
+    }
     property alias controller: avatarController
     // The QQuick3DNode IdleBehaviors.qml animates (eulerRotation/scale/
     // position), since View3D itself is a 2D Item with no such 3D transform
@@ -24,6 +27,8 @@ Item {
     // the camera on a forward lean, enlarging it past the view's edge.
     property alias modelNode: pivotNode
     property real pivotHeight: 0
+    // How big the body is drawn, a fraction of its size (the look's `bounds.fit_scale`).
+    property real fitScale: 1
 
     // Extra view height above the avatar, in px, so a turned or leaning body
     // (parts swing toward the camera and grow) is not cut off at the top. The
@@ -34,6 +39,82 @@ Item {
     // Half the visible height at the camera's distance, for the 50-degree base framing.
     readonly property real _baseHalf: 4.0 * Math.tan(25 * Math.PI / 180)
 
+    // How far the body reaches beyond its joints on each side, in px of this item: {left, top, right,
+    // bottom}, or null until it has been measured for the look that is loaded. A joint is inside the
+    // body, not on its surface (the top of the head, the fingers, the belly), and how far the surface
+    // is differs from model to model (a stout figure with a single bone is far wider than its joints),
+    // so it is measured once per look from a picture of it.
+    property var fit: null
+    WindowMaskHelper {
+        id: silhouette
+    }
+    // The box around the joints of the body as it is now: {left, top, right, bottom} in this item's
+    // coordinates, or null while no model is loaded.
+    function jointBox() {
+        const points = avatarController.nodePositions();
+        let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+        for (let i = 0; i < points.length; ++i) {
+            const at = view3d.mapFrom3DScene(points[i]);
+            if (!isFinite(at.x) || !isFinite(at.y))
+                continue;
+            left = Math.min(left, at.x);
+            right = Math.max(right, at.x);
+            top = Math.min(top, at.y);
+            bottom = Math.max(bottom, at.y);
+        }
+        return left > right ? null : {
+            left: left,
+            top: top,
+            right: right,
+            bottom: bottom
+        };
+    }
+    // Measures `fit`: how far a picture of the body reaches past the box around its joints, on each
+    // side. Nothing is measured while nothing is drawn (still hidden, not yet posed); it is tried
+    // again until it is.
+    function measureFit() {
+        const joints = jointBox();
+        if (!joints)
+            return;
+        root.grabToImage(function (result) {
+            const seen = silhouette.opaqueBounds(result.image);
+            if (!seen.imageWidth || root.fit)
+                return;
+            const sx = root.width / seen.imageWidth;
+            const sy = root.height / seen.imageHeight;
+            root.fit = {
+                left: Math.max(0, joints.left - seen.left * sx),
+                top: Math.max(0, joints.top - seen.top * sy),
+                right: Math.max(0, seen.right * sx - joints.right),
+                bottom: Math.max(0, seen.bottom * sy - joints.bottom)
+            };
+        });
+    }
+    Timer {
+        interval: 500
+        repeat: true
+        running: root.fit === null && !root.concealed && root.lookSource !== ""
+        onTriggered: root.measureFit()
+    }
+    // The box around the body as it is now, in this item's own coordinates: {x, y, width, height}, or
+    // null while there is no model or it has not been measured. It is the box around the joints,
+    // widened by how far the body reaches beyond them and by `slack` times the avatar's height.
+    // Main.qml makes everything outside it click-through.
+    function bodyBox(slack) {
+        const joints = root.fit ? jointBox() : null;
+        if (!joints)
+            return null;
+        const room = slack * root.baseHeight;
+        const left = joints.left - root.fit.left - room;
+        const top = joints.top - root.fit.top - room;
+        return {
+            x: left,
+            y: top,
+            width: joints.right + root.fit.right + room - left,
+            height: joints.bottom + root.fit.bottom + room - top
+        };
+    }
+
     // Emitted once per source change, after RuntimeLoader settles into
     // Success or Error -- Main.qml forwards this straight into an
     // asset_swap_result event back to the daemon.
@@ -42,12 +123,16 @@ Item {
     // Strips baked animation clips before RuntimeLoader sees the file: Qt
     // 6.10 auto-plays every imported animation with no way to disable it,
     // and the clips all fight over the same head bone (see glb_sanitizer.h).
-    GlbSanitizer { id: glbSanitizer }
+    GlbSanitizer {
+        id: glbSanitizer
+    }
 
     View3D {
         id: view3d
         anchors.fill: parent
         opacity: root.concealed ? 0 : 1
+        // Named, not left to the first camera found: `mapFrom3DScene` (bodyBox) answers 0 without it.
+        camera: camera
 
         environment: SceneEnvironment {
             backgroundMode: SceneEnvironment.Transparent
@@ -81,25 +166,33 @@ Item {
             clipFar: 1000
         }
 
+        // Draws the body smaller, about the spot it stands on, when its gestures would otherwise
+        // leave the window (`fitScale`, measured by the generator for each look). It is a node of
+        // its own because pivotNode's scale belongs to the idle animations.
         Node {
-            id: pivotNode
+            id: fitNode
+            scale: Qt.vector3d(root.fitScale, root.fitScale, root.fitScale)
 
-            RuntimeLoader {
-                id: loader
-                position: Qt.vector3d(0, -root.pivotHeight, 0)
-                source: root.lookSource
-                onStatusChanged: {
-                    if (status === RuntimeLoader.Status.Success) {
-                        avatarController.root = loader
-                        avatarController.resetMorphWeights()
-                        root.assetLoadResult(true, "")
-                    } else if (status === RuntimeLoader.Status.Error) {
-                        root.concealed = false
-                        // Keep running and keep the daemon connection open on
-                        // a bad asset -- avatarController.root is left pointing
-                        // at whatever previously loaded successfully (or null
-                        // on a failed initial bootstrap), never torn down here.
-                        root.assetLoadResult(false, loader.errorString)
+            Node {
+                id: pivotNode
+
+                RuntimeLoader {
+                    id: loader
+                    position: Qt.vector3d(0, -root.pivotHeight, 0)
+                    source: root.lookSource
+                    onStatusChanged: {
+                        if (status === RuntimeLoader.Status.Success) {
+                            avatarController.root = loader;
+                            avatarController.resetMorphWeights();
+                            root.assetLoadResult(true, "");
+                        } else if (status === RuntimeLoader.Status.Error) {
+                            root.concealed = false;
+                            // Keep running and keep the daemon connection open on
+                            // a bad asset -- avatarController.root is left pointing
+                            // at whatever previously loaded successfully (or null
+                            // on a failed initial bootstrap), never torn down here.
+                            root.assetLoadResult(false, loader.errorString);
+                        }
                     }
                 }
             }

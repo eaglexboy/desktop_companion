@@ -218,3 +218,36 @@ def test_only_a_map_that_asks_for_it_prunes_its_extra_bones():
     assert not rigs.prunes_extra_bones(
         "toon_basic"
     ) and not rigs.prunes_extra_bones("character_creator")
+
+
+def test_a_prop_bone_parented_to_the_root_follows_the_bone_it_stands_nearest_to():
+    from blender.rigs import fold_target
+
+    segments = {
+        "upperarm_l": ((0.2, 0, 1.5), (0.5, 0, 1.5)),
+        "upperarm_r": ((-0.2, 0, 1.5), (-0.5, 0, 1.5)),
+        "pelvis": ((0, 0, 1.0), (0, 0, 1.1)),
+    }
+    # a monitor on the left shoulder, parented to the root (or to nothing) by the tool that made it
+    on_the_shoulder = (0.6, -0.1, 1.55)
+    assert fold_target(on_the_shoulder, "root", segments) == "upperarm_l"
+    assert fold_target(on_the_shoulder, None, segments) == "upperarm_l"
+    far_right = (-0.7, 0, 1.45)
+    assert fold_target(far_right, "root", segments) == "upperarm_r"
+
+
+def test_a_helper_bone_with_a_kept_ancestor_still_folds_into_it():
+    from blender.rigs import fold_target
+
+    segments = {
+        "upperarm_l": ((0.2, 0, 1.5), (0.5, 0, 1.5)),
+        "lowerarm_l": ((0.5, 0, 1.5), (0.8, 0, 1.5)),
+    }
+    twist = (
+        0.52,
+        0,
+        1.5,
+    )  # as near the forearm as the upper arm: its parent decides
+    assert fold_target(twist, "upperarm_l", segments) == "upperarm_l"
+    assert fold_target(twist, "lowerarm_l", segments) == "lowerarm_l"
+    assert fold_target(twist, "root", {}) == "root"  # nothing to choose from

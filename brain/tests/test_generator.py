@@ -1116,6 +1116,47 @@ def _glb_gltf(path: Path) -> dict:
     return json.loads(data[20 : 20 + struct.unpack("<I", data[12:16])[0]])
 
 
+def test_every_material_of_an_imported_model_is_drawn_from_both_sides(tmp_path):
+    """The overlay's renderer leaves out the faces that point the wrong way unless the material says
+    it is double-sided (a low-poly Totoro showed holes); Blender's own render never does.
+    """
+    folder = tmp_path / "deploy" / "assets" / "custom_templates"
+    folder.mkdir(parents=True)
+    code = (
+        "import bpy;"
+        "bpy.ops.wm.read_factory_settings(use_empty=True);"
+        "bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 0.5));"
+        "m = bpy.data.materials.new('onesided'); m.use_backface_culling = True;"
+        "bpy.context.object.data.materials.append(m);"
+        f"bpy.ops.export_scene.gltf(filepath={str(folder / 'cube.glb')!r})"
+    )
+    subprocess.run(
+        [
+            BLENDER_BIN,
+            "--background",
+            "--factory-startup",
+            "--python-expr",
+            code,
+        ],
+        capture_output=True,
+        check=True,
+        timeout=60,
+    )
+    before = _glb_gltf(folder / "cube.glb")["materials"]
+    assert not any(
+        m.get("doubleSided") for m in before
+    )  # the model's own file is one-sided
+    result, out_path, _build_json = _compile(
+        _minimal_spec(base_template="custom:cube", has_face=False),
+        tmp_path,
+        "bothsides",
+    )
+    assert result.returncode == 0, result.stderr
+    materials = _glb_gltf(out_path)["materials"]
+    assert materials
+    assert all(m.get("doubleSided") is True for m in materials), materials
+
+
 def _skinned_mesh_nodes(path: Path) -> list[str]:
     return [
         n["name"]

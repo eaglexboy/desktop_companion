@@ -143,6 +143,12 @@ public:
     Q_INVOKABLE bool clipRunning(const QString &name) const;
     // Duration in ms of one pass of clip `name`, or 0 if unknown.
     Q_INVOKABLE int clipDurationMs(const QString &name) const;
+    // Where the body is right now: the scene position (a QVector3D, in metres) of every 3D node
+    // under `root` (the skeleton's joints and the meshes), worked out from each node's own position, rotation
+    // and scale so that they follow the clip that is playing, for Main.qml to project onto the
+    // window and click-through everything outside the box around them. One pass over the tree
+    // per call, so ask a few times a second, not per frame. Empty before a model has loaded.
+    Q_INVOKABLE QVariantList nodePositions() const;
 
 signals:
     void rootChanged();

@@ -1174,3 +1174,46 @@ async def test_asking_it_to_rebuild_builds_the_current_imported_look_again(
     await asyncio.gather(*evolution._background_tasks)
     assert _manifest(settings).current_version == 2
     assert evolution.current_look_spec().base_template == "custom:miss"
+
+
+def test_a_promised_switch_to_the_model_the_user_named_is_found_in_the_reply_and_the_message(
+    tmp_path,
+):
+    """The model said "switching" and sent no action: the request is not asked to carry a switch word
+    ("test", "try" are requests too), the companion's promise is the check."""
+    from brain.evolution import _model_the_user_named
+
+    templates = [
+        "custom:milo_robot_rigged",
+        "custom:robot_polygonal_rigged",
+        "custom:ortiz",
+        "custom:mech_mike_animated",
+    ]
+    named = _model_the_user_named
+    assert (
+        named("Now let's test the robot polygonal one", templates)
+        == "custom:robot_polygonal_rigged"
+    )
+    assert named("try Ortiz next", templates) == "custom:ortiz"
+    assert named("let's see milo", templates) == "custom:milo_robot_rigged"
+    assert named("what about the robot one?", templates) is None  # two have it
+    assert named("compare ortiz and milo robot", templates) is None  # two named
+    assert named("good morning", templates) is None
+
+
+def test_only_a_promise_in_the_reply_makes_the_change(tmp_path):
+    from brain.evolution import _PROMISES_A_CHANGE
+
+    for said in (
+        "Switching to the polygonal robot. Hope my angles don't cut you off.",
+        "Alright, swapping to Milo.",
+        "I'll become Ortiz now.",
+        "Let me switch to that one.",
+    ):
+        assert _PROMISES_A_CHANGE.search(said), said
+    for said in (
+        "Ortiz is a wrestler with a mask.",
+        "I could change my look if you want.",
+        "Milo is my favourite.",
+    ):
+        assert not _PROMISES_A_CHANGE.search(said), said

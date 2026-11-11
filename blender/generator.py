@@ -106,12 +106,13 @@ from blender.gen_inspect import (
 )
 from blender.gen_models import (
     build_sit_prop,
-    drop_clips_leaving_the_frame,
+    fit_clips_to_the_frame,
     outfit_model_path,
     plan_animation_library,
     wear_animation_library,
     wear_outfit_model,
 )
+from blender.glb_post import brighten_emissive
 from blender.rigs import arm_spread
 from blender.sockets import canonical_socket_bones, find_socket_bones
 
@@ -255,7 +256,10 @@ def compute_bounds() -> dict:
     }
 
 
-def export_glb(out_path: Path) -> None:
+def export_glb(out_path: Path, *, sample_every_frame: bool = False) -> None:
+    """`sample_every_frame` is for a model's own generated clips (a head idle, a nod), which the exporter
+    only writes when it samples them; the clips of an animation library are exported from their own keys,
+    which is five times faster and the same to 0.002 (see docs/LEARNINGS.md)."""
     for action in bpy.data.actions:
         action.use_fake_user = True
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -265,6 +269,7 @@ def export_glb(out_path: Path) -> None:
         export_yup=True,
         export_animations=True,
         export_animation_mode="ACTIONS",
+        export_force_sampling=sample_every_frame,
         export_morph=True,
         export_morph_normal=True,
         export_skins=True,
@@ -393,6 +398,9 @@ def main() -> None:
     run_keys: list[str] = []
     library_plan: dict[str, tuple[Path, str]] = {}
     library_clips: dict[str, str] = {}
+    fit_scale = (
+        1.0  # how big the overlay draws the body (see fit_clips_to_the_frame)
+    )
     socket_bones: dict = {}
     if imported is not None:
         body = imported["body"]
@@ -599,7 +607,7 @@ def main() -> None:
             warnings,
             arm_spread=arm_spread(rig_family_of(resolution["path"])),
         )
-        drop_clips_leaving_the_frame(arm_obj, library_clips, warnings)
+        fit_scale = fit_clips_to_the_frame(arm_obj, library_clips, warnings)
         if library_clips.get("sit_idle") in chair_sit_clips():
             if build_sit_prop(
                 arm_obj, library_clips["sit_idle"], library_clips["sit_enter"]
@@ -657,7 +665,17 @@ def main() -> None:
         return
 
     bounds = compute_bounds()
-    export_glb(OUT_PATH)
+    if fit_scale < 1.0:
+        bounds["fit_scale"] = round(fit_scale, 3)
+    export_glb(OUT_PATH, sample_every_frame=bool(skeletal) or not library_clips)
+    brighten_emissive(
+        OUT_PATH,
+        (
+            _pose_sidecar(resolution["path"]).get("emissive_gain", 1.0)
+            if resolution.get("path")
+            else 1.0
+        ),
+    )
 
     size_bytes = OUT_PATH.stat().st_size
     if size_bytes > SIZE_BUDGET_BYTES:

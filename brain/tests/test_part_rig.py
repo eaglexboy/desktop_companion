@@ -482,3 +482,47 @@ def test_rebind_binds_a_pair_by_side_with_a_ramp_and_moves_a_mesh(
         "thigh_l",
     )
     assert "together" in refused.stderr + refused.stdout
+
+
+# The figure's arms end in a hand of two small pieces (fingers) hanging a little in front of and
+# behind the end of the arm, each nearer the forearm than the hand's own segment.
+FINGERS_FIGURE = FIGURE.replace(
+    "bpy.ops.export_scene.gltf",
+    """for s, sg in (("l", 1), ("r", -1)):
+    for i, y in enumerate((-0.12, 0.12)):
+        bpy.ops.mesh.primitive_cube_add(size=0.08, location=(sg * 1.45, y, 1.5))
+        bpy.context.active_object.name = f"finger_{s}{i}"
+bpy.ops.export_scene.gltf""",
+    1,
+)
+
+
+@needs_blender
+def test_part_rig_small_pieces_out_along_an_arm_are_the_hands_whichever_way_they_lie(
+    tmp_path,
+):
+    script = tmp_path / "fingers.py"
+    script.write_text(FINGERS_FIGURE)
+    source = tmp_path / "fingers.glb"
+    proc = _blender("--python", str(script), "--", str(source))
+    assert source.is_file(), proc.stderr + proc.stdout
+    out = tmp_path / "rigged.glb"
+    proc = _blender(
+        "--python",
+        str(REPO_ROOT / "blender" / "part_rig.py"),
+        "--",
+        str(source),
+        str(out),
+    )
+    assert "PART_RIG_OK" in proc.stdout, proc.stderr + proc.stdout
+    gltf = _gltf(out)
+    vertices = {}
+    for node in gltf["nodes"]:
+        if "mesh" in node and node["name"] in ("hand_l", "hand_r"):
+            vertices[node["name"]] = sum(
+                gltf["accessors"][p["attributes"]["POSITION"]]["count"]
+                for p in gltf["meshes"][node["mesh"]]["primitives"]
+            )
+    assert (
+        vertices.get("hand_l", 0) >= 16 and vertices.get("hand_r", 0) >= 16
+    ), vertices

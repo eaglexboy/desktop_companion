@@ -180,8 +180,50 @@ Window {
     LayerShellScreenHelper {
         id: layerShellScreen
     }
+    // What takes the clicks: the box around the body (and the interaction bar while it is open),
+    // so a click anywhere else in the window reaches what is behind the companion. Before a model
+    // has loaded and been measured there is no body to go by, so the whole avatar area takes them as
+    // it always did.
+    property string appliedMask: ""
     function applyMask() {
-        maskHelper.applyMask(root, root.avatarWidth, root.avatarHeight, root.avatarOffsetY);
+        const box = avatar3d.bodyBox(0.03);
+        if (!box) {
+            maskHelper.applyMask(root, root.avatarWidth, root.avatarHeight, root.avatarOffsetY);
+            appliedMask = "";
+            return;
+        }
+        const left = Math.max(0, Math.round(box.x + avatar3d.x));
+        const top = Math.max(0, Math.round(box.y + avatar3d.y));
+        const right = Math.min(root.width, Math.round(box.x + avatar3d.x + box.width));
+        const bottom = Math.min(root.height, Math.round(box.y + avatar3d.y + box.height));
+        const rects = [
+            {
+                x: left,
+                y: top,
+                width: right - left,
+                height: bottom - top
+            }
+        ];
+        if (root.interactive)
+            rects.push({
+                x: Math.round(interactionBar.x),
+                y: Math.round(interactionBar.y),
+                width: Math.round(interactionBar.width),
+                height: Math.round(interactionBar.height)
+            });
+        // Only when it changed: every call hands the compositor a new input region.
+        const key = JSON.stringify(rects);
+        if (key === appliedMask)
+            return;
+        if (maskHelper.applyRects(root, rects))
+            appliedMask = key;
+    }
+    // The body moves, so the box follows it a few times a second.
+    Timer {
+        interval: 100
+        repeat: true
+        running: !root.hidden
+        onTriggered: root.applyMask()
     }
 
     // The daemon broadcasts window position in global virtual-desktop
@@ -619,6 +661,7 @@ Window {
                 // A body wearing an animation library plays its clips by role (idle, talk, run...).
                 idleBehaviors.libraryClips = current.library_clips || ({});
                 avatar3d.pivotHeight = ((current.bounds && current.bounds.height_m) || 0) * 0.45;
+                avatar3d.fitScale = (current.bounds && current.bounds.fit_scale) || 1;
                 root.currentLookPath = "file://" + assetDir + "/" + current.glb_filename;
             }
             if (config.shortcuts) {
@@ -710,6 +753,7 @@ Window {
                 // A body wearing an animation library plays its clips by role (idle, talk, run...).
                 idleBehaviors.libraryClips = current.library_clips || ({});
                 avatar3d.pivotHeight = ((current.bounds && current.bounds.height_m) || 0) * 0.45;
+                avatar3d.fitScale = (current.bounds && current.bounds.fit_scale) || 1;
                 root.currentLookPath = "file://" + root.deskmateDataDir + "/" + current.glb_filename;
             }
         }

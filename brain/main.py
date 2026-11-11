@@ -14,6 +14,7 @@ router/personality/voice pipeline without a WebSocket client.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import logging
 import time
@@ -27,7 +28,11 @@ from pydantic import BaseModel
 from brain.app_state import AppState
 from brain.appearance.blender_gen import is_build_running
 from brain.appearance.manifest import load_manifest
-from brain.appearance.spec import CatalogError, LookSpec, validate_against_catalogs
+from brain.appearance.spec import (
+    CatalogError,
+    LookSpec,
+    validate_against_catalogs,
+)
 from brain.appearance.thumbnails import ensure_thumbnails
 from brain.background import (
     _gc_loop,
@@ -101,7 +106,9 @@ def build_app_state(settings: Settings | None = None) -> AppState:
 
     def _get_presence_state() -> PresenceState:
         return (
-            desktop_bridge.state if desktop_bridge is not None else PresenceState.ACTIVE
+            desktop_bridge.state
+            if desktop_bridge is not None
+            else PresenceState.ACTIVE
         )
 
     async def _on_appearance_progress(payload: dict) -> None:
@@ -119,7 +126,8 @@ def build_app_state(settings: Settings | None = None) -> AppState:
     tts_pool = build_tts_pool(settings)
     stt_coordinator = build_stt_coordinator(settings)
     streaming_stt = StreamingSTT(
-        stt_coordinator, silence_threshold_ms=settings.voice.stt.silence_threshold_ms
+        stt_coordinator,
+        silence_threshold_ms=settings.voice.stt.silence_threshold_ms,
     )
     lipsync = RhubarbLipSync(
         settings.voice.rhubarb_bin, settings.voice.lipsync_recognizer
@@ -130,12 +138,18 @@ def build_app_state(settings: Settings | None = None) -> AppState:
     async def _on_user_text_input(_client_id: str, text: str) -> None:
         await _handle_chat_text(state_holder["state"], text)
 
-    async def _on_interaction_state(_client_id: str, interaction_state: str) -> None:
+    async def _on_interaction_state(
+        _client_id: str, interaction_state: str
+    ) -> None:
         state_holder["state"].interaction_active = interaction_state == "active"
 
-    async def _on_asset_swap_result(ok: bool, version: int, error: str | None) -> None:
+    async def _on_asset_swap_result(
+        ok: bool, version: int, error: str | None
+    ) -> None:
         if ok:
-            logger.info("overlay reported asset_swap_result ok for version %s", version)
+            logger.info(
+                "overlay reported asset_swap_result ok for version %s", version
+            )
         else:
             logger.warning(
                 "overlay reported asset_swap_result failure for version %s: %s",
@@ -169,7 +183,9 @@ def build_app_state(settings: Settings | None = None) -> AppState:
         async def _on_presence_update(
             window: WindowState | None, screens: list[ScreenInfo]
         ) -> None:
-            await _handle_presence_update(state_holder["state"], window, screens)
+            await _handle_presence_update(
+                state_holder["state"], window, screens
+            )
 
         async def _on_presence_transition(
             old_state: PresenceState, new_state: PresenceState
@@ -201,7 +217,9 @@ def build_app_state(settings: Settings | None = None) -> AppState:
         tts_pool=tts_pool,
         streaming_stt=streaming_stt,
         lipsync=lipsync,
-        voice_selector=SeedVoiceSelector(settings, store, evolution.current_look_spec),
+        voice_selector=SeedVoiceSelector(
+            settings, store, evolution.current_look_spec
+        ),
         hub=hub,
         desktop_bridge=desktop_bridge,
         skills=skills,
@@ -214,7 +232,9 @@ def build_app_state(settings: Settings | None = None) -> AppState:
 # --- app lifecycle ---------------------------------------------------------------
 
 
-async def _apply_reloaded_settings(state: AppState, new_settings: Settings) -> None:
+async def _apply_reloaded_settings(
+    state: AppState, new_settings: Settings
+) -> None:
     """After a config.toml reload: keep what the hub hands to *new* clients
     current, and push the overlay-relevant subset (`config_update`, the same
     shape as `welcome.config`) to connected clients -- but only when it
@@ -224,7 +244,9 @@ async def _apply_reloaded_settings(state: AppState, new_settings: Settings) -> N
     )
     state.hub.update_settings(new_settings)
     if changed:
-        await state.hub.broadcast("config_update", welcome_config_subset(new_settings))
+        await state.hub.broadcast(
+            "config_update", welcome_config_subset(new_settings)
+        )
 
 
 async def _render_missing_look_thumbnails(state: AppState) -> None:
@@ -286,6 +308,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="deskmate brain", lifespan=lifespan)
 
+# Set when the daemon is told to stop: the event stream for the status page ends at once.
+_stopping = asyncio.Event()
+
 
 def _state(app_: FastAPI) -> AppState:
     return app_.state.deskmate
@@ -310,7 +335,9 @@ async def health():
     return {
         "status": "ok",
         "name": state.store.get_identity_name(),
-        "active_voice": _describe_active_voice(state.settings, state.voice_selector),
+        "active_voice": _describe_active_voice(
+            state.settings, state.voice_selector
+        ),
         "voice_degraded": state.tts_pool.is_degraded,
         "presence": presence,
         "traits": state.store.get_traits(),
@@ -329,7 +356,9 @@ async def api_skills():
     state = _state(app)
     enabled = state.settings.skills.enabled
     installed, rejected = discover_agent_skills(state.settings.skills_dir)
-    views = build_views(state.settings.skills_dir, installed, state.skill_state.all())
+    views = build_views(
+        state.settings.skills_dir, installed, state.skill_state.all()
+    )
     return {
         "enabled": enabled,
         "max_actions_per_reply": state.skills.max_actions,
@@ -340,7 +369,9 @@ async def api_skills():
         "installed": [view_json(v) for v in views],
         "rejected": rejected,
         "budget": summarize(
-            state.settings.skills, state.settings.llm.smallest_context_tokens(), views
+            state.settings.skills,
+            state.settings.llm.smallest_context_tokens(),
+            views,
         ),
     }
 
@@ -362,7 +393,9 @@ async def api_skill_state(req: SkillStateRequest):
     this, and replies are only ever parsed into registry skills."""
     state = _state(app)
     installed, _ = discover_agent_skills(state.settings.skills_dir)
-    views = build_views(state.settings.skills_dir, installed, state.skill_state.all())
+    views = build_views(
+        state.settings.skills_dir, installed, state.skill_state.all()
+    )
     try:
         changed = change_state(
             state.skill_state,
@@ -410,21 +443,37 @@ async def api_events(request: Request, since: int = 0):
             for event in bus.since(since):
                 sent = event["seq"]
                 yield f"id: {sent}\ndata: {json.dumps(event)}\n\n"
-            while True:
-                try:
-                    event = await asyncio.wait_for(queue.get(), 15.0)
-                except TimeoutError:
-                    if await request.is_disconnected():
-                        return
-                    yield ": keepalive\n\n"
-                    continue
-                if event["seq"] <= sent:  # already replayed from the backlog
-                    continue
-                sent = event["seq"]
-                yield f"id: {sent}\ndata: {json.dumps(event)}\n\n"
+            stopping = asyncio.ensure_future(_stopping.wait())
+            try:
+                while not _stopping.is_set():
+                    getting = asyncio.ensure_future(queue.get())
+                    done, _ = await asyncio.wait(
+                        {getting, stopping},
+                        timeout=15.0,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if getting not in done:
+                        getting.cancel()
+                        if stopping in done:
+                            return  # the daemon is stopping: end the stream so it can
+                        if await request.is_disconnected():
+                            return
+                        yield ": keepalive\n\n"
+                        continue
+                    event = getting.result()
+                    if (
+                        event["seq"] <= sent
+                    ):  # already replayed from the backlog
+                        continue
+                    sent = event["seq"]
+                    yield f"id: {sent}\ndata: {json.dumps(event)}\n\n"
+            finally:
+                stopping.cancel()
 
     return StreamingResponse(
-        stream(), media_type="text/event-stream", headers={"Cache-Control": "no-store"}
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -467,7 +516,13 @@ async def api_status():
             }
         ),
         "screens": [
-            {"name": s.name, "x": s.rect.x, "y": s.rect.y, "w": s.rect.w, "h": s.rect.h}
+            {
+                "name": s.name,
+                "x": s.rect.x,
+                "y": s.rect.y,
+                "w": s.rect.w,
+                "h": s.rect.h,
+            }
             for s in screens
         ],
         "look": {
@@ -480,7 +535,9 @@ async def api_status():
     }
 
 
-def _describe_active_voice(settings: Settings, selector: SeedVoiceSelector) -> str:
+def _describe_active_voice(
+    settings: Settings, selector: SeedVoiceSelector
+) -> str:
     """The seed voice the companion has persisted (agent_state.current_voice_id,
     written by SeedVoiceSelector) when remote seed voices are in use;
     otherwise derived from the real active TTS config."""
@@ -488,13 +545,15 @@ def _describe_active_voice(settings: Settings, selector: SeedVoiceSelector) -> s
     if tts_config.active_backend == "remote":
         stored = selector.current_voice_id()
         if stored and any(
-            stored.startswith(f"remote:{name}:seed:") for name in tts_config.remote
+            stored.startswith(f"remote:{name}:seed:")
+            for name in tts_config.remote
         ):
             return stored
         enabled = tts_config.enabled_remote_instances()
         if enabled:
             name = next(
-                (n for n, e in tts_config.remote.items() if e is enabled[0]), "remote"
+                (n for n, e in tts_config.remote.items() if e is enabled[0]),
+                "remote",
             )
             return f"remote:{name}"
     return f"piper:{Path(tts_config.local.voice_model_path).stem}"
@@ -548,7 +607,10 @@ async def get_audio(filename: str):
     if "/" in filename or "\\" in filename or not filename.endswith(".wav"):
         raise HTTPException(status_code=404)
     path = (state.settings.voice_cache_dir / filename).resolve()
-    if path.parent != state.settings.voice_cache_dir.resolve() or not path.is_file():
+    if (
+        path.parent != state.settings.voice_cache_dir.resolve()
+        or not path.is_file()
+    ):
         raise HTTPException(status_code=404)
     return FileResponse(path, media_type="audio/wav")
 
@@ -559,7 +621,10 @@ async def get_asset(filename: str):
     if "/" in filename or "\\" in filename:
         raise HTTPException(status_code=404)
     path = (state.settings.current_dir / filename).resolve()
-    if path.parent != state.settings.current_dir.resolve() or not path.is_file():
+    if (
+        path.parent != state.settings.current_dir.resolve()
+        or not path.is_file()
+    ):
         raise HTTPException(status_code=404)
     return FileResponse(path, media_type="model/gltf-binary")
 
@@ -572,13 +637,31 @@ async def ws_overlay(websocket: WebSocket):
 def run() -> None:
     import uvicorn
 
+    class _Server(uvicorn.Server):
+        async def shutdown(self, sockets=None) -> None:
+            # uvicorn waits for every open connection to close before it stops, and the overlay's
+            # socket and the status page's event stream never do: closing them is what lets it stop
+            # at once instead of at systemd's timeout.
+            # (run as `python -m brain.main` this file is `__main__`, and uvicorn serves the
+            # `brain.main` it imports itself: the app and the flag to set are that one's)
+            served = importlib.import_module("brain.main")
+            served._stopping.set()
+            state = getattr(served.app.state, "deskmate", None)
+            if state is not None:
+                await state.hub.close_all()
+            await super().shutdown(sockets=sockets)
+
     settings = get_settings()
-    uvicorn.run(
-        "brain.main:app",
-        host=settings.server.host,
-        port=settings.server.port,
-        log_level="info",
-    )
+    _Server(
+        uvicorn.Config(
+            "brain.main:app",
+            host=settings.server.host,
+            port=settings.server.port,
+            log_level="info",
+            # whatever is still open after this is closed, so a stop is never left to be killed
+            timeout_graceful_shutdown=10,
+        )
+    ).run()
 
 
 if __name__ == "__main__":

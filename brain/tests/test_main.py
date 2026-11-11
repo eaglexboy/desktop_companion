@@ -241,6 +241,63 @@ def test_a_plain_request_to_become_an_installed_model_gets_the_changes_own_reply
     assert "I don't have a model called mech Mike." not in texts
 
 
+def test_a_reply_that_says_it_is_switching_but_sends_no_action_makes_the_change(
+    client, monkeypatch
+):
+    """ "Now let's test the robot polygonal one" has no switch word, so it is not a direct request;
+    the model said it is switching and left the action out."""
+    c, state = client
+    _wire_fakes(
+        state,
+        chat_reply='{"say": "Switching to the polygonal robot.", "do": []}',
+    )
+    asked = []
+
+    async def switch(request: str) -> str:
+        asked.append(request)
+        return "Switching."
+
+    monkeypatch.setattr(
+        state.evolution, "is_direct_look_request", lambda _t: False
+    )
+    monkeypatch.setattr(
+        state.evolution,
+        "promised_look_change",
+        lambda user, reply: (
+            "robot polygonal"
+            if "polygonal" in user and "Switching" in reply
+            else None
+        ),
+    )
+    monkeypatch.setattr(state.evolution, "change_appearance", switch)
+    c.post(
+        "/chat",
+        json={"text": "Now let's test the robot polygonal one", "speak": False},
+    )
+    texts = [row["text"] for row in state.store.pending_interactions()]
+    assert asked == ["robot polygonal"]
+    assert (
+        "Switching to the polygonal robot." in texts
+    )  # its own words are kept
+
+
+def test_the_event_stream_ends_when_the_daemon_is_stopping(client):
+    """The status page's stream is open for as long as the page is, and uvicorn waits for it
+    before it stops: it ends the moment the daemon is told to stop."""
+    import brain.main as main
+
+    c, _state = client
+    main._stopping.set()
+    try:
+        with c.stream("GET", "/api/events?since=999999999") as response:
+            assert response.status_code == 200
+            assert (
+                list(response.iter_lines()) == []
+            )  # ended, with nothing more to say
+    finally:
+        main._stopping.clear()
+
+
 # --- synthetic WS golden path: hello -> welcome -> user_text_input -> chat_response + speech ---
 
 

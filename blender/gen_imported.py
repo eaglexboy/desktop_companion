@@ -101,6 +101,18 @@ def _flatten_static_meshes(meshes, objs) -> list:
     return kept
 
 
+def _draw_both_sides(meshes) -> None:
+    """An imported material is drawn from the front only unless the file says otherwise, and the
+    overlay's renderer then leaves out every face that is turned the wrong way (a low-poly model
+    whose faces were not all made to point outward shows holes). Blender's own render draws both
+    sides, so only the overlay shows it; both sides are drawn for every imported material.
+    """
+    for mesh in meshes:
+        for material in mesh.data.materials:
+            if material is not None:
+                material.use_backface_culling = False
+
+
 def _rename_meshes_named_for_bones(armature, meshes) -> None:
     """A mesh object named like a bone ("Head" on a model whose pieces were named for the bones they follow)
     exports as a node of the same name as the bone's, and a loader that finds a bone by its name (Qt's,
@@ -197,6 +209,7 @@ def build_imported_model(path: Path, warnings: list[str]) -> dict:
     meshes = [obj for obj in objs if obj.type == "MESH"]
     if not meshes:
         raise ValueError(f"{path.name} contains no mesh")
+    _draw_both_sides(meshes)
     armatures = [obj for obj in objs if obj.type == "ARMATURE"]
     if not armatures:
         objs = _flatten_static_meshes(meshes, objs)
@@ -338,9 +351,13 @@ def _pose_sidecar(model_path: Path) -> dict:
         yaw = data.get("face_yaw", 0)
         if not isinstance(yaw, (int, float)):
             raise ValueError("face_yaw must be degrees")
+        gain = data.get("emissive_gain", 1.0)
+        if not isinstance(gain, (int, float)) or gain <= 0:
+            raise ValueError("emissive_gain must be a number above 0")
         return {
             "roll_bones": {str(k): float(v) for k, v in rolls.items()},
             "face_yaw": float(yaw),
+            "emissive_gain": float(gain),
         }
     except (ValueError, OSError, AttributeError) as exc:
         print(f"DESKMATE_WARN could not read {path.name}: {exc}")

@@ -36,6 +36,7 @@ logger = logging.getLogger("deskmate.ipc")
 
 PROTOCOL_VERSION = 1
 _HELLO_TIMEOUT_S = 10.0
+_CLOSE_GOING_AWAY = 1001
 _CLOSE_POLICY_VIOLATION = 1008
 _CLOSE_CLIENT_ID_REPLACED = 4409
 
@@ -519,6 +520,14 @@ class OverlayHub:
         """Swap in reloaded settings, so a client connecting later gets the
         current `welcome.config` and not the one from daemon startup."""
         self._settings = settings
+
+    async def close_all(self) -> None:
+        """Closes every connection, "going away", when the daemon is stopping: the server waits
+        for its connections to close before it stops, and an overlay never closes its own.
+        """
+        for client_id, state in list(self._connections.items()):
+            await _safe_close(state.websocket, _CLOSE_GOING_AWAY)
+            self._connections.pop(client_id, None)
 
     async def broadcast(self, event_type: str, payload: dict[str, Any]) -> None:
         """Pushed from elsewhere in the daemon (chat replies, appearance

@@ -267,6 +267,39 @@ def prunes_extra_bones(family: str) -> bool:
     return family in _PRUNE
 
 
+def _distance_to_segment(point, a, b) -> float:
+    ab = [y - x for x, y in zip(a, b)]
+    ap = [y - x for x, y in zip(a, point)]
+    length_squared = sum(x * x for x in ab)
+    t = (
+        0.0
+        if length_squared == 0
+        else max(
+            0.0, min(1.0, sum(x * y for x, y in zip(ap, ab)) / length_squared)
+        )
+    )
+    return sum((p - (x + t * d)) ** 2 for p, x, d in zip(point, a, ab)) ** 0.5
+
+
+def fold_target(
+    point,
+    ancestor: str | None,
+    segments: dict[str, tuple],
+) -> str | None:
+    """The kept bone a pruned bone's weights go to: its nearest kept ancestor, `ancestor`, as a rule
+    (a twist bone, a finger joint), but the kept bone that is nearest in space when there is none or
+    it is `root`, which never moves with the body: a prop on a shoulder is parented to the model's
+    root by a tool that does not care, and would otherwise be left standing where it was when the
+    body lies down. `segments` is {kept bone: (head, tail)} without the root; `point` is where the
+    pruned bone is.
+    """
+    if ancestor not in (None, "root") or not segments:
+        return ancestor
+    return min(
+        segments, key=lambda name: _distance_to_segment(point, *segments[name])
+    )
+
+
 def rig_family(bone_names: Iterable[str]) -> str | None:
     """The family of a skeleton (its bone names, as cleaned by `blender/sketchfab.py`), None if it is
     neither known family. A skeleton already named for Quaternius is no family: it needs no conversion.

@@ -20,6 +20,7 @@ from blender.animation_library import (
     merge_picks,
     pick_clips,
 )
+from blender.frame_fit import FRAME_MARGIN, solve_fit
 from blender.gen_accessory_models import _join_objects
 from blender.gen_garments import _BODY
 from blender.gen_helpers import (
@@ -361,13 +362,14 @@ def wear_animation_library(
 FRAME_DISTANCE = 4.0
 FRAME_FOV_HALF_TAN = 0.4663  # tan(25 degrees): the base framing
 FRAME_HEADROOM = 0.15  # Main.qml `headroom`, as a fraction of the window height
-FRAME_MARGIN = 0.97  # how much of the window a clip may use
 # The roles that reach: a clip of any other (walk, sit, sleep) keeps the body near where it stands.
 REACHING_ROLES = ("attention", "greet", "celebrate", "angry", "hip_thrust")
 
 
-def _frame_use(arm_obj, clip: str, meshes: list) -> float:
-    """How much of the overlay window `clip` uses at its furthest: 1.0 is the edge, more is outside."""
+def _frame_use(arm_obj, clip: str, meshes: list, fit: float = 1.0) -> float:
+    """How much of the overlay window `clip` uses at its furthest when the body is drawn at `fit`
+    times its size, standing on the same spot: 1.0 is the edge, more is outside.
+    """
     import numpy as np
 
     scale = 1.0 + FRAME_HEADROOM
@@ -393,7 +395,7 @@ def _frame_use(arm_obj, clip: str, meshes: list) -> float:
             if not len(flat):
                 continue
             matrix = np.array(mesh_obj.matrix_world)
-            pts = flat.reshape(-1, 3) @ matrix[:3, :3].T + matrix[:3, 3]
+            pts = (flat.reshape(-1, 3) @ matrix[:3, :3].T + matrix[:3, 3]) * fit
             # glTF faces +Z, which is Blender's -Y: a part toward the camera is magnified.
             distance = np.maximum(FRAME_DISTANCE + pts[:, 1], 0.1)
             across = np.abs(pts[:, 0]) / (distance * FRAME_FOV_HALF_TAN)
@@ -404,27 +406,34 @@ def _frame_use(arm_obj, clip: str, meshes: list) -> float:
     return use
 
 
-def drop_clips_leaving_the_frame(
+def fit_clips_to_the_frame(
     arm_obj, clips: dict[str, str], warnings: list[str]
-) -> None:
-    """Removes from `clips` the gestures whose reach (long arms thrown overhead) takes the body
-    out of the overlay window, and the actions nothing else uses. A body whose own attention
-    clips do not fit asks for attention with the greeting that reaches furthest and does.
+) -> float:
+    """How big the overlay should draw this body (a fraction of its size, 1.0 for most) so that
+    its gestures (long arms thrown overhead) stay inside the window: just small enough for the one
+    that reaches furthest, but never below MIN_FIT_SCALE. A gesture that still leaves the window at
+    that size is removed from `clips`, with the actions nothing else uses; a body left without an
+    attention clip asks for attention with the greeting that reaches furthest and fits.
     """
     meshes = [o for o in arm_obj.children if o.type == "MESH"]
     previous = _pose_state(arm_obj)
-    use: dict[str, float] = {}
+    reaching = {
+        clip
+        for key, clip in clips.items()
+        if key.split(".")[0] in REACHING_ROLES
+    }
+    fit, use = solve_fit(
+        lambda at: {
+            clip: _frame_use(arm_obj, clip, meshes, at) for clip in reaching
+        }
+    )
     lost_attention = False
     for key, clip in list(clips.items()):
-        if key.split(".")[0] not in REACHING_ROLES:
-            continue
-        if clip not in use:
-            use[clip] = _frame_use(arm_obj, clip, meshes)
-        if use[clip] > FRAME_MARGIN:
+        if key.split(".")[0] in REACHING_ROLES and use[clip] > FRAME_MARGIN:
             del clips[key]
             lost_attention = lost_attention or key == "attention"
             warnings.append(
-                f"clip {clip} ({key}) swings the body out of the overlay window: not used"
+                f"clip {clip} ({key}) swings the body out of the overlay window even at {fit:.0%} of its size: not used"
             )
     if lost_attention and "attention" not in clips:
         greetings = [
@@ -439,6 +448,11 @@ def drop_clips_leaving_the_frame(
     for clip, amount in use.items():
         if amount > FRAME_MARGIN and clip not in clips.values():
             bpy.data.actions.remove(bpy.data.actions[clip])
+    if fit < 1.0:
+        warnings.append(
+            f"drawn at {fit:.0%} of its size so that its gestures stay in the overlay window"
+        )
+    return fit
 
 
 _OUTFIT_KEEPS_BODY_BONES = ("head", "neck")

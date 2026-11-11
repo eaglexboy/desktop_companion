@@ -325,11 +325,22 @@ async def _handle_chat_text(
         # model's) makes the change itself.
         # What it said instead (that it has no such model, for one: it is not told which are installed)
         # is replaced by the answer of the change itself.
-        if not any(
-            a.skill == "change_look" for a in actions
-        ) and state.evolution.is_direct_look_request(text):
-            actions = [*actions, SkillCall("change_look", {"request": text})]
-            forced_look = True
+        if not any(a.skill == "change_look" for a in actions):
+            if state.evolution.is_direct_look_request(text):
+                actions = [
+                    *actions,
+                    SkillCall("change_look", {"request": text}),
+                ]
+                forced_look = True
+            elif promised := state.evolution.promised_look_change(
+                text, parsed.say
+            ):
+                # It said it is switching to a model the user named, and did not send the action:
+                # its own words are kept, the change is the thing it left out.
+                actions = [
+                    *actions,
+                    SkillCall("change_look", {"request": promised}),
+                ]
     # The companion speaks this aloud: strip any Markdown/emoji the model used anyway.
     result.text = to_plain_speech(result.text) if result.text else ""
     if actions:

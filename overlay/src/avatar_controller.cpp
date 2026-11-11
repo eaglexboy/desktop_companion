@@ -1,8 +1,11 @@
 #include <algorithm>
 #include "avatar_controller.h"
 
+#include <QMatrix4x4>
 #include <QQmlListReference>
+#include <QQuaternion>
 #include <QTimer>
+#include <QVector3D>
 
 AvatarController::AvatarController(QObject *parent) : QObject(parent) {}
 
@@ -339,6 +342,43 @@ bool AvatarController::clipRunning(const QString &name) const
             return false;
     }
     return true;
+}
+
+// Joint positions are worked out here, down the tree from the loader's own scene transform, because
+// a joint's `scenePosition` is only brought up to date when something draws it, and a skinned mesh is
+// drawn from the skeleton's pose, not from the nodes: it stays where the file's bind pose puts it (a T)
+// while the body is already in the pose of the clip.
+static void collectPositions(QObject *object, const QMatrix4x4 &parent, bool isRoot, QVariantList &out)
+{
+    QMatrix4x4 here = parent;
+    const QVariant position = object->property("position");
+    const QVariant rotation = object->property("rotation");
+    const QVariant scale = object->property("scale");
+    const bool isNode = position.canConvert<QVector3D>() && rotation.canConvert<QQuaternion>() && scale.canConvert<QVector3D>();
+    if (isNode)
+    {
+        if (!isRoot)
+        {
+            here.translate(position.value<QVector3D>());
+            here.rotate(rotation.value<QQuaternion>());
+            here.scale(scale.value<QVector3D>());
+        }
+        out.append(QVariant::fromValue(here.map(QVector3D(0, 0, 0))));
+    }
+    for (QObject *child : object->children())
+        collectPositions(child, here, false, out);
+}
+
+QVariantList AvatarController::nodePositions() const
+{
+    QVariantList out;
+    if (!m_root)
+        return out;
+    // The loader's own scene transform (the pivot node above it is moved by IdleBehaviors), then
+    // each node's own position, rotation and scale down the tree: the skeleton's joints and the meshes.
+    const QVariant root = m_root->property("sceneTransform");
+    collectPositions(m_root, root.canConvert<QMatrix4x4>() ? root.value<QMatrix4x4>() : QMatrix4x4(), true, out);
+    return out;
 }
 
 int AvatarController::clipDurationMs(const QString &name) const
