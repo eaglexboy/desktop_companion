@@ -118,7 +118,8 @@ def _bind_unweighted_vertices(armature, meshes) -> int:
     exporter ties it to a bone of its own that never moves (`neutral_bone`): a pair of eyes the model
     was made with no weights for floated in front of the face when the head turned. Each such vertex
     is given to the bone nearest to it. A file that was exported once already has that bone and the
-    weights on it: those count as no weights. Returns how many were."""
+    weights on it: those count as no weights, and are removed. Returns how many vertices were bound.
+    """
     import numpy as np
 
     neutral = "neutral_bone"
@@ -149,9 +150,11 @@ def _bind_unweighted_vertices(armature, meshes) -> int:
             if sum(g.weight for g in v.groups if index.get(g.group) != neutral)
             <= 1e-6
         ]
+        # Every weight on that bone goes, not only a loose piece's: a vertex that was a few percent on it
+        # (the face of this model) is pulled that far toward a bone that is not where the skin was bound.
+        if neutral in mesh.vertex_groups:
+            mesh.vertex_groups.remove(mesh.vertex_groups[neutral])
         for vertex in loose:
-            if neutral in mesh.vertex_groups:
-                mesh.vertex_groups[neutral].remove([vertex.index])
             point = np.array(mesh.matrix_world @ vertex.co)
             t = np.clip(
                 ((point - heads) * along).sum(axis=1) / length_squared, 0, 1

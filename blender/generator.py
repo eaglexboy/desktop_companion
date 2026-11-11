@@ -516,7 +516,7 @@ def main() -> None:
                 )
             )
             bone = (
-                _face_bone(imported["meshes"], centre)
+                _face_bone(imported["meshes"], centre, imported["armature"])
                 if imported["armature"] is not None
                 else "head"
             )
