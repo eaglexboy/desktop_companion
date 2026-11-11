@@ -578,6 +578,19 @@ async def _publish(evolution, **look):
 
 
 @pytest.mark.asyncio
+async def test_the_companion_is_told_which_models_it_has_and_that_a_worn_one_keeps_its_colours(
+    tmp_path, monkeypatch
+):
+    _settings_, evolution = _evolution_on_custom_look(tmp_path, monkeypatch)
+    await _publish(evolution, base_template="custom:miss")
+    told = evolution.look_context()
+    assert "You are wearing the installed model miss" in told
+    assert "keeps its own colours" in told
+    assert "miss, other" in told  # the models it can become, by name
+    assert "custom:" not in told.split("Installed models")[1]
+
+
+@pytest.mark.asyncio
 async def test_a_custom_model_locks_the_look_and_a_request_to_change_it_is_declined(
     tmp_path, monkeypatch
 ):

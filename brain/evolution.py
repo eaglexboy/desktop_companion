@@ -362,6 +362,15 @@ def _wants_rebuild(request: str) -> bool:
     return bool(_REBUILD_WORDS & said) and bool(_REBUILD_TARGETS & said)
 
 
+def _model_title(template: str) -> str:
+    """ "custom:milo_robot_rigged" as "milo robot"."""
+    return " ".join(
+        w
+        for w in template.removeprefix(_CUSTOM_PREFIX).split("_")
+        if w not in _MODEL_NAME_NOISE
+    )
+
+
 def _named_model(request: str, templates: list[str]) -> str | None:
     """The installed model (a `custom:<name>` id) that `request` asks to become, if it asks for one
     and nothing else: the words that are left once the filler is gone are the model's name (a word
@@ -537,6 +546,27 @@ class AvatarEvolution:
 
     def current_look_summary(self) -> str:
         return look_summary(self.current_look_spec())
+
+    def look_context(self) -> str:
+        """What the companion is told about its look: the one-line summary and, so that it neither
+        denies a model it has nor invents one, the models it can become. An installed model keeps its
+        own colours, so the palette in the summary does not describe it."""
+        spec = self.current_look_spec()
+        summary = look_summary(spec)
+        installed = available_custom_templates(self._settings.deploy_dir)
+        if not installed:
+            return summary
+        names = [_model_title(t) for t in installed]
+        worn = (
+            f" You are wearing the installed model {_model_title(spec.base_template)}, which keeps its own colours and shape (the palette above does not apply to it)."
+            if spec.base_template in installed
+            else ""
+        )
+        return (
+            f"{summary}{worn} Installed models you can become on request, and the only ones you have: "
+            + ", ".join(names)
+            + "."
+        )
 
     # --- delta synthesis (shared by Trigger A and Trigger B) --------------
 

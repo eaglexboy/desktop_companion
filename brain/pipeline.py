@@ -264,7 +264,7 @@ async def _handle_chat_text(
                 store.recent_memory_notes(limit=20), text
             )[:10]
         ],
-        look_summary=state.evolution.current_look_summary(),
+        look_summary=state.evolution.look_context(),
         skills_block=skills_block,
     )
     emit("turn.prompt", {"system_prompt": system_prompt})
