@@ -371,14 +371,16 @@ def _model_title(template: str) -> str:
     )
 
 
-def _named_model(request: str, templates: list[str]) -> str | None:
+def _named_model(
+    request: str, templates: list[str], *, needs_switch_word: bool = True
+) -> str | None:
     """The installed model (a `custom:<name>` id) that `request` asks to become, if it asks for one
     and nothing else: the words that are left once the filler is gone are the model's name (a word
     one letter off, "avacado", counts as that name). Asking for a bunny-ears hat names no model.
     """
     said = re.findall(r"[a-z0-9]+", (request or "").lower())
     words = [w for w in said if w not in _SWITCH_FILLER]
-    if not words or not _SWITCH_WORDS & set(said):
+    if not words or (needs_switch_word and not _SWITCH_WORDS & set(said)):
         return None
     names = {
         template: [
@@ -735,8 +737,11 @@ class AvatarEvolution:
                 )
             )
             return "Rebuilding my look. Give me a minute."
+        # (the companion's own request for the change, "sci fi soldier", has no "change" in it)
         named = _named_model(
-            request, available_custom_templates(self._settings.deploy_dir)
+            request,
+            available_custom_templates(self._settings.deploy_dir),
+            needs_switch_word=False,
         )
         if named is not None:
             # A named installed model is a direct request, not a redesign: it is made even

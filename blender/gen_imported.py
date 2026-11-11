@@ -101,6 +101,17 @@ def _flatten_static_meshes(meshes, objs) -> list:
     return kept
 
 
+def _rename_meshes_named_for_bones(armature, meshes) -> None:
+    """A mesh object named like a bone ("Head" on a model whose pieces were named for the bones they follow)
+    exports as a node of the same name as the bone's, and a loader that finds a bone by its name (Qt's,
+    through assimp) takes the mesh node for it: the part is left where the mesh sits, the head of a
+    robot sinks into its body. The mesh gets another name."""
+    bones = {bone.name for bone in armature.data.bones}
+    for obj in meshes:
+        if obj.name in bones:
+            obj.name = obj.name + "_part"
+
+
 def _bake_import_pose(armature, meshes, warnings: list[str]) -> None:
     """Makes the model's pose as imported its rest pose. Converted files often
     store a bind shape that is not the standing figure (lying down, say) and
@@ -191,6 +202,7 @@ def build_imported_model(path: Path, warnings: list[str]) -> dict:
         objs = _flatten_static_meshes(meshes, objs)
     else:
         _bake_import_pose(armatures[0], meshes, warnings)
+        _rename_meshes_named_for_bones(armatures[0], meshes)
 
     bpy.context.view_layer.update()
     roots = [

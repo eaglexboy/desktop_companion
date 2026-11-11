@@ -115,6 +115,42 @@ def test_part_rig_gives_a_figure_of_parts_the_quaternius_skeleton(
     )
 
 
+# The same figure with a piece at each side of the head (an ear, headphones): it is further out than the
+# head is wide, which by position alone is an arm, and would be carried out to the T-pose with the arm.
+EARS_FIGURE = FIGURE.replace(
+    'box("head", 0, 1.85, 0.3, 0.3)', 'box("head", 0, 1.85, 0.5, 0.3)'
+).replace(
+    "bpy.ops.export_scene.gltf",
+    'box("ear_l", 0.3, 1.85, 0.06, 0.2)\nbox("ear_r", -0.3, 1.85, 0.06, 0.2)\nbpy.ops.export_scene.gltf',
+)
+
+
+@needs_blender
+def test_part_rig_a_piece_at_the_side_of_the_head_stays_with_the_head(tmp_path):
+    script = tmp_path / "ears.py"
+    script.write_text(EARS_FIGURE)
+    src = tmp_path / "ears.glb"
+    _blender("--python", str(script), "--", str(src))
+    out = tmp_path / "rigged.glb"
+    proc = _blender(
+        "--python",
+        str(REPO_ROOT / "blender" / "part_rig.py"),
+        "--",
+        str(src),
+        str(out),
+    )
+    assert "PART_RIG_OK" in proc.stdout, proc.stderr + proc.stdout
+    gltf = _gltf(out)
+    head = next(m for m in gltf["meshes"] if m.get("name") == "Head_mesh")
+    xs = [
+        gltf["accessors"][p["attributes"]["POSITION"]]["max"][0]
+        for p in head["primitives"]
+    ]
+    assert (
+        max(xs) > 0.3
+    )  # the ears are in the head's mesh (the head alone is 0.15 each side)
+
+
 # The same figure with its right arm hanging, the forearm and a hand held out in front of the body: the
 # hand is near the centre line (a torso piece by position alone), and the arm's piece nearest the centre
 # line is the hand, not the shoulder.

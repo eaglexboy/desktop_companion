@@ -629,6 +629,7 @@ Item {
         if (root.workoutActive) {   // up on its feet again
             root.workoutActive = false;
             root.nextWorkout = root.workoutAt();
+            root.turnBack();
         }
         if (slept === "lying") {
             root.sleepState = "asleep";
@@ -923,9 +924,28 @@ Item {
         if (!keys.length)
             return;
         const key = keys[Math.floor(Math.random() * keys.length)];
-        if (playLibraryClip(root.libraryClips[key])) {
+        const clip = root.libraryClips[key];
+        // A workout lies along the way the body faces, toward the camera, and a body that long and that near
+        // grows to half as big again: it turns side-on first (as for a run) and turns back when it is up.
+        if (root.turnToward(1)) {
+            root.workoutActive = true;
+            root.workoutClip = clip;
+            cancelMicroIdle();
+            workoutDelay.restart();
+        } else if (playLibraryClip(clip)) {
             root.workoutActive = true;
             cancelMicroIdle();
+        }
+    }
+    property string workoutClip: ""
+    Timer {
+        id: workoutDelay
+        interval: root.turnMs + 40
+        onTriggered: {
+            if (!root.playLibraryClip(root.workoutClip)) {   // nothing to play after all: up and facing the user
+                root.workoutActive = false;
+                root.turnBack();
+            }
         }
     }
     // --- Asking for attention, and thinking hard --------------------------------
@@ -977,8 +997,8 @@ Item {
             if (root.canSleep && idleFor > root.nextSleepAt) {
                 if (root.sitState === "sitting")
                     root.standUp();
-                    // gets up from the chair first; it lies down next time round
                 else
+                    // gets up from the chair first; it lies down next time round
                     root.fallAsleep();
             } else if (root.sitState === "" && Date.now() >= root.nextWorkout) {
                 root.nextWorkout = root.workoutAt();

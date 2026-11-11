@@ -1471,6 +1471,37 @@ def _limbed_model_with_pelvis_glb(path: Path) -> None:
     )
 
 
+def test_a_mesh_named_like_a_bone_does_not_take_the_bones_node_name(tmp_path):
+    """A loader that finds a bone by its name (Qt's) would take the mesh node for it: the head of a robot
+    whose parts were named for the bones sank into its body."""
+    deploy = tmp_path / "deploy" / "assets"
+    (deploy / "custom_templates").mkdir(parents=True)
+    path = deploy / "custom_templates" / "named.glb"
+    script = _LIMBED_MODEL_SCRIPT.replace(
+        'body.name = "Body"', 'body.name = "spine"'
+    )
+    subprocess.run(
+        [
+            BLENDER_BIN,
+            "--background",
+            "--factory-startup",
+            "--python-expr",
+            script % str(path),
+        ],
+        capture_output=True,
+        check=True,
+        timeout=120,
+    )
+    result, out_path, _build = _compile(
+        _minimal_spec(base_template="custom:named", has_face=False),
+        tmp_path,
+        "named",
+    )
+    assert result.returncode == 0, result.stderr
+    names = [n.get("name") for n in _glb_gltf(out_path)["nodes"]]
+    assert "spine" in names and len(names) == len(set(names)), sorted(names)
+
+
 def test_a_body_with_a_librarys_bones_plays_the_clips_it_gives_and_gets_no_morph_limb_poses(
     tmp_path,
 ):

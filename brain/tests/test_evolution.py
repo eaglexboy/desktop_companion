@@ -1152,6 +1152,12 @@ def test_part_of_a_models_name_is_enough_when_only_one_model_has_it():
         _named_model("change to the robot model", templates) is None
     )  # two have it
     assert _named_model("change to the mech model", templates) is None
+    # the companion's own request for the change is the bare name
+    assert (
+        _named_model("milo robot", templates, needs_switch_word=False)
+        == "custom:milo_robot_rigged"
+    )
+    assert _named_model("milo robot", templates) is None
 
 
 @pytest.mark.asyncio

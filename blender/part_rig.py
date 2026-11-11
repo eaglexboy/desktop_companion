@@ -40,11 +40,11 @@ import sys
 
 import bpy  # pyright: ignore[reportMissingImports]
 import numpy as np
-from mathutils import (
+from mathutils import ( # pyright: ignore[reportMissingImports]
     Matrix,
     Quaternion,
     Vector,
-)  # pyright: ignore[reportMissingImports]
+)  
 
 DEFAULT_ARM_DX = 0.14
 HEAD_TOP_FRACTION = 0.82
@@ -52,6 +52,7 @@ TORSO_FROM_FRACTION = 0.55
 ARM_FROM_FRACTION = 0.30
 HEAD_HALF_WIDTH = 0.12
 STRAY_TORSO_DEPTH = 0.15
+HEAD_SIDE_MARGIN = 0.05  # how far past the head's own width a piece at its side may sit (of the height)
 LIMBLESS_HEAD_FROM = 0.60
 LIMBLESS_NECK_FROM = 0.40
 SPINE_BANDS = (
@@ -303,7 +304,9 @@ def finish(
                 "uv", np.concatenate(uvs)
             )
         new_mesh.update()
-        obj = bpy.data.objects.new(name, new_mesh)
+        obj = bpy.data.objects.new(
+            name, new_mesh
+        )  # named for its bone: `models rebind` finds it so; the generator renames it on import
         bpy.context.scene.collection.objects.link(obj)
         obj.vertex_groups.new(name=name).add(
             list(range(len(coords))), 1.0, "REPLACE"
@@ -383,6 +386,22 @@ def main() -> None:
             and abs(p.c[1] - core_y) > STRAY_TORSO_DEPTH * height
         ):
             p.cls = "armL" if p.c[0] > xm else "armR"
+
+    # a piece at the side of the head (an ear, headphones) is further out than the head is wide, so it was
+    # taken for an arm and would be carried out to the T-pose with it: an arm piece beside the head, at the
+    # height of its upper three quarters and not much further out than the head, is part of the head
+    head_v0 = np.vstack([p.v for p in parts if p.cls == "head"])
+    head_lo, head_hi = float(head_v0[:, 2].min()), float(head_v0[:, 2].max())
+    head_reach = (
+        float(np.abs(head_v0[:, 0] - xm).max()) + HEAD_SIDE_MARGIN * height
+    )
+    for p in parts:
+        if (
+            p.cls in ("armL", "armR")
+            and p.c[2] >= head_lo + 0.25 * (head_hi - head_lo)
+            and abs(p.c[0] - xm) <= head_reach
+        ):
+            p.cls = "head"
 
     def of(cls):
         return [p for p in parts if p.cls == cls]
