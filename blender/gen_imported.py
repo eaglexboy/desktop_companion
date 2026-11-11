@@ -113,6 +113,61 @@ def _draw_both_sides(meshes) -> None:
                 material.use_backface_culling = False
 
 
+def _bind_unweighted_vertices(armature, meshes) -> int:
+    """A vertex that no bone has a weight for stays where it was when the body moves, and the glTF
+    exporter ties it to a bone of its own that never moves (`neutral_bone`): a pair of eyes the model
+    was made with no weights for floated in front of the face when the head turned. Each such vertex
+    is given to the bone nearest to it. A file that was exported once already has that bone and the
+    weights on it: those count as no weights. Returns how many were."""
+    import numpy as np
+
+    neutral = "neutral_bone"
+
+    bones = {
+        bone.name: (
+            np.array(armature.matrix_world @ bone.head_local),
+            np.array(armature.matrix_world @ bone.tail_local),
+        )
+        for bone in armature.data.bones
+        if bone.name not in ("root", "neutral_bone")
+    }
+    if not bones:
+        return 0
+    names = list(bones)
+    heads = np.array([bones[n][0] for n in names])
+    tails = np.array([bones[n][1] for n in names])
+    along = tails - heads
+    length_squared = np.maximum((along * along).sum(axis=1), 1e-12)
+    bound = 0
+    for mesh in meshes:
+        if not any(m.type == "ARMATURE" for m in mesh.modifiers):
+            continue
+        index = {g.index: g.name for g in mesh.vertex_groups}
+        loose = [
+            v
+            for v in mesh.data.vertices
+            if sum(g.weight for g in v.groups if index.get(g.group) != neutral)
+            <= 1e-6
+        ]
+        for vertex in loose:
+            if neutral in mesh.vertex_groups:
+                mesh.vertex_groups[neutral].remove([vertex.index])
+            point = np.array(mesh.matrix_world @ vertex.co)
+            t = np.clip(
+                ((point - heads) * along).sum(axis=1) / length_squared, 0, 1
+            )
+            nearest = np.linalg.norm(
+                point - (heads + t[:, None] * along), axis=1
+            )
+            name = names[int(nearest.argmin())]
+            group = mesh.vertex_groups.get(name) or mesh.vertex_groups.new(
+                name=name
+            )
+            group.add([vertex.index], 1.0, "REPLACE")
+            bound += 1
+    return bound
+
+
 def _rename_meshes_named_for_bones(armature, meshes) -> None:
     """A mesh object named like a bone ("Head" on a model whose pieces were named for the bones they follow)
     exports as a node of the same name as the bone's, and a loader that finds a bone by its name (Qt's,
@@ -216,6 +271,10 @@ def build_imported_model(path: Path, warnings: list[str]) -> dict:
     else:
         _bake_import_pose(armatures[0], meshes, warnings)
         _rename_meshes_named_for_bones(armatures[0], meshes)
+        if _bind_unweighted_vertices(armatures[0], meshes):
+            warnings.append(
+                "some vertices had no bone weights: each follows the bone nearest to it"
+            )
 
     bpy.context.view_layer.update()
     roots = [

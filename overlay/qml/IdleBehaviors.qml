@@ -379,7 +379,9 @@ Item {
             gestureTimer.restart();
         }
         root.runAmount = (moving && root.canRun) ? 1 : 0;
-        if (!moving && !holdTurn)
+        // Not while it works out or sleeps: a position update from the brain (the window slides by
+        // nothing) also ends a "move", and turned the body back in the middle of a workout that went on.
+        if (!moving && !holdTurn && !root.floorBusy)
             turnBack();
     }
 
@@ -932,6 +934,9 @@ Item {
         if (root.turnToward(1, root.workoutTurnDegrees)) {
             root.workoutActive = true;
             root.workoutClip = clip;
+            // The clip starts after the turn: a move asked for in the meantime (the user clicked on the
+            // companion's monitor) waits for the whole workout, as one asked for later does.
+            root.sitClipEndsAt = Date.now() + root.turnMs + 40 + root.controller.clipDurationMs(clip) + 80;
             cancelMicroIdle();
             workoutDelay.restart();
         } else if (playLibraryClip(clip)) {
