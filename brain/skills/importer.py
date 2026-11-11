@@ -70,12 +70,43 @@ def fetch_git(url: str, into: Path) -> str:
     skill point outside its own directory."""
     if not url.startswith("https://"):
         raise ValueError("only https:// repositories are accepted")
-    env = {k: v for k, v in os.environ.items() if k in {"PATH", "HOME", "LANG", "SSL_CERT_FILE", "SSL_CERT_DIR"}}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k in {"PATH", "HOME", "LANG", "SSL_CERT_FILE", "SSL_CERT_DIR"}
+    }
     env["GIT_TERMINAL_PROMPT"] = "0"
-    cmd = ["git", "-c", "core.symlinks=false", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
-           "clone", "--depth", "1", "--no-tags", "--", url, str(into)]
-    subprocess.run(cmd, check=True, env=env, timeout=GIT_TIMEOUT_S, capture_output=True, text=True)
-    out = subprocess.run(["git", "-C", str(into), "rev-parse", "HEAD"], check=True, env=env, capture_output=True, text=True)
+    cmd = [
+        "git",
+        "-c",
+        "core.symlinks=false",
+        "-c",
+        "protocol.allow=never",
+        "-c",
+        "protocol.https.allow=always",
+        "clone",
+        "--depth",
+        "1",
+        "--no-tags",
+        "--",
+        url,
+        str(into),
+    ]
+    subprocess.run(
+        cmd,
+        check=True,
+        env=env,
+        timeout=GIT_TIMEOUT_S,
+        capture_output=True,
+        text=True,
+    )
+    out = subprocess.run(
+        ["git", "-C", str(into), "rev-parse", "HEAD"],
+        check=True,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
     return out.stdout.strip()
 
 
@@ -120,46 +151,84 @@ def install(
 
     r = ImportResult(skill.name)
     r.messages += [f"warning: {w}" for w in skill.warnings]
-    target = dest_root / source / skill.name  # skill.name is regex-validated: no separators, no '..'
+    target = (
+        dest_root / source / skill.name
+    )  # skill.name is regex-validated: no separators, no '..'
     r.target = target
 
     if target.exists() and not force:
         r.skipped = True
-        r.messages.append(f"already installed at {target} (use --force to replace)")
+        r.messages.append(
+            f"already installed at {target} (use --force to replace)"
+        )
         return r
     links = find_symlinks(skill_dir)
     if links:
-        r.messages.append("refused: package contains symlinks (" + ", ".join(p.relative_to(skill_dir).as_posix() for p in links[:3]) + ")")
+        r.messages.append(
+            "refused: package contains symlinks ("
+            + ", ".join(p.relative_to(skill_dir).as_posix() for p in links[:3])
+            + ")"
+        )
         return r
     if _package_size(skill_dir) > MAX_PACKAGE_BYTES:
-        r.messages.append(f"refused: package is larger than {MAX_PACKAGE_BYTES // (1024 * 1024)} MiB")
+        r.messages.append(
+            f"refused: package is larger than {MAX_PACKAGE_BYTES // (1024 * 1024)} MiB"
+        )
         return r
 
     r.findings = scan_skill(skill)
     r.dangerous_tools = dangerous_tools(skill)
-    r.tier = classify(imported=True, findings=r.findings, dangerous=r.dangerous_tools, has_scripts=skill.has_scripts)
+    r.tier = classify(
+        imported=True,
+        findings=r.findings,
+        dangerous=r.dangerous_tools,
+        has_scripts=skill.has_scripts,
+    )
     if any(f.severity == "high" for f in r.findings) and not accept_findings:
         r.messages.append(
             "refused: instructions look like a prompt-injection attempt ("
-            + "; ".join(f"{f.name} in {f.where}: {f.matched.strip()!r}" for f in r.findings if f.severity == "high")
+            + "; ".join(
+                f"{f.name} in {f.where}: {f.matched.strip()!r}"
+                for f in r.findings
+                if f.severity == "high"
+            )
             + "); review the skill and re-run with --accept-findings if you trust it"
         )
         return r
 
     if target.exists():
         shutil.rmtree(target)
-    ignore = shutil.ignore_patterns(".git", ".github", *(() if with_scripts else ("scripts",)))
+    ignore = shutil.ignore_patterns(
+        ".git", ".github", *(() if with_scripts else ("scripts",))
+    )
     shutil.copytree(skill_dir, target, ignore=ignore, symlinks=True)
     r.scripts_installed = with_scripts and skill.has_scripts
     if skill.has_scripts and not with_scripts:
-        r.messages.append("scripts/ not installed (use --with-scripts); the instructions may reference it")
-    _write_provenance(target, skill, r, source=source, commit=commit, origin=origin, category=category)
+        r.messages.append(
+            "scripts/ not installed (use --with-scripts); the instructions may reference it"
+        )
+    _write_provenance(
+        target,
+        skill,
+        r,
+        source=source,
+        commit=commit,
+        origin=origin,
+        category=category,
+    )
     r.ok = True
     return r
 
 
 def _write_provenance(
-    target: Path, skill: AgentSkill, r: ImportResult, *, source: str, commit: str, origin: str, category: str
+    target: Path,
+    skill: AgentSkill,
+    r: ImportResult,
+    *,
+    source: str,
+    commit: str,
+    origin: str,
+    category: str,
 ) -> None:
     lines = [
         f"source = {_toml_str(source)}",
@@ -171,8 +240,14 @@ def _write_provenance(
         f"trust_tier = {_toml_str(r.tier.value if r.tier else '')}",
         f"scripts_in_source = {'true' if skill.has_scripts else 'false'}",
         f"scripts_installed = {'true' if r.scripts_installed else 'false'}",
-        "dangerous_tools = [" + ", ".join(_toml_str(t) for t in r.dangerous_tools) + "]",
-        "findings = [" + ", ".join(_toml_str(f"{f.severity}:{f.name}@{f.where}") for f in r.findings) + "]",
+        "dangerous_tools = ["
+        + ", ".join(_toml_str(t) for t in r.dangerous_tools)
+        + "]",
+        "findings = ["
+        + ", ".join(
+            _toml_str(f"{f.severity}:{f.name}@{f.where}") for f in r.findings
+        )
+        + "]",
     ]
     (target / ".source").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -192,7 +267,9 @@ def _label_from(origin: str, dest: Path | None = None) -> str:
     if dest is not None and (dest / repo).is_dir():
         for src in (dest / repo).glob("*/.source"):
             try:
-                existing = tomllib.loads(src.read_text(encoding="utf-8")).get("origin", "")
+                existing = tomllib.loads(src.read_text(encoding="utf-8")).get(
+                    "origin", ""
+                )
             except (OSError, ValueError):
                 continue
             if existing and existing != origin:
@@ -203,11 +280,26 @@ def _label_from(origin: str, dest: Path | None = None) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="python -m brain.skills.importer", description=(__doc__ or "").split("\n\n")[0])
-    ap.add_argument("source", help="https git URL, or a local directory containing SKILL.md packages")
-    ap.add_argument("--skill", action="append", help="install only this skill name (repeatable); default: all found")
-    ap.add_argument("--dest", type=Path, help="skills directory (default: from config)")
-    ap.add_argument("--source-label", help="subdirectory label (default: derived from the URL)")
+    ap = argparse.ArgumentParser(
+        prog="python -m brain.skills.importer",
+        description=(__doc__ or "").split("\n\n")[0],
+    )
+    ap.add_argument(
+        "source",
+        help="https git URL, or a local directory containing SKILL.md packages",
+    )
+    ap.add_argument(
+        "--skill",
+        action="append",
+        help="install only this skill name (repeatable); default: all found",
+    )
+    ap.add_argument(
+        "--dest", type=Path, help="skills directory (default: from config)"
+    )
+    ap.add_argument(
+        "--source-label",
+        help="subdirectory label (default: derived from the URL)",
+    )
     ap.add_argument("--with-scripts", action="store_true")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--accept-findings", action="store_true")
@@ -225,12 +317,23 @@ def main(argv: list[str] | None = None) -> int:
             clone = Path(tmp) / "repo"
             try:
                 commit = fetch_git(args.source, clone)
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError) as exc:
-                print(f"fetch failed: {getattr(exc, 'stderr', None) or exc}", file=sys.stderr)
+            except (
+                subprocess.CalledProcessError,
+                subprocess.TimeoutExpired,
+                ValueError,
+            ) as exc:
+                print(
+                    f"fetch failed: {getattr(exc, 'stderr', None) or exc}",
+                    file=sys.stderr,
+                )
                 return 2
             root, origin = clone, args.source
         else:
-            root, commit, origin = Path(args.source).expanduser().resolve(), "", str(Path(args.source).expanduser().resolve())
+            root, commit, origin = (
+                Path(args.source).expanduser().resolve(),
+                "",
+                str(Path(args.source).expanduser().resolve()),
+            )
             if not root.is_dir():
                 print(f"not a directory: {root}", file=sys.stderr)
                 return 2
@@ -244,10 +347,24 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         failures = 0
         for d in dirs:
-            r = install(d, dest, source=label, commit=commit, origin=origin,
-                        category=d.parent.relative_to(root).as_posix() if d.parent != root else "",
-                        with_scripts=args.with_scripts, force=args.force, accept_findings=args.accept_findings)
-            status = "installed" if r.ok else "skipped" if r.skipped else "REFUSED"
+            r = install(
+                d,
+                dest,
+                source=label,
+                commit=commit,
+                origin=origin,
+                category=(
+                    d.parent.relative_to(root).as_posix()
+                    if d.parent != root
+                    else ""
+                ),
+                with_scripts=args.with_scripts,
+                force=args.force,
+                accept_findings=args.accept_findings,
+            )
+            status = (
+                "installed" if r.ok else "skipped" if r.skipped else "REFUSED"
+            )
             tier = f" [{r.tier.value}]" if r.tier else ""
             print(f"{status:9} {r.name}{tier}")
             for m in r.messages:

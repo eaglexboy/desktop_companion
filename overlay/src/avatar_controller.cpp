@@ -1,7 +1,11 @@
+#include <algorithm>
 #include "avatar_controller.h"
 
+#include <QMatrix4x4>
 #include <QQmlListReference>
+#include <QQuaternion>
 #include <QTimer>
+#include <QVector3D>
 
 AvatarController::AvatarController(QObject *parent) : QObject(parent) {}
 
@@ -31,8 +35,7 @@ void AvatarController::setBlinkKeyNames(const QStringList &names)
 
 bool AvatarController::isBlinkModel(int targetCount) const
 {
-    return !m_blinkKeyNames.isEmpty() && targetCount == m_blinkKeyNames.size()
-        && targetCount != m_shapeKeyNames.size();
+    return !m_blinkKeyNames.isEmpty() && targetCount == m_blinkKeyNames.size() && targetCount != m_shapeKeyNames.size();
 }
 
 void AvatarController::setRunKeyNames(const QStringList &names)
@@ -45,9 +48,7 @@ void AvatarController::setRunKeyNames(const QStringList &names)
 
 bool AvatarController::isRunModel(int targetCount) const
 {
-    return !m_runKeyNames.isEmpty() && targetCount == m_runKeyNames.size()
-        && targetCount != m_shapeKeyNames.size() && targetCount != m_blinkKeyNames.size()
-        && targetCount != m_gestureKeyNames.size();
+    return !m_runKeyNames.isEmpty() && targetCount == m_runKeyNames.size() && targetCount != m_shapeKeyNames.size() && targetCount != m_blinkKeyNames.size() && targetCount != m_gestureKeyNames.size();
 }
 
 void AvatarController::setGestureKeyNames(const QStringList &names)
@@ -60,9 +61,12 @@ void AvatarController::setGestureKeyNames(const QStringList &names)
 
 bool AvatarController::isGestureModel(int targetCount) const
 {
-    return !m_gestureKeyNames.isEmpty() && targetCount == m_gestureKeyNames.size()
-        && targetCount != m_shapeKeyNames.size() && targetCount != m_blinkKeyNames.size()
-        && targetCount != m_runKeyNames.size();
+    return !m_gestureKeyNames.isEmpty() && targetCount == m_gestureKeyNames.size() && targetCount != m_shapeKeyNames.size() && targetCount != m_blinkKeyNames.size() && targetCount != m_runKeyNames.size();
+}
+
+bool AvatarController::isRunGestureModel(int targetCount) const
+{
+    return !m_runKeyNames.isEmpty() && !m_gestureKeyNames.isEmpty() && targetCount == m_runKeyNames.size() + m_gestureKeyNames.size() && targetCount != m_shapeKeyNames.size() && targetCount != m_blinkKeyNames.size() && targetCount != m_runKeyNames.size() && targetCount != m_gestureKeyNames.size();
 }
 
 bool AvatarController::hasGestureTargets() const
@@ -71,10 +75,11 @@ bool AvatarController::hasGestureTargets() const
         return false;
     QList<QObject *> stack;
     stack.append(m_root);
-    while (!stack.isEmpty()) {
+    while (!stack.isEmpty())
+    {
         QObject *node = stack.takeLast();
         QQmlListReference ref(node, "morphTargets");
-        if (ref.isValid() && isGestureModel(int(ref.count())))
+        if (ref.isValid() && (isGestureModel(int(ref.count())) || isRunGestureModel(int(ref.count()))))
             return true;
         stack.append(node->children());
     }
@@ -87,12 +92,18 @@ void AvatarController::setGestureWeights(const QVariantList &weights)
         return;
     QList<QObject *> stack;
     stack.append(m_root);
-    while (!stack.isEmpty()) {
+    while (!stack.isEmpty())
+    {
         QObject *node = stack.takeLast();
         QQmlListReference ref(node, "morphTargets");
-        if (ref.isValid() && isGestureModel(int(ref.count()))) {
-            for (qsizetype i = 0; i < ref.count() && i < weights.size(); ++i) {
-                if (QObject *target = ref.at(i))
+        const bool gestureOnly = ref.isValid() && isGestureModel(int(ref.count()));
+        const bool runAndGesture = ref.isValid() && isRunGestureModel(int(ref.count()));
+        if (gestureOnly || runAndGesture)
+        {
+            const qsizetype first = runAndGesture ? m_runKeyNames.size() : 0; // the run targets come first
+            for (qsizetype i = 0; i < m_gestureKeyNames.size() && i < weights.size(); ++i)
+            {
+                if (QObject *target = ref.at(first + i))
                     target->setProperty("weight", float(weights.at(i).toDouble()));
             }
         }
@@ -106,10 +117,11 @@ bool AvatarController::hasRunTargets() const
         return false;
     QList<QObject *> stack;
     stack.append(m_root);
-    while (!stack.isEmpty()) {
+    while (!stack.isEmpty())
+    {
         QObject *node = stack.takeLast();
         QQmlListReference ref(node, "morphTargets");
-        if (ref.isValid() && isRunModel(int(ref.count())))
+        if (ref.isValid() && (isRunModel(int(ref.count())) || isRunGestureModel(int(ref.count()))))
             return true;
         stack.append(node->children());
     }
@@ -122,10 +134,12 @@ void AvatarController::setRunWeights(double a, double b)
         return;
     QList<QObject *> stack;
     stack.append(m_root);
-    while (!stack.isEmpty()) {
+    while (!stack.isEmpty())
+    {
         QObject *node = stack.takeLast();
         QQmlListReference ref(node, "morphTargets");
-        if (ref.isValid() && isRunModel(int(ref.count()))) {
+        if (ref.isValid() && (isRunModel(int(ref.count())) || isRunGestureModel(int(ref.count()))))
+        {
             if (QObject *t = ref.at(0))
                 t->setProperty("weight", float(a));
             if (QObject *t = ref.at(1))
@@ -141,7 +155,8 @@ bool AvatarController::hasBlinkTargets() const
         return false;
     QList<QObject *> stack;
     stack.append(m_root);
-    while (!stack.isEmpty()) {
+    while (!stack.isEmpty())
+    {
         QObject *node = stack.takeLast();
         QQmlListReference ref(node, "morphTargets");
         if (ref.isValid() && isBlinkModel(int(ref.count())))
@@ -157,11 +172,14 @@ void AvatarController::setBlinkWeight(double weight)
         return;
     QList<QObject *> stack;
     stack.append(m_root);
-    while (!stack.isEmpty()) {
+    while (!stack.isEmpty())
+    {
         QObject *node = stack.takeLast();
         QQmlListReference ref(node, "morphTargets");
-        if (ref.isValid() && isBlinkModel(int(ref.count()))) {
-            for (qsizetype i = 0; i < ref.count(); ++i) {
+        if (ref.isValid() && isBlinkModel(int(ref.count())))
+        {
+            for (qsizetype i = 0; i < ref.count(); ++i)
+            {
                 if (QObject *target = ref.at(i))
                     target->setProperty("weight", float(weight));
             }
@@ -177,12 +195,16 @@ int AvatarController::zeroAllMorphWeights()
     int found = 0;
     QList<QObject *> stack;
     stack.append(m_root);
-    while (!stack.isEmpty()) {
+    while (!stack.isEmpty())
+    {
         QObject *node = stack.takeLast();
         QQmlListReference ref(node, "morphTargets");
-        if (ref.isValid()) {
-            for (qsizetype i = 0; i < ref.count(); ++i) {
-                if (QObject *target = ref.at(i)) {
+        if (ref.isValid())
+        {
+            for (qsizetype i = 0; i < ref.count(); ++i)
+            {
+                if (QObject *target = ref.at(i))
+                {
                     target->setProperty("weight", 0.0f);
                     ++found;
                 }
@@ -211,12 +233,13 @@ void AvatarController::resetStep(int generation, int attempt, int passesAfterFou
     const int found = zeroAllMorphWeights();
     // New clip objects may appear late too, each starting out looping.
     stopAllClips();
+    // A body's sit chair is only there while it sits (and the zeroing above brought it back).
+    setSitPropShown(false);
     const bool done = (found > 0 && passesAfterFound >= 5) || attempt >= 50;
     if (done)
         return;
-    QTimer::singleShot(100, this, [this, generation, attempt, found, passesAfterFound]() {
-        resetStep(generation, attempt + 1, found > 0 ? passesAfterFound + 1 : 0);
-    });
+    QTimer::singleShot(100, this, [this, generation, attempt, found, passesAfterFound]()
+                       { resetStep(generation, attempt + 1, found > 0 ? passesAfterFound + 1 : 0); });
 }
 
 // QQuickTimelineAnimation / QQuickTimeline are private types, so they are
@@ -228,10 +251,10 @@ QList<QObject *> AvatarController::clipAnimations(const QString &name) const
         return found;
     QList<QObject *> stack;
     stack.append(m_root);
-    while (!stack.isEmpty()) {
+    while (!stack.isEmpty())
+    {
         QObject *node = stack.takeLast();
-        if (!qstrcmp(node->metaObject()->className(), "QQuickTimelineAnimation")
-            && (name.isEmpty() || node->objectName() == name))
+        if (!qstrcmp(node->metaObject()->className(), "QQuickTimelineAnimation") && (name.isEmpty() || node->objectName() == name))
             found.append(node);
         stack.append(node->children());
     }
@@ -241,7 +264,8 @@ QList<QObject *> AvatarController::clipAnimations(const QString &name) const
 QStringList AvatarController::clipNames() const
 {
     QStringList names;
-    for (QObject *anim : clipAnimations()) {
+    for (QObject *anim : clipAnimations())
+    {
         const QString n = anim->objectName();
         if (!n.isEmpty() && !n.contains(QLatin1Char('.')) && !names.contains(n))
             names << n;
@@ -261,7 +285,13 @@ void AvatarController::rewindClip(QObject *anim)
     // The animation is a child of the Timeline it drives (its `timeline`
     // property is not readable as a QObject* from here).
     if (QObject *timeline = timelineOf(anim))
+    {
         timeline->setProperty("currentFrame", anim->property("from"));
+        // A timeline keeps applying its keyframes at the frame it was left on, and
+        // they all write the same bones: a clip that is not playing must not
+        // be evaluated, or the last one in the file wins over the one that is.
+        timeline->setProperty("enabled", false);
+    }
 }
 
 int AvatarController::stopAllClips()
@@ -273,32 +303,114 @@ int AvatarController::stopAllClips()
     return int(anims.size());
 }
 
+int AvatarController::setSitPropShown(double amount)
+{
+    constexpr int kSitPropTargets = 3;
+    if (!m_root || kSitPropTargets == m_shapeKeyNames.size() || kSitPropTargets == m_blinkKeyNames.size() || kSitPropTargets == m_runKeyNames.size() || kSitPropTargets == m_gestureKeyNames.size())
+        return 0;
+    int found = 0;
+    QList<QObject *> stack;
+    stack.append(m_root);
+    while (!stack.isEmpty())
+    {
+        QObject *node = stack.takeLast();
+        QQmlListReference ref(node, "morphTargets");
+        if (ref.isValid() && ref.count() == kSitPropTargets)
+        {
+            if (QObject *collapse = ref.at(0))
+                collapse->setProperty("weight", float(1.0 - std::clamp(amount, 0.0, 1.0)));
+            ++found;
+        }
+        stack.append(node->children());
+    }
+    return found;
+}
+
+int AvatarController::clipAnimationCount(const QString &name) const
+{
+    return int(clipAnimations(name).size());
+}
+
+bool AvatarController::clipRunning(const QString &name) const
+{
+    const QList<QObject *> anims = clipAnimations(name);
+    if (anims.isEmpty())
+        return false;
+    for (QObject *anim : anims)
+    {
+        if (!anim->property("running").toBool())
+            return false;
+    }
+    return true;
+}
+
+// Joint positions are worked out here, down the tree from the loader's own scene transform, because
+// a joint's `scenePosition` is only brought up to date when something draws it, and a skinned mesh is
+// drawn from the skeleton's pose, not from the nodes: it stays where the file's bind pose puts it (a T)
+// while the body is already in the pose of the clip.
+static void collectPositions(QObject *object, const QMatrix4x4 &parent, bool isRoot, QVariantList &out)
+{
+    QMatrix4x4 here = parent;
+    const QVariant position = object->property("position");
+    const QVariant rotation = object->property("rotation");
+    const QVariant scale = object->property("scale");
+    const bool isNode = position.canConvert<QVector3D>() && rotation.canConvert<QQuaternion>() && scale.canConvert<QVector3D>();
+    if (isNode)
+    {
+        if (!isRoot)
+        {
+            here.translate(position.value<QVector3D>());
+            here.rotate(rotation.value<QQuaternion>());
+            here.scale(scale.value<QVector3D>());
+        }
+        out.append(QVariant::fromValue(here.map(QVector3D(0, 0, 0))));
+    }
+    for (QObject *child : object->children())
+        collectPositions(child, here, false, out);
+}
+
+QVariantList AvatarController::nodePositions() const
+{
+    QVariantList out;
+    if (!m_root)
+        return out;
+    // The loader's own scene transform (the pivot node above it is moved by IdleBehaviors), then
+    // each node's own position, rotation and scale down the tree: the skeleton's joints and the meshes.
+    const QVariant root = m_root->property("sceneTransform");
+    collectPositions(m_root, root.canConvert<QMatrix4x4>() ? root.value<QMatrix4x4>() : QMatrix4x4(), true, out);
+    return out;
+}
+
 int AvatarController::clipDurationMs(const QString &name) const
 {
     const QList<QObject *> anims = clipAnimations(name);
     return anims.isEmpty() ? 0 : anims.first()->property("duration").toInt();
 }
 
-bool AvatarController::playClip(const QString &name, int loops)
+bool AvatarController::playClip(const QString &name, int loops, bool hold)
 {
     const QList<QObject *> anims = clipAnimations(name);
     if (anims.isEmpty())
         return false;
     stopAllClips();
     const int generation = m_clipGeneration;
-    for (QObject *anim : anims) {
+    for (QObject *anim : anims)
+    {
+        if (QObject *timeline = timelineOf(anim))
+            timeline->setProperty("enabled", true);
         anim->setProperty("loops", loops);
         anim->setProperty("running", true);
     }
-    if (loops > 0) {
+    if (loops > 0 && !hold)
+    {
         const int totalMs = clipDurationMs(name) * loops + 50;
-        QTimer::singleShot(totalMs, this, [this, generation, name]() {
+        QTimer::singleShot(totalMs, this, [this, generation, name]()
+                           {
             // Only if nothing else has been played/stopped since.
             if (generation != m_clipGeneration)
                 return;
             for (QObject *anim : clipAnimations(name))
-                rewindClip(anim);
-        });
+                rewindClip(anim); });
     }
     return true;
 }
@@ -307,7 +419,8 @@ void AvatarController::setVisemeTimeline(const QVariantList &visemes)
 {
     m_timeline.clear();
     m_timeline.reserve(visemes.size());
-    for (const QVariant &v : visemes) {
+    for (const QVariant &v : visemes)
+    {
         const QVariantMap m = v.toMap();
         VisemeFrame frame;
         frame.startS = m.value(QStringLiteral("start_s")).toDouble();
@@ -323,7 +436,8 @@ void AvatarController::applyVisemeWeightsAt(double elapsedS)
 
     QHash<QString, float> desired;
     QStringList stillActive;
-    for (const VisemeWeight &w : active) {
+    for (const VisemeWeight &w : active)
+    {
         desired.insert(w.shapeKey, w.weight);
         stillActive << w.shapeKey;
     }
@@ -331,7 +445,8 @@ void AvatarController::applyVisemeWeightsAt(double elapsedS)
     // be explicitly driven to 0 -- otherwise it would stay stuck at
     // whatever weight it last had once VisemeMath::weightsAt() stops
     // reporting it (e.g. after its 30ms decay window fully elapses).
-    for (const QString &key : m_lastAppliedShapeKeys) {
+    for (const QString &key : m_lastAppliedShapeKeys)
+    {
         if (!desired.contains(key))
             desired.insert(key, 0.0f);
     }
@@ -360,13 +475,16 @@ void AvatarController::applyWeights(const QHash<QString, float> &desired)
     // see avatar_controller.h).
     QList<QObject *> stack;
     stack.append(m_root);
-    while (!stack.isEmpty()) {
+    while (!stack.isEmpty())
+    {
         QObject *node = stack.takeLast();
         QQmlListReference ref(node, "morphTargets");
         // Eye and body models carry blink/run targets, not visemes: index 0 there would
         // otherwise be matched to "viseme_A".
-        if (ref.isValid() && !isNonVisemeModel(int(ref.count()))) {
-            for (qsizetype i = 0; i < ref.count(); ++i) {
+        if (ref.isValid() && !isNonVisemeModel(int(ref.count())))
+        {
+            for (qsizetype i = 0; i < ref.count(); ++i)
+            {
                 QObject *target = ref.at(i);
                 if (!target)
                     continue;

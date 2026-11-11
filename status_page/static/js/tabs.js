@@ -8,6 +8,7 @@ export const TABS = [
   "skills",
   "timeline",
   "looks",
+  "animations",
   "chat",
   "logs",
 ];

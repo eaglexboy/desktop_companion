@@ -64,7 +64,9 @@ from brain.presence.placement import Rect, ScreenInfo, WindowState
 
 logger = logging.getLogger("deskmate.presence.desktop_bridge")
 
-UpdateCallback = Callable[[WindowState | None, list[ScreenInfo]], Awaitable[None]]
+UpdateCallback = Callable[
+    [WindowState | None, list[ScreenInfo]], Awaitable[None]
+]
 
 # RequestName reply codes (org.freedesktop.DBus): 1 = became primary owner,
 # 2 = queued (another instance already owns the name).
@@ -72,10 +74,14 @@ _NAME_ACQUIRED = 1
 _NAME_QUEUED = 2
 
 _SCREENSAVER_SERVICE = DBusAddress(
-    "/org/freedesktop/ScreenSaver", bus_name="org.freedesktop.ScreenSaver", interface="org.freedesktop.ScreenSaver"
+    "/org/freedesktop/ScreenSaver",
+    bus_name="org.freedesktop.ScreenSaver",
+    interface="org.freedesktop.ScreenSaver",
 )
 _LOGIN1_MANAGER = DBusAddress(
-    "/org/freedesktop/login1", bus_name="org.freedesktop.login1", interface="org.freedesktop.login1.Manager"
+    "/org/freedesktop/login1",
+    bus_name="org.freedesktop.login1",
+    interface="org.freedesktop.login1.Manager",
 )
 _LOGIN1_SESSION_IFACE = "org.freedesktop.login1.Session"
 
@@ -122,7 +128,11 @@ class PresenceStateMachine:
     without touching any bus.
     """
 
-    def __init__(self, idle_after_s: float, on_transition: TransitionCallback | None = None) -> None:
+    def __init__(
+        self,
+        idle_after_s: float,
+        on_transition: TransitionCallback | None = None,
+    ) -> None:
         self._idle_after_s = idle_after_s
         self._on_transition = on_transition
         self._state = PresenceState.ACTIVE
@@ -132,7 +142,11 @@ class PresenceStateMachine:
         return self._state
 
     def _compute(self, signals: PresenceSignals) -> PresenceState:
-        if signals.screensaver_active or signals.locked_hint or signals.idle_hint:
+        if (
+            signals.screensaver_active
+            or signals.locked_hint
+            or signals.idle_hint
+        ):
             return PresenceState.AWAY
         if signals.seconds_since_activity > self._idle_after_s:
             return PresenceState.IDLE
@@ -164,7 +178,10 @@ def _parse_payload(raw: str) -> tuple[WindowState | None, list[ScreenInfo]]:
     }
     """
     payload = json.loads(raw)
-    screens = [ScreenInfo(s["name"], _parse_rect(s)) for s in payload.get("screens", [])]
+    screens = [
+        ScreenInfo(s["name"], _parse_rect(s))
+        for s in payload.get("screens", [])
+    ]
     win_data = payload.get("window")
     window = None
     if win_data:
@@ -195,10 +212,14 @@ class DesktopPresenceBridge:
         on_transition: TransitionCallback | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self.address = DBusAddress(object_path, bus_name=service_name, interface=service_name)
+        self.address = DBusAddress(
+            object_path, bus_name=service_name, interface=service_name
+        )
         self.on_update = on_update
         self._clock = clock
-        self._state_machine = PresenceStateMachine(idle_after_s, on_transition=on_transition)
+        self._state_machine = PresenceStateMachine(
+            idle_after_s, on_transition=on_transition
+        )
         self._screensaver_active = False
         self._locked_hint = False
         self._idle_hint = False
@@ -241,12 +262,22 @@ class DesktopPresenceBridge:
                     self.address.bus_name,
                 )
             else:
-                logger.error("could not claim D-Bus name %s (result=%s)", self.address.bus_name, result)
+                logger.error(
+                    "could not claim D-Bus name %s (result=%s)",
+                    self.address.bus_name,
+                    result,
+                )
 
-            rule = MatchRule(type="method_call", interface=self.address.interface, path=self.address.object_path)
+            rule = MatchRule(
+                type="method_call",
+                interface=self.address.interface,
+                path=self.address.object_path,
+            )
             with router.filter(rule) as queue:
                 logger.info(
-                    "desktop presence service listening on %s%s", self.address.bus_name, self.address.object_path
+                    "desktop presence service listening on %s%s",
+                    self.address.bus_name,
+                    self.address.object_path,
                 )
                 while True:
                     msg = await queue.get()
@@ -285,17 +316,26 @@ class DesktopPresenceBridge:
                 # well-known name silently never matches locally, even
                 # though the bus-level AddMatch routing worked.
                 # interface+member is already specific enough for this signal.
-                rule = MatchRule(type="signal", interface=_SCREENSAVER_SERVICE.interface, member="ActiveChanged")
+                rule = MatchRule(
+                    type="signal",
+                    interface=_SCREENSAVER_SERVICE.interface,
+                    member="ActiveChanged",
+                )
                 await proxy.AddMatch(rule)
 
                 # GetActive is a plain method on this interface (not a
                 # standard D-Bus property), so it's called directly.
-                reply = await router.send_and_get_reply(new_method_call(_SCREENSAVER_SERVICE, "GetActive"))
+                reply = await router.send_and_get_reply(
+                    new_method_call(_SCREENSAVER_SERVICE, "GetActive")
+                )
                 (self._screensaver_active,) = reply.body
                 await self._reevaluate()
 
                 with router.filter(rule) as queue:
-                    logger.info("subscribed to %s ActiveChanged", _SCREENSAVER_SERVICE.interface)
+                    logger.info(
+                        "subscribed to %s ActiveChanged",
+                        _SCREENSAVER_SERVICE.interface,
+                    )
                     while True:
                         msg = await queue.get()
                         (self._screensaver_active,) = msg.body
@@ -313,21 +353,32 @@ class DesktopPresenceBridge:
     async def _run_login1_watcher(self) -> None:
         session_id = os.environ.get("XDG_SESSION_ID")
         if not session_id:
-            logger.warning("XDG_SESSION_ID is not set -- cannot subscribe to login1 LockedHint/IdleHint")
+            logger.warning(
+                "XDG_SESSION_ID is not set -- cannot subscribe to login1 LockedHint/IdleHint"
+            )
             return
         try:
             async with open_dbus_router(bus="SYSTEM") as router:
                 reply = await router.send_and_get_reply(
-                    new_method_call(_LOGIN1_MANAGER, "GetSession", "s", (session_id,))
+                    new_method_call(
+                        _LOGIN1_MANAGER, "GetSession", "s", (session_id,)
+                    )
                 )
                 (session_path,) = reply.body
                 session_addr = DBusAddress(
-                    session_path, bus_name="org.freedesktop.login1", interface=_LOGIN1_SESSION_IFACE
+                    session_path,
+                    bus_name="org.freedesktop.login1",
+                    interface=_LOGIN1_SESSION_IFACE,
                 )
                 properties = Properties(session_addr)
 
-                for prop_name, attr in (("LockedHint", "_locked_hint"), ("IdleHint", "_idle_hint")):
-                    prop_reply = await router.send_and_get_reply(properties.get(prop_name))
+                for prop_name, attr in (
+                    ("LockedHint", "_locked_hint"),
+                    ("IdleHint", "_idle_hint"),
+                ):
+                    prop_reply = await router.send_and_get_reply(
+                        properties.get(prop_name)
+                    )
                     (variant,) = prop_reply.body
                     setattr(self, attr, variant[1])
                 await self._reevaluate()
@@ -345,7 +396,10 @@ class DesktopPresenceBridge:
                 await proxy.AddMatch(rule)
 
                 with router.filter(rule) as queue:
-                    logger.info("subscribed to login1 session %s PropertiesChanged", session_path)
+                    logger.info(
+                        "subscribed to login1 session %s PropertiesChanged",
+                        session_path,
+                    )
                     while True:
                         msg = await queue.get()
                         _interface_name, changed, _invalidated = msg.body

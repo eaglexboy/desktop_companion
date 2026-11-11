@@ -7,6 +7,10 @@ set(CMAKE_AUTOMOC ON)
 # Lets editors (clangd, the C/C++ extension) find the Qt include paths: build/compile_commands.json.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Writes overlay/.qmlls.ini pointing at the build folder, so qmlls (the editor's QML language server) can
+# find the generated Deskmate module.
+set(QT_QML_GENERATE_QMLLS_INI ON)
+
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Qml Quick Quick3D Quick3DAssetUtils QuickControls2 WebSockets Multimedia Test)
 # The LayerShellQt CMake package provides the target LayerShellQt::Interface.
 find_package(LayerShellQt REQUIRED)
@@ -56,6 +60,7 @@ qt_add_qml_module(deskmate_overlay
         qml/Main.qml
         qml/Avatar3D.qml
         qml/InteractionBar.qml
+        qml/SoundWaves.qml
         qml/SpeechBubble.qml
         qml/AppearanceStatus.qml
         qml/IdleBehaviors.qml

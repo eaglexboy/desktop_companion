@@ -42,7 +42,9 @@ class SkillState:
 class SkillStateStore:
     def __init__(self, db_path: Path) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path, check_same_thread=False, timeout=5.0)
+        self._conn = sqlite3.connect(
+            db_path, check_same_thread=False, timeout=5.0
+        )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
@@ -52,11 +54,20 @@ class SkillStateStore:
 
     @staticmethod
     def _row(r: sqlite3.Row) -> SkillState:
-        return SkillState(r["skill_id"], bool(r["enabled"]), bool(r["pinned"]), r["alias"], r["changed_by"], r["updated_at"])
+        return SkillState(
+            r["skill_id"],
+            bool(r["enabled"]),
+            bool(r["pinned"]),
+            r["alias"],
+            r["changed_by"],
+            r["updated_at"],
+        )
 
     def get(self, skill_id: str) -> SkillState | None:
         with self._lock:
-            r = self._conn.execute("SELECT * FROM skill_state WHERE skill_id = ?", (skill_id,)).fetchone()
+            r = self._conn.execute(
+                "SELECT * FROM skill_state WHERE skill_id = ?", (skill_id,)
+            ).fetchone()
         return self._row(r) if r else None
 
     def all(self) -> dict[str, SkillState]:
@@ -64,13 +75,28 @@ class SkillStateStore:
             rows = self._conn.execute("SELECT * FROM skill_state").fetchall()
         return {r["skill_id"]: self._row(r) for r in rows}
 
-    def put(self, skill_id: str, *, enabled: bool, pinned: bool, alias: str | None, changed_by: str) -> SkillState:
+    def put(
+        self,
+        skill_id: str,
+        *,
+        enabled: bool,
+        pinned: bool,
+        alias: str | None,
+        changed_by: str,
+    ) -> SkillState:
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO skill_state(skill_id, enabled, pinned, alias, changed_by, updated_at) VALUES (?,?,?,?,?,?) "
                 "ON CONFLICT(skill_id) DO UPDATE SET enabled=excluded.enabled, pinned=excluded.pinned, "
                 "alias=excluded.alias, changed_by=excluded.changed_by, updated_at=excluded.updated_at",
-                (skill_id, int(enabled), int(pinned), alias, changed_by, time.time()),
+                (
+                    skill_id,
+                    int(enabled),
+                    int(pinned),
+                    alias,
+                    changed_by,
+                    time.time(),
+                ),
             )
         state = self.get(skill_id)
         assert state is not None

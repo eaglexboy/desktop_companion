@@ -126,10 +126,29 @@ public:
     Q_INVOKABLE int stopAllClips();
     // Plays clip `name` (stopping any other first): `loops` times, or
     // forever when -1. Returns false when no such clip exists. A finite
-    // clip rewinds itself when done.
-    Q_INVOKABLE bool playClip(const QString &name, int loops = 1);
+    // clip rewinds itself when done, unless `hold`: then it stays on its
+    // last pose until the next clip is played (a library clip that is
+    // followed straight away by another, so the body is never left in
+    // the rest pose in between).
+    // How many animations the clip has so far: a model's animations are made one after another
+    // after it loads, so a clip is only complete once this stops growing.
+    Q_INVOKABLE int clipAnimationCount(const QString &name) const;
+    Q_INVOKABLE bool playClip(const QString &name, int loops = 1, bool hold = false);
+    // Shows the chair a body sits on (the generator's SIT_PROP_NODE) by `amount`: 1 is the
+    // whole chair, 0 gone. It is a mesh with exactly three morph targets, the first of which
+    // collapses it to nothing. Returns how many such meshes it found.
+    Q_INVOKABLE int setSitPropShown(double amount);
+    // Whether clip `name` is playing right now: every one of its animations (a late one, a hand
+    // that came after the others, is left standing in its bind pose until it is started).
+    Q_INVOKABLE bool clipRunning(const QString &name) const;
     // Duration in ms of one pass of clip `name`, or 0 if unknown.
     Q_INVOKABLE int clipDurationMs(const QString &name) const;
+    // Where the body is right now: the scene position (a QVector3D, in metres) of every 3D node
+    // under `root` (the skeleton's joints and the meshes), worked out from each node's own position, rotation
+    // and scale so that they follow the clip that is playing, for Main.qml to project onto the
+    // window and click-through everything outside the box around them. One pass over the tree
+    // per call, so ask a few times a second, not per frame. Empty before a model has loaded.
+    Q_INVOKABLE QVariantList nodePositions() const;
 
 signals:
     void rootChanged();
@@ -147,11 +166,16 @@ private:
     bool isBlinkModel(int targetCount) const;
     bool isRunModel(int targetCount) const;
     bool isGestureModel(int targetCount) const;
+    // One mesh carrying both sets (a whole body moved by legs and arms): the run targets,
+    // then the gesture targets, in that order.
+    bool isRunGestureModel(int targetCount) const;
     // Models whose morph targets are not visemes (see blink/run key names).
     bool isNonVisemeModel(int targetCount) const
     {
-        return isBlinkModel(targetCount) || isRunModel(targetCount) || isGestureModel(targetCount);
+        return isBlinkModel(targetCount) || isRunModel(targetCount) || isGestureModel(targetCount) || isRunGestureModel(targetCount) || isSitPropModel(targetCount);
     }
+    // The chair of a sitting body (collapse + two pads) is not a mouth: speech must not drive it.
+    bool isSitPropModel(int targetCount) const { return targetCount == 3 && m_shapeKeyNames.size() != 3; }
     void resetStep(int generation, int attempt, int passesAfterFound);
 
     QPointer<QObject> m_root;

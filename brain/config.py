@@ -48,7 +48,9 @@ def _resolve_secret(value: str) -> str:
         var_name = value[len("env:") :]
         resolved = os.environ.get(var_name)
         if resolved is None:
-            raise ValueError(f"environment variable '{var_name}' referenced by config is not set")
+            raise ValueError(
+                f"environment variable '{var_name}' referenced by config is not set"
+            )
         return resolved
     return value
 
@@ -61,7 +63,8 @@ class StrictModel(BaseModel):
 
 class LogLevel(StrEnum):
     """Matches the standard library's named logging levels exactly, so
-    LogLevel.INFO.value is always a valid argument to logging.getLogger(...).setLevel()."""
+    LogLevel.INFO.value is always a valid argument to logging.getLogger(...).setLevel().
+    """
 
     DEBUG = "DEBUG"
     INFO = "INFO"
@@ -152,7 +155,9 @@ class ClassifierConfig(StrictModel):
 
 
 class LLMRoutingConfig(StrictModel):
-    escalation_threshold: Literal["auto", "always_local", "always_cloud"] = "auto"
+    escalation_threshold: Literal["auto", "always_local", "always_cloud"] = (
+        "auto"
+    )
     classification_timeout_s: float = 3.0
     classifier: ClassifierConfig = Field(default_factory=ClassifierConfig)
 
@@ -165,11 +170,19 @@ class LLMConfig(StrictModel):
     def smallest_context_tokens(self) -> int:
         """The smallest window among the backends that may answer (local and enabled cloud). Prompt parts that
         must fit wherever the router sends the turn are sized to this."""
-        return min([self.local.context_tokens, *(p.context_tokens for p in self.enabled_cloud_providers())])
+        return min(
+            [
+                self.local.context_tokens,
+                *(p.context_tokens for p in self.enabled_cloud_providers()),
+            ]
+        )
 
     def enabled_cloud_providers(self) -> list[LLMCloudConfig]:
         """Enabled cloud providers, highest priority first."""
-        return sorted((p for p in self.cloud.values() if p.enabled), key=lambda p: -p.priority)
+        return sorted(
+            (p for p in self.cloud.values() if p.enabled),
+            key=lambda p: -p.priority,
+        )
 
     def resolved_classifier(self) -> ClassifierConfig:
         """Classifier settings with blank fields cascaded from [llm.local]."""
@@ -177,7 +190,9 @@ class LLMConfig(StrictModel):
         return ClassifierConfig(
             base_url=c.base_url or self.local.base_url,
             model=c.model or self.local.model,
-            timeout_s=c.timeout_s or self.routing.classification_timeout_s or self.local.timeout_s,
+            timeout_s=c.timeout_s
+            or self.routing.classification_timeout_s
+            or self.local.timeout_s,
             extra_body=c.extra_body or self.local.extra_body,
         )
 
@@ -264,7 +279,9 @@ class SeedVoices(StrictModel):
     default_seed: int | None = None
 
     def is_empty(self) -> bool:
-        return not (self.male or self.female or self.male_robot or self.female_robot)
+        return not (
+            self.male or self.female or self.male_robot or self.female_robot
+        )
 
 
 class TTSRemoteEntry(StrictModel):
@@ -318,9 +335,13 @@ class TTSRemoteEntry(StrictModel):
     def _check_voice_sample_if_enabled(self) -> TTSRemoteEntry:
         if self.enabled and self.voice_sample:
             if self.provider_type == "generic_openai":
-                raise ValueError("voice_sample is not supported by provider_type 'generic_openai'")
+                raise ValueError(
+                    "voice_sample is not supported by provider_type 'generic_openai'"
+                )
             if not Path(self.voice_sample).expanduser().is_file():
-                raise ValueError(f"voice_sample file not found: {self.voice_sample}")
+                raise ValueError(
+                    f"voice_sample file not found: {self.voice_sample}"
+                )
         return self
 
     @model_validator(mode="after")
@@ -348,7 +369,10 @@ class TTSConfig(StrictModel):
         """Enabled remote TTS instances, highest priority number tried first --
         matches [llm.cloud.<provider_name>]'s convention exactly, since this
         keyed table was explicitly designed to mirror it."""
-        return sorted((r for r in self.remote.values() if r.enabled), key=lambda r: -r.priority)
+        return sorted(
+            (r for r in self.remote.values() if r.enabled),
+            key=lambda r: -r.priority,
+        )
 
 
 class VoiceConfig(StrictModel):
@@ -445,7 +469,9 @@ class AppearanceConfig(StrictModel):
     @model_validator(mode="after")
     def _check_cooldown_range(self) -> AppearanceConfig:
         if self.redesign_cooldown_hours_min > self.redesign_cooldown_hours_max:
-            raise ValueError("redesign_cooldown_hours_min must be <= redesign_cooldown_hours_max")
+            raise ValueError(
+                "redesign_cooldown_hours_min must be <= redesign_cooldown_hours_max"
+            )
         return self
 
 
@@ -454,7 +480,9 @@ class SkillsConfig(StrictModel):
     model just talks and every reply is plain dialogue."""
 
     enabled: bool = True
-    disabled: list[str] = Field(default_factory=list)   # skill names to switch off individually
+    disabled: list[str] = Field(
+        default_factory=list
+    )  # skill names to switch off individually
     max_actions_per_reply: int = Field(default=3, ge=1, le=10)
     # Where Agent Skills (SKILL.md packages, see brain/skills/agentskills.py) are installed.
     # Blank = <deploy_dir>/skills. Installed skills are catalogued but inert until the agent runtime exists.
@@ -482,7 +510,9 @@ class StatusConfig(StrictModel):
     host: str = "127.0.0.1"
     port: int = Field(default=8780, ge=1, le=65535)
     # journalctl --user units shown as log panes.
-    units: list[str] = Field(default_factory=lambda: ["deskmate-brain", "deskmate-overlay"])
+    units: list[str] = Field(
+        default_factory=lambda: ["deskmate-brain", "deskmate-overlay"]
+    )
     # name -> file path, shown as extra log panes (e.g. tts-serve's server.log).
     extra_logs: dict[str, str] = Field(default_factory=dict)
 
@@ -552,7 +582,11 @@ class Settings(StrictModel):
 
     @property
     def skills_dir(self) -> Path:
-        return Path(self.skills.dir).expanduser() if self.skills.dir else self.deploy_dir / "skills"
+        return (
+            Path(self.skills.dir).expanduser()
+            if self.skills.dir
+            else self.deploy_dir / "skills"
+        )
 
     def ensure_dirs(self) -> None:
         for d in (
@@ -575,7 +609,9 @@ def _default_config_path() -> Path:
     env_path = os.environ.get("DESKMATE_CONFIG_FILE")
     if env_path:
         return Path(env_path)
-    xdg_config_home = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
+    xdg_config_home = os.environ.get(
+        "XDG_CONFIG_HOME", str(Path.home() / ".config")
+    )
     return Path(xdg_config_home) / "deskmate" / "config.toml"
 
 
@@ -626,7 +662,9 @@ class _ReloadHandler(FileSystemEventHandler):
             self._on_change()
 
     def on_moved(self, event) -> None:
-        if not event.is_directory and self._matches(getattr(event, "dest_path", "")):
+        if not event.is_directory and self._matches(
+            getattr(event, "dest_path", "")
+        ):
             self._on_change()
 
 
@@ -681,7 +719,9 @@ class ConfigWatcher:
         try:
             new_settings = _load_and_validate(self._path)
         except ConfigError as exc:
-            logger.warning("Config reload failed, keeping last-good config: %s", exc)
+            logger.warning(
+                "Config reload failed, keeping last-good config: %s", exc
+            )
             return
         with self._lock:
             self._settings = new_settings
@@ -697,7 +737,9 @@ def load_settings(path: str | Path | None = None) -> Settings:
     """Load settings and start the hot-reload watcher. Idempotent after the first call."""
     global _watcher
     if _watcher is None:
-        resolved_path = Path(path) if path is not None else _default_config_path()
+        resolved_path = (
+            Path(path) if path is not None else _default_config_path()
+        )
         _watcher = ConfigWatcher(resolved_path)
         _watcher.start()
     return _watcher.settings
@@ -710,7 +752,9 @@ def get_settings() -> Settings:
     return _watcher.settings
 
 
-def subscribe_if_running(callback: Callable[[Settings], None]) -> Callable[[], None]:
+def subscribe_if_running(
+    callback: Callable[[Settings], None],
+) -> Callable[[], None]:
     """Like `subscribe`, but never starts the watcher (so it can't pull in the
     user's real config as a side effect, e.g. under test); returns a function
     that removes the subscription again -- a no-op when no watcher is running.

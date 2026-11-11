@@ -1,0 +1,314 @@
+{
+  "format": 1,
+  "name": "mixamo",
+  "description": "Clips from Adobe's Mixamo (converted with `add-animations`, ADR_ACCESSORY_MODELS 16): which role each fills, how each is converted and the clips made of others. Clips are known by the name Mixamo gives them (`Standing Greeting` is `Standing_Greeting`).",
+  "source": "https://www.mixamo.com/",
+  "roles": {
+    "greet": [
+      "Standing_Greeting"
+    ],
+    "angry": [
+      "Angry"
+    ],
+    "hip_thrust": [
+      "Angry_Hip_Thrust"
+    ],
+    "sit_alt": [
+      "Sitting_Rubbing_Arm"
+    ],
+    "sit_talk": [
+      "Sitting_Talking"
+    ],
+    "workout": [
+      "Workout_Burpee"
+    ],
+    "workout_floor": [
+      "Workout_Crunch"
+    ],
+    "lie_down": [
+      "Lie_Down"
+    ],
+    "sleep": [
+      "Sleeping_Idle_1"
+    ],
+    "sleep_alt": [
+      "Sleeping_Roll"
+    ],
+    "wake": [
+      "Stand_Up"
+    ],
+    "wake_slow": [
+      "Standing_Up"
+    ],
+    "idle_look": [
+      "Looking"
+    ],
+    "idle_sad": [
+      "Sad_Idle"
+    ],
+    "floor_sit_enter": [
+      "FloorSit_Enter"
+    ],
+    "floor_sit_idle": [
+      "FloorSit_Idle"
+    ],
+    "floor_sit_exit": [
+      "FloorSit_Exit"
+    ]
+  },
+  "extras": {
+    "talk": [
+      "Talking",
+      "Talking_1"
+    ],
+    "greet": [
+      "Waving",
+      "Waving_1"
+    ],
+    "idle_look": [
+      "Looking_Around"
+    ]
+  },
+  "clips": [
+    {
+      "match": "Sitting*",
+      "options": {
+        "seat": true,
+        "blend": 12,
+        "max_seconds": 20
+      }
+    },
+    {
+      "match": "Sitting_Talking",
+      "options": {
+        "mirror": false
+      }
+    },
+    {
+      "match": "*Greeting*",
+      "options": {
+        "variants": true
+      }
+    },
+    {
+      "match": "Stand_Up",
+      "options": {
+        "in_place": true,
+        "mirror": false,
+        "ease_from": "Sleeping_Idle",
+        "ease_to": "@stand",
+        "ease_frames": 36,
+        "extract": [
+          {
+            "name": "Lie_Down",
+            "reverse": true,
+            "ease_from": "@stand",
+            "ease_to": "Sleeping_Idle"
+          }
+        ]
+      }
+    },
+    {
+      "match": "Standing_Up",
+      "options": {
+        "in_place": true,
+        "mirror": false,
+        "ease_from": "Sleeping_Idle",
+        "ease_to": "@stand"
+      }
+    },
+    {
+      "match": "Sleeping_Idle",
+      "options": {
+        "mirror": false,
+        "max_seconds": 7,
+        "extract": [
+          {
+            "name": "Sleeping_Roll",
+            "max_seconds": 6.5,
+            "ping_pong": 1.5
+          }
+        ]
+      }
+    },
+    {
+      "match": "Sleeping_Idle_1",
+      "options": {
+        "loop": true,
+        "mirror": false
+      }
+    },
+    {
+      "match": [
+        "Laying_Idle",
+        "Laying"
+      ],
+      "options": {
+        "mirror": false,
+        "blend_ref": "Sleeping_Idle",
+        "max_seconds": 8
+      }
+    },
+    {
+      "match": "Burpee",
+      "options": {
+        "in_place": true,
+        "mirror": false,
+        "loop": false
+      }
+    },
+    {
+      "match": "Bicycle_Crunch",
+      "options": {
+        "in_place": true,
+        "mirror": false,
+        "loop": true
+      }
+    },
+    {
+      "match": [
+        "Talking",
+        "Talking_1",
+        "Sad_Idle"
+      ],
+      "options": {
+        "loop": true,
+        "mirror": false
+      }
+    },
+    {
+      "match": [
+        "Looking",
+        "Looking_Around"
+      ],
+      "options": {
+        "mirror": false,
+        "blend_ref": "@stand",
+        "ease_frames": 12
+      }
+    },
+    {
+      "match": "Waving",
+      "options": {
+        "variants": true,
+        "blend_ref": "@stand",
+        "ease_frames": 12
+      }
+    },
+    {
+      "match": "Waving_1",
+      "options": {
+        "variants": false,
+        "blend_ref": "@stand",
+        "ease_frames": 12
+      }
+    },
+    {
+      "match": "Ground_Sitting_Idle",
+      "options": {
+        "loop": true,
+        "mirror": false
+      }
+    },
+    {
+      "match": "Standard_Run",
+      "options": {
+        "in_place": true,
+        "loop": true,
+        "mirror": false
+      }
+    },
+    {
+      "match": "Angry",
+      "options": {
+        "extract": [
+          {
+            "name": "Angry_Hip_Thrust",
+            "trim": [
+              57,
+              217
+            ],
+            "loop": true
+          }
+        ],
+        "mirror_main": false
+      }
+    }
+  ],
+  "derived": [
+    {
+      "name": "Workout_Burpee",
+      "requires": [
+        "Burpee",
+        "Stand_Up"
+      ],
+      "options": {
+        "compose": [
+          "Lie_Down",
+          [
+            "Burpee",
+            2
+          ],
+          "Stand_Up"
+        ],
+        "ease": 30,
+        "ease_from": "@stand",
+        "ease_to": "@stand"
+      }
+    },
+    {
+      "name": "Workout_Crunch",
+      "requires": [
+        "Bicycle_Crunch",
+        "Stand_Up"
+      ],
+      "options": {
+        "compose": [
+          "Lie_Down",
+          [
+            "Bicycle_Crunch",
+            5
+          ],
+          "Stand_Up"
+        ],
+        "ease": 30,
+        "ease_from": "@stand",
+        "ease_to": "@stand"
+      }
+    },
+    {
+      "name": "FloorSit_Idle",
+      "requires": [
+        "Ground_Sitting_Idle"
+      ],
+      "options": {
+        "compose": [
+          "Ground_Sitting_Idle"
+        ],
+        "ease": 0
+      }
+    },
+    {
+      "name": "FloorSit_Enter",
+      "requires": [
+        "Ground_Sitting_Idle"
+      ],
+      "options": {
+        "hold": "Ground_Sitting_Idle",
+        "ease_from": "@stand",
+        "ease_frames": 36
+      }
+    },
+    {
+      "name": "FloorSit_Exit",
+      "requires": [
+        "Ground_Sitting_Idle"
+      ],
+      "options": {
+        "hold": "Ground_Sitting_Idle",
+        "ease_to": "@stand",
+        "ease_frames": 36
+      }
+    }
+  ]
+}

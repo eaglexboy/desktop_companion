@@ -47,3 +47,12 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["brain*"]
+
+[tool.ruff]
+line-length = 80
+
+[tool.black]
+line-length = 80
+
+[tool.ruff.format]
+docstring-code-line-length = 80

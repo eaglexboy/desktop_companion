@@ -44,12 +44,21 @@ class AssetVersionEntry(_Strict):
     evaluated_triangles: int
     size_bytes: int
     has_face: bool
-    speech_indicator_mode: Literal["viseme_shapekeys", "talk_pulse"]
+    # "talk_pulse" is what versions built before the sound waves were marked with (a model with no mouth)
+    speech_indicator_mode: Literal[
+        "viseme_shapekeys", "sound_waves", "talk_pulse"
+    ]
     capabilities: dict[str, bool]
     viseme_shape_keys: list[str]
     blink_shape_keys: list[str] = []
     run_shape_keys: list[str] = []
     gesture_shape_keys: list[str] = []
+    library_clips: dict[str, str] = (
+        {}
+    )  # role (idle, talk, run...) -> clip, from an animation library the body wears
+    skeletal_clips: bool = (
+        False  # animation_clips act on the model's own bones (see the overlay's preferBakedClips)
+    )
     animation_clips: list[AnimationClipEntry]
     bounds: dict[str, float]
     warnings: list[str] = []
@@ -118,27 +127,38 @@ def append_version(
     produced it. Pure -- does not touch disk; call save_manifest() to commit."""
     next_version = (manifest.latest_version_number() if manifest else 0) + 1
     entry = AssetVersionEntry(
-        **{**build_json, "glb_filename": glb_filename_for(next_version)}, version=next_version, look_spec=look_spec
+        **{**build_json, "glb_filename": glb_filename_for(next_version)},
+        version=next_version,
+        look_spec=look_spec,
     )
     versions = [*manifest.versions, entry] if manifest else [entry]
     return AssetManifest(current_version=next_version, versions=versions)
 
 
-def revert_to_version(manifest: AssetManifest, target_version: int) -> AssetManifest:
+def revert_to_version(
+    manifest: AssetManifest, target_version: int
+) -> AssetManifest:
     """Fast user undo and the automatic rollback-on-swap-failure path -- a
     pure pointer rewrite, no Blender recompilation, since the target
     version's .glb and LookSpec are already retained in `versions[]`."""
     if manifest.get_version(target_version) is None:
-        raise ValueError(f"version {target_version} is not present in this manifest")
+        raise ValueError(
+            f"version {target_version} is not present in this manifest"
+        )
     return manifest.model_copy(update={"current_version": target_version})
 
 
-def mark_version_status(manifest: AssetManifest, version: int, status: Literal["ok", "fail", "corrupted"]) -> AssetManifest:
+def mark_version_status(
+    manifest: AssetManifest,
+    version: int,
+    status: Literal["ok", "fail", "corrupted"],
+) -> AssetManifest:
     """Used by the swap-failure rollback path to mark a version `corrupted`
     after reverting `current_version` away from it."""
     if manifest.get_version(version) is None:
         raise ValueError(f"version {version} is not present in this manifest")
     updated_versions = [
-        v.model_copy(update={"status": status}) if v.version == version else v for v in manifest.versions
+        v.model_copy(update={"status": status}) if v.version == version else v
+        for v in manifest.versions
     ]
     return manifest.model_copy(update={"versions": updated_versions})

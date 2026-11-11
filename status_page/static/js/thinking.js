@@ -49,7 +49,7 @@ function stepHtml(ev, c) {
     case "turn.reply":
       return `<div class="step reply"><b>Said:</b> ${esc(d.text)} ${chips([d.provider, d.escalated ? "escalated" : ""])}</div>`;
     case "speech.chunk":
-      return `<div class="step">Voice ${chips([`sentence ${d.seq}/${d.total}`, d.backend, d.seed != null ? "seed " + d.seed : "", sec(d.synth_s * 1000)])}</div>`;
+      return `<div class="step">Voice ${chips([`sentence ${d.seq}/${d.total}`, d.backend, d.seed != null ? "seed " + d.seed : "", sec(d.synth_s * 1_000)])}</div>`;
     case "reflection.result": {
       const fmt = (o) => Object.entries(o || {}).map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${(+v).toFixed(1)}`);
       return `<div class="step reasoning"><b>Reflection:</b> reviewed ${d.interactions_reviewed} messages ${chips([...fmt(d.mood_deltas), ...fmt(d.trait_deltas)])}${(d.memory_notes || []).map((n) => `<br>• ${esc(n)}`).join("")}</div>`;

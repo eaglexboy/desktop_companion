@@ -160,8 +160,8 @@ function draw() {
   }
   const m = MARGIN;
   const W = Math.max(320, $("tlWrap").clientWidth || 800);
-  const t1 = Date.now() / 1000,
-    t0 = t1 - tl.range * 3600;
+  const t1 = Date.now() / 1_000,
+    t0 = t1 - tl.range * 3_600;
   const x = (t) => m.l + ((t - t0) / (t1 - t0)) * (W - m.l - m.r);
   const y = (v) => m.t + (1 - v / 100) * (HEIGHT - m.t - m.b);
   const names =
@@ -249,7 +249,7 @@ function drawTable() {
         names.forEach((n) => {
           v[n] = valueAt(data.series[n] || [], t);
         });
-        return `<tr><td>${esc(new Date(t * 1000).toLocaleString())}</td>${names.map((n) => `<td>${v[n] == null ? "" : v[n].toFixed(1)}</td>`).join("")}${isMood ? `<td>${feeling(v)}</td>` : ""}</tr>`;
+        return `<tr><td>${esc(new Date(t * 1_000).toLocaleString())}</td>${names.map((n) => `<td>${v[n] == null ? "" : v[n].toFixed(1)}</td>`).join("")}${isMood ? `<td>${feeling(v)}</td>` : ""}</tr>`;
       })
       .join("") +
     "</table>";

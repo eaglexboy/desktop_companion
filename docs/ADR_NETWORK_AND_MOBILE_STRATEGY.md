@@ -4,6 +4,7 @@
 * **Date:** 2026-09-25
 * **Deciders:** Architecture & Core Engineering Team
 * **Supersedes:** None
+* **See also:** [ADR_REMOTE_MODEL_PROCESSING.md](ADR_REMOTE_MODEL_PROCESSING.md) (running the model work on a remote worker; builds on this ADR's authenticated media endpoints)
 
 ---
 

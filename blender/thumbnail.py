@@ -23,10 +23,23 @@ scene = bpy.context.scene
 # The imported animations would pose the model at frame 0 of whatever clip is
 # active, so drop them. The pose itself stays: a model whose bind shape is not
 # its standing shape (common in converted files) is only upright when posed.
+# A body that wears an animation library is only in its standing pose while its idle clip
+# plays (its rest pose is the library's T-pose), so that clip's first frame is the picture.
+idle = bpy.data.actions.get("Idle_Loop")
 for obj in bpy.data.objects:
     if obj.animation_data:
-        obj.animation_data_clear()
-    if obj.name.startswith("Icosphere"):
+        if idle is not None and obj.type == "ARMATURE":
+            obj.animation_data.action = idle
+            if (
+                getattr(obj.animation_data, "action_slot", None) is None
+                and idle.slots
+            ):
+                obj.animation_data.action_slot = idle.slots[0]
+        else:
+            obj.animation_data_clear()
+    if (
+        obj.name.startswith("Icosphere") or obj.name == "SitProp"
+    ):  # a bone shape; a chair shown only while sitting
         obj.hide_render = True
     # Blink and mouth shapes come in at their file defaults; the overlay zeroes
     # them on load, so a resting face is the representative picture.
@@ -34,6 +47,8 @@ for obj in bpy.data.objects:
         for key in obj.data.shape_keys.key_blocks:
             key.value = 0.0
 
+if idle is not None:
+    scene.frame_set(int(idle.frame_range[0]))
 bpy.context.view_layer.update()
 depsgraph = bpy.context.evaluated_depsgraph_get()
 low, high = Vector((1e9,) * 3), Vector((-1e9,) * 3)
@@ -41,7 +56,11 @@ for obj in bpy.data.objects:
     # The glTF importer adds an "Icosphere" bone-display helper that is not in
     # the file. Bounds come from the evaluated (deformed) mesh: a skinned
     # mesh's own vertices and bound_box are its undeformed shape.
-    if obj.type != "MESH" or obj.name.startswith("Icosphere"):
+    if (
+        obj.type != "MESH"
+        or obj.name.startswith("Icosphere")
+        or obj.name == "SitProp"
+    ):
         continue
     evaluated = obj.evaluated_get(depsgraph)
     mesh = evaluated.to_mesh()
@@ -56,7 +75,9 @@ width = max(high.x - low.x, high.y - low.y, 0.01)
 
 scene.render.engine = "BLENDER_WORKBENCH"
 scene.display.shading.light = "STUDIO"
-scene.display.shading.color_type = "TEXTURE"  # shows image textures, and falls back to the material colour
+scene.display.shading.color_type = (
+    "TEXTURE"  # shows image textures, and falls back to the material colour
+)
 scene.render.resolution_x = scene.render.resolution_y = size
 scene.render.film_transparent = True
 

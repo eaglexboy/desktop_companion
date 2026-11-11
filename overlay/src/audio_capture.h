@@ -19,6 +19,7 @@ class AudioCapture : public QObject
 {
     Q_OBJECT
     QML_ELEMENT
+    QML_UNCREATABLE("Created by main.cpp")
     Q_PROPERTY(bool capturing READ isCapturing NOTIFY capturingChanged)
 
 public:

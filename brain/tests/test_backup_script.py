@@ -18,12 +18,16 @@ def _setup(tmp_path: Path, backup_dir: Path | None):
     (deploy / "assets" / "look.glb").write_bytes(b"glb")
     db = sqlite3.connect(deploy / "state.db")
     db.execute("CREATE TABLE interactions(id INTEGER PRIMARY KEY, text TEXT)")
-    db.executemany("INSERT INTO interactions(text) VALUES (?)", [("a",), ("b",), ("c",)])
+    db.executemany(
+        "INSERT INTO interactions(text) VALUES (?)", [("a",), ("b",), ("c",)]
+    )
     db.commit()
     db.close()
     cfg = tmp_path / "config.toml"
     backup_line = f'backup_dir = "{backup_dir}"\n' if backup_dir else ""
-    cfg.write_text(f'[storage]\nworkspace_dir = "{tmp_path}/ws"\ndeploy_dir = "{deploy}"\n{backup_line}')
+    cfg.write_text(
+        f'[storage]\nworkspace_dir = "{tmp_path}/ws"\ndeploy_dir = "{deploy}"\n{backup_line}'
+    )
     return cfg
 
 
@@ -31,8 +35,17 @@ def _run(cfg: Path, **env):
     import os
 
     return subprocess.run(
-        [str(SCRIPT)], capture_output=True, text=True, timeout=60, check=False,
-        env={**os.environ, "DESKMATE_CONFIG_FILE": str(cfg), "DESKMATE_BACKUP_DIR": "", **env},
+        [str(SCRIPT)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        env={
+            **os.environ,
+            "DESKMATE_CONFIG_FILE": str(cfg),
+            "DESKMATE_BACKUP_DIR": "",
+            **env,
+        },
     )
 
 
@@ -63,12 +76,18 @@ def test_a_later_run_mirrors_removals_but_keeps_the_snapshot(tmp_path):
     (tmp_path / "deploy" / "assets" / "look.glb").unlink()
     assert _run(cfg).returncode == 0
     assert not (target / "assets" / "look.glb").exists()
-    assert (target / "state.db").is_file()  # excluded from --delete, then refreshed
+    assert (
+        target / "state.db"
+    ).is_file()  # excluded from --delete, then refreshed
 
 
-@pytest.mark.skipif(not shutil.which("findmnt"), reason="needs findmnt to identify the disk")
+@pytest.mark.skipif(
+    not shutil.which("findmnt"), reason="needs findmnt to identify the disk"
+)
 def test_warns_when_target_shares_a_physical_disk_with_the_data(tmp_path):
     # tmp_path holds both the "deploy_dir" and the target, so they are necessarily on one disk.
     result = _run(_setup(tmp_path, tmp_path / "bk"))
-    assert result.returncode == 0, result.stderr          # a warning, not a failure: the backup is still made
+    assert (
+        result.returncode == 0
+    ), result.stderr  # a warning, not a failure: the backup is still made
     assert "same physical disk" in result.stderr

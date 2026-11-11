@@ -47,11 +47,17 @@ def _read_wav_as_float32(wav_path: Path) -> tuple[np.ndarray, int]:
         sample_rate = wf.getframerate()
         raw = wf.readframes(wf.getnframes())
     samples = np.frombuffer(raw, dtype=np.int16)
-    mono: np.ndarray = samples.reshape(-1, n_channels).mean(axis=1) if n_channels > 1 else samples
+    mono: np.ndarray = (
+        samples.reshape(-1, n_channels).mean(axis=1)
+        if n_channels > 1
+        else samples
+    )
     return mono.astype(np.float32) / 32768.0, sample_rate
 
 
-def _resample_to_whisper_rate(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+def _resample_to_whisper_rate(
+    audio: np.ndarray, sample_rate: int
+) -> np.ndarray:
     if sample_rate == _WHISPER_SAMPLE_RATE or len(audio) == 0:
         return audio
     target_len = max(1, int(len(audio) * _WHISPER_SAMPLE_RATE / sample_rate))
@@ -72,7 +78,9 @@ class FasterWhisperSTTBackend(STTBackend):
             )
 
             self._model = WhisperModel(
-                self._config.model_size, device=self._config.device, compute_type=self._config.compute_type
+                self._config.model_size,
+                device=self._config.device,
+                compute_type=self._config.compute_type,
             )
         return self._model
 
@@ -83,5 +91,9 @@ class FasterWhisperSTTBackend(STTBackend):
         segments, _info = model.transcribe(audio, language=language)
         return " ".join(segment.text.strip() for segment in segments).strip()
 
-    async def transcribe(self, wav_path: Path, *, language: str | None = None) -> str:
-        return await asyncio.to_thread(self._transcribe_sync, wav_path, language)
+    async def transcribe(
+        self, wav_path: Path, *, language: str | None = None
+    ) -> str:
+        return await asyncio.to_thread(
+            self._transcribe_sync, wav_path, language
+        )

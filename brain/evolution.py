@@ -12,6 +12,8 @@ in as callbacks, rather than inlining this logic into main.py directly.
 from __future__ import annotations
 
 import asyncio
+import difflib
+import itertools
 import json
 import logging
 import re
@@ -75,7 +77,7 @@ Current look:
 Available base templates: {template_ids}
 Available outfits: {outfits}
 Available footwear: {footwear}
-Available accessories per socket: {accessories}
+{wardrobe_notes}Available accessories per socket: {accessories}
 {budget_block}
 Context for this change: {trigger_context}
 
@@ -88,11 +90,59 @@ omit anything unchanged). Example shape:
 {{"wardrobe": {{"outfit": "wizard_robe"}}, "accessories": {{"socket_eyes": "glasses"}}, "palette": {{"primary": "#1E1E2E"}}}}
 """
 
+
+def describe_wearables(deploy_dir, template_ids: list[str]) -> tuple[str, Any]:
+    """What the designer is told it can put on a body. Bodies differ (an
+    installed model keeps its own clothes and may lack hands or a neck), so
+    when every template offers the same accessories they are listed once, and
+    otherwise per group of templates. Returns (extra prompt lines, accessories).
+    """
+    from brain.appearance.models import effective_wardrobe_catalog
+
+    per_template = {
+        t: effective_wardrobe_catalog(deploy_dir, t) for t in template_ids
+    }
+    keep_clothes = [
+        t for t, c in per_template.items() if c["outfits"] == ["none"]
+    ]
+    own_outfits = {
+        t: [o for o in c["outfits"] if o != "none"]
+        for t, c in per_template.items()
+        if c["outfits"] != ["none"] and c["footwear"] == ["none"]
+    }
+    notes = ""
+    if keep_clothes and len(keep_clothes) < len(per_template):
+        notes += f"Outfits and footwear apply only to procedural bodies; {', '.join(keep_clothes)} keep their own clothes.\n"
+    if own_outfits:
+        listed = "; ".join(
+            f"{t}: {', '.join(names)}" for t, names in own_outfits.items()
+        )
+        notes += f"These bodies keep their own clothes unless given one of their own outfits (the generic outfit and footwear lists do not apply to them): {listed}.\n"
+    groups: dict[str, list[str]] = {}
+    by_key: dict[str, Any] = {}
+    for template, catalog in per_template.items():
+        key = json.dumps(catalog["accessories"], sort_keys=True)
+        groups.setdefault(key, []).append(template)
+        by_key[key] = catalog["accessories"]
+    if len(groups) <= 1:
+        return notes, next(iter(by_key.values()), {})
+    lines = "; ".join(
+        f"on {', '.join(ts)}: {by_key[key]}" for key, ts in groups.items()
+    )
+    return notes, lines
+
+
 _RETRY_SUFFIX = "\n\nYour previous answer was invalid: {error}\nRespond again with ONLY corrected compact JSON, same shape as before."
 
-_AUTONOMOUS_BUDGET_BLOCK = "Change at most 1 to 3 attributes total. {base_template_clause}\n"
-_BASE_TEMPLATE_ALLOWED_CLAUSE = "You may change \"base_template\" if a new one truly fits."
-_BASE_TEMPLATE_FORBIDDEN_CLAUSE = 'Do NOT include "base_template" in your delta.'
+_AUTONOMOUS_BUDGET_BLOCK = (
+    "Change at most 1 to 3 attributes total. {base_template_clause}\n"
+)
+_BASE_TEMPLATE_ALLOWED_CLAUSE = (
+    'You may change "base_template" if a new one truly fits.'
+)
+_BASE_TEMPLATE_FORBIDDEN_CLAUSE = (
+    'Do NOT include "base_template" in your delta.'
+)
 
 # Stages of one redesign, in order. `done`/`staged`/`failed` are terminal.
 # Mirrored 1:1 by overlay/qml/Main.qml's appearance status pill.
@@ -143,7 +193,9 @@ def cap_delta_budget(delta: dict, max_leaves: int) -> dict:
     return _unflatten(leaves[:max_leaves])
 
 
-def base_template_change_allowed(store: PersonalityStore, openness: float) -> bool:
+def base_template_change_allowed(
+    store: PersonalityStore, openness: float
+) -> bool:
     """Base template changes require openness >= 85 AND the current
     base_template to have been held for >= 7 days
     (`agent_state.base_template_since`, unset means "can't prove it's been
@@ -156,7 +208,9 @@ def base_template_change_allowed(store: PersonalityStore, openness: float) -> bo
     return (time.time() - float(since_raw)) >= _BASE_TEMPLATE_MIN_DAYS * 86400
 
 
-def trigger_b_bias_lines(traits: dict[str, float], mood: dict[str, float]) -> list[str]:
+def trigger_b_bias_lines(
+    traits: dict[str, float], mood: dict[str, float]
+) -> list[str]:
     """Only covers the trait/mood extremes with concrete guidance behind
     them -- no invented phrasing for axes/bands without a real rule (e.g.
     low boldness, low formality, valence)."""
@@ -168,22 +222,31 @@ def trigger_b_bias_lines(traits: dict[str, float], mood: dict[str, float]) -> li
             "or even an alternate base template if it truly fits."
         )
     elif openness <= 30:
-        lines.append("Low openness: prefer slight palette tweaks or subtle accessory shifts over bold changes.")
+        lines.append(
+            "Low openness: prefer slight palette tweaks or subtle accessory shifts over bold changes."
+        )
     if traits.get("boldness", 50.0) >= 70:
-        lines.append("High boldness: favor vibrant, saturated palettes and striking, expressive accessories.")
+        lines.append(
+            "High boldness: favor vibrant, saturated palettes and striking, expressive accessories."
+        )
     if traits.get("formality", 50.0) >= 70:
         lines.append(
             "High formality: favor structured, tailored outfits (e.g. a lab coat or vest) "
             "over casual or whimsical styles."
         )
     if mood.get("energy", 50.0) >= 70:
-        lines.append("High energy mood: lean toward brighter, more energetic accent colors.")
+        lines.append(
+            "High energy mood: lean toward brighter, more energetic accent colors."
+        )
     if mood.get("stress", 50.0) >= 70:
         lines.append("Elevated stress mood: lean toward cozy, relaxed attire.")
     return lines
 
 
-_VERSION_IN_REQUEST = re.compile(r"(?:\bversion|\bv|\blook|#)\s*(?:number\s*|no\.?\s*)?#?\s*(\d+)\b", re.IGNORECASE)
+_VERSION_IN_REQUEST = re.compile(
+    r"(?:\bversion|\bv|\blook|#)\s*(?:number\s*|no\.?\s*)?#?\s*(\d+)\b",
+    re.IGNORECASE,
+)
 
 
 def _requested_version(request: str) -> int | None:
@@ -234,6 +297,165 @@ def _wants_generated(request: str) -> bool:
     return bool(_GENERATED_LOOK.search(request or ""))
 
 
+# Words of a request to switch to an installed model that name no model ("change your look to the
+# BMO model"): what is left of the request once they are gone has to be the model's own name.
+_SWITCH_FILLER = frozenset(
+    [
+        "change",
+        "switch",
+        "go",
+        "turn",
+        "your",
+        "my",
+        "look",
+        "looks",
+        "to",
+        "into",
+        "the",
+        "a",
+        "an",
+        "be",
+        "become",
+        "use",
+        "wear",
+        "please",
+        "back",
+        "like",
+        "as",
+        "model",
+        "character",
+        "body",
+        "version",
+        "rig",
+    ]
+)
+_MODEL_NAME_NOISE = frozenset({"animated", "rigged"})
+# One of these has to be there: a bare name ("avocado?") is a mention, not a request.
+_SWITCH_WORDS = frozenset(
+    [
+        "change",
+        "switch",
+        "turn",
+        "become",
+        "be",
+        "use",
+        "wear",
+        "model",
+        "character",
+        "body",
+        "version",
+        "look",
+        "go",
+    ]
+)
+
+
+_REBUILD_WORDS = frozenset({"rebuild", "refresh", "reload", "redo", "remake"})
+_REBUILD_TARGETS = frozenset(
+    {"look", "model", "yourself", "it", "avatar", "body", "character"}
+)
+
+
+def _wants_rebuild(request: str) -> bool:
+    """A request to build the look it already has again (a model's files may have changed under it)."""
+    said = set(re.findall(r"[a-z0-9]+", (request or "").lower()))
+    return bool(_REBUILD_WORDS & said) and bool(_REBUILD_TARGETS & said)
+
+
+# The companion says it is making the change: "switching to", "I'll swap", "let me become". Only its
+# own commitment counts, never the user's wording.
+_PROMISES_A_CHANGE = re.compile(
+    r"\b(?:switching|swapping|changing|shifting|becoming|transforming|morphing)\b"
+    r"|\b(?:i'll|i will|i'm going to|let me|here goes|going to)\s+"
+    r"(?:\w+\s+)?(?:switch|swap|change|shift|become|transform|morph|turn into)\b",
+    re.IGNORECASE,
+)
+
+
+def _model_the_user_named(text: str, templates: list[str]) -> str | None:
+    """The installed model whose whole name is among the words of `text`, wherever they are in it
+    ("now let's test the robot polygonal one"), when exactly one is: a part of a name several models
+    share ("robot") or two models named together name none."""
+    said = set(re.findall(r"[a-z0-9]+", (text or "").lower()))
+    names = {
+        template: [
+            w
+            for w in template.removeprefix(_CUSTOM_PREFIX).split("_")
+            if w not in _MODEL_NAME_NOISE
+        ]
+        for template in templates
+    }
+    vocabulary = {w for name in names.values() for w in name}
+    mentioned = said & vocabulary
+    if not mentioned:
+        return None
+    whole = [t for t, name in names.items() if name and set(name) <= said]
+    if len(whole) == 1:
+        return whole[0]
+    if whole:
+        return None
+    # a part of a name that only one model has ("milo")
+    return _model_of_words(mentioned, names)
+
+
+def _model_title(template: str) -> str:
+    """ "custom:milo_robot_rigged" as "milo robot"."""
+    return " ".join(
+        w
+        for w in template.removeprefix(_CUSTOM_PREFIX).split("_")
+        if w not in _MODEL_NAME_NOISE
+    )
+
+
+def _named_model(
+    request: str, templates: list[str], *, needs_switch_word: bool = True
+) -> str | None:
+    """The installed model (a `custom:<name>` id) that `request` asks to become, if it asks for one
+    and nothing else: the words that are left once the filler is gone are the model's name (a word
+    one letter off, "avacado", counts as that name). Asking for a bunny-ears hat names no model.
+    """
+    said = re.findall(r"[a-z0-9]+", (request or "").lower())
+    words = [w for w in said if w not in _SWITCH_FILLER]
+    if not words or (needs_switch_word and not _SWITCH_WORDS & set(said)):
+        return None
+    names = {
+        template: [
+            w
+            for w in template.removeprefix(_CUSTOM_PREFIX).split("_")
+            if w not in _MODEL_NAME_NOISE
+        ]
+        for template in templates
+    }
+    vocabulary = sorted({w for name in names.values() for w in name})
+    # A misspelt word is read as the name words it is close to (only for words of some length: "bmo"
+    # is exact); a word two names are close to ("mile": mike, milo) leaves the other words to choose.
+    options = [
+        (
+            [w]
+            if w in vocabulary or len(w) < 4
+            else difflib.get_close_matches(w, vocabulary, n=3, cutoff=0.75)
+            or [w]
+        )
+        for w in words
+    ]
+    found = {
+        match
+        for choice in itertools.product(*options)
+        if (match := _model_of_words(set(choice), names)) is not None
+    }
+    return found.pop() if len(found) == 1 else None
+
+
+def _model_of_words(words: set[str], names: dict[str, list[str]]) -> str | None:
+    """The model whose name is exactly `words`; failing that, the only one whose name has all of
+    them ("milo" is "milo robot"; "robot" alone is several, so none)."""
+    exact = [t for t, name in names.items() if name and words == set(name)]
+    if exact:
+        return max(exact, key=lambda t: len(names[t]))
+    partial = [t for t, name in names.items() if words <= set(name)]
+    return partial[0] if len(partial) == 1 else None
+
+
 class AvatarEvolution:
     """Owns the real logic behind the two router tool stubs, the reflection
     loop's autonomous-redesign eligibility callback, the presence-transition
@@ -247,7 +469,9 @@ class AvatarEvolution:
         store: PersonalityStore,
         local_pool: LLMPool,
         *,
-        get_presence_state: Callable[[], PresenceState] = lambda: PresenceState.ACTIVE,
+        get_presence_state: Callable[[], PresenceState] = lambda: (
+            PresenceState.ACTIVE
+        ),
         clock: Callable[[], float] = time.time,
         on_progress: ProgressHook | None = None,
     ) -> None:
@@ -275,7 +499,11 @@ class AvatarEvolution:
         router.register_tool(
             "change_appearance",
             "Change the companion's visual appearance based on a free-form request.",
-            {"type": "object", "properties": {"request": {"type": "string"}}, "required": ["request"]},
+            {
+                "type": "object",
+                "properties": {"request": {"type": "string"}},
+                "required": ["request"],
+            },
             self.change_appearance,
         )
         router.register_tool(
@@ -296,14 +524,20 @@ class AvatarEvolution:
     def look_locked(self) -> bool:
         """True while the current look is an imported model the user has not freed."""
         base = self.current_look_spec().base_template
-        return base.startswith(_CUSTOM_PREFIX) and self._store.get_agent_state("look_unlocked_for") != base
+        return (
+            base.startswith(_CUSTOM_PREFIX)
+            and self._store.get_agent_state("look_unlocked_for") != base
+        )
 
     def _refresh_lock(self) -> None:
         """Called after the current look changes: an unlock only covers the model it
         was given for, so moving to a different look forgets it (and the old model
         is locked again if it comes back)."""
         unlocked_for = self._store.get_agent_state("look_unlocked_for")
-        if unlocked_for is not None and unlocked_for != self.current_look_spec().base_template:
+        if (
+            unlocked_for is not None
+            and unlocked_for != self.current_look_spec().base_template
+        ):
             self._store.set_agent_state("look_unlocked_for", None)
 
     async def unlock_appearance(self, _request: str = "") -> str:
@@ -311,7 +545,9 @@ class AvatarEvolution:
         companion may change its look again."""
         if not self.look_locked():
             return "My look isn't locked, I can change it whenever you ask."
-        self._store.set_agent_state("look_unlocked_for", self.current_look_spec().base_template)
+        self._store.set_agent_state(
+            "look_unlocked_for", self.current_look_spec().base_template
+        )
         self._store.add_memory_note("The user said I may change my look again.")
         return "Okay, I'm free to change my look again."
 
@@ -319,7 +555,11 @@ class AvatarEvolution:
         """Goes back to the most recent look that was not an imported model."""
         manifest = load_manifest(self._settings.deploy_dir)
         generated = [
-            v.version for v in (manifest.versions if manifest else []) if not v.look_spec.get("base_template", "").startswith(_CUSTOM_PREFIX)
+            v.version
+            for v in (manifest.versions if manifest else [])
+            if not v.look_spec.get("base_template", "").startswith(
+                _CUSTOM_PREFIX
+            )
         ]
         if not generated:
             return "I don't have a generated look to go back to yet. Tell me I can change my look and I'll design one."
@@ -345,6 +585,27 @@ class AvatarEvolution:
     def current_look_summary(self) -> str:
         return look_summary(self.current_look_spec())
 
+    def look_context(self) -> str:
+        """What the companion is told about its look: the one-line summary and, so that it neither
+        denies a model it has nor invents one, the models it can become. An installed model keeps its
+        own colours, so the palette in the summary does not describe it."""
+        spec = self.current_look_spec()
+        summary = look_summary(spec)
+        installed = available_custom_templates(self._settings.deploy_dir)
+        if not installed:
+            return summary
+        names = [_model_title(t) for t in installed]
+        worn = (
+            f" You are wearing the installed model {_model_title(spec.base_template)}, which keeps its own colours and shape (the palette above does not apply to it)."
+            if spec.base_template in installed
+            else ""
+        )
+        return (
+            f"{summary}{worn} Installed models you can become on request, and the only ones you have: "
+            + ", ".join(names)
+            + "."
+        )
+
     # --- delta synthesis (shared by Trigger A and Trigger B) --------------
 
     async def _synthesize_delta(
@@ -358,18 +619,33 @@ class AvatarEvolution:
         self._unmet = None
         self._last_error = None
         if self._local_pool.is_empty:
-            logger.warning("no local LLM pool configured, cannot synthesize an appearance delta")
+            logger.warning(
+                "no local LLM pool configured, cannot synthesize an appearance delta"
+            )
             return None
 
         catalogs_dir = self._settings.catalogs_dir
         templates = load_templates_catalog(catalogs_dir)["templates"]
         wardrobe_catalog = load_wardrobe_catalog(catalogs_dir)
+        wardrobe_notes, accessories = describe_wearables(
+            self._settings.deploy_dir,
+            [
+                *sorted(templates),
+                *available_custom_templates(self._settings.deploy_dir),
+            ],
+        )
         prompt = _DELTA_SYNTHESIS_PROMPT.format(
             current_look_json=current.model_dump_json(),
-            template_ids=", ".join([*sorted(templates), *available_custom_templates(self._settings.deploy_dir)]),
+            template_ids=", ".join(
+                [
+                    *sorted(templates),
+                    *available_custom_templates(self._settings.deploy_dir),
+                ]
+            ),
             outfits=", ".join(wardrobe_catalog["outfits"]),
             footwear=", ".join(wardrobe_catalog["footwear"]),
-            accessories=wardrobe_catalog["accessories"],
+            wardrobe_notes=wardrobe_notes,
+            accessories=accessories,
             budget_block=budget_block,
             trigger_context=trigger_context,
         )
@@ -378,10 +654,14 @@ class AvatarEvolution:
         for attempt in range(2):
             try:
                 with llm_purpose("appearance"):
-                    _, raw = await self._local_pool.chat([{"role": "user", "content": prompt}], max_tokens=400)
+                    _, raw = await self._local_pool.chat(
+                        [{"role": "user", "content": prompt}], max_tokens=400
+                    )
                 delta = json.loads(_extract_json_object(raw))
                 if not isinstance(delta, dict):
-                    raise TypeError(f"expected a JSON object, got {type(delta).__name__}")
+                    raise TypeError(
+                        f"expected a JSON object, got {type(delta).__name__}"
+                    )
                 unmet = delta.pop("unmet", None)
                 if not allow_base_template_change:
                     delta.pop("base_template", None)
@@ -389,21 +669,36 @@ class AvatarEvolution:
                     delta = cap_delta_budget(delta, _MAX_AUTONOMOUS_LEAVES)
                 merged = merge_delta(current, delta)
                 validate_against_catalogs(merged, self._settings.deploy_dir)
-                self._unmet = unmet.strip()[:300] if isinstance(unmet, str) and unmet.strip() else None
+                self._unmet = (
+                    unmet.strip()[:300]
+                    if isinstance(unmet, str) and unmet.strip()
+                    else None
+                )
                 return delta
-            except Exception as exc:  # noqa: BLE001 -- a bad delta must never crash the caller
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 -- a bad delta must not crash the caller
                 last_error = exc
                 self._last_error = exc
                 if attempt == 0:
                     prompt = prompt + _RETRY_SUFFIX.format(error=exc)
 
-        logger.warning("delta synthesis failed twice (%s), giving up for this trigger", last_error)
+        logger.warning(
+            "delta synthesis failed twice (%s), giving up for this trigger",
+            last_error,
+        )
         return None
 
-    def _stamp_redesign_metadata(self, previous: LookSpec, new: LookSpec) -> None:
-        self._store.set_agent_state("last_redesign_timestamp", str(self._clock()))
+    def _stamp_redesign_metadata(
+        self, previous: LookSpec, new: LookSpec
+    ) -> None:
+        self._store.set_agent_state(
+            "last_redesign_timestamp", str(self._clock())
+        )
         if new.base_template != previous.base_template:
-            self._store.set_agent_state("base_template_since", str(self._clock()))
+            self._store.set_agent_state(
+                "base_template_since", str(self._clock())
+            )
 
     def _is_user_active(self) -> bool:
         return self._get_presence_state() == PresenceState.ACTIVE
@@ -412,15 +707,27 @@ class AvatarEvolution:
         """Narrates one redesign stage to the event bus (status page) and the
         `on_progress` hook (overlay). Observation only: a failing hook must
         never break the redesign it is reporting on."""
-        payload = {"stage": stage, "label": _PROGRESS_LABELS[stage], "source": source, **extra}
+        payload = {
+            "stage": stage,
+            "label": _PROGRESS_LABELS[stage],
+            "source": source,
+            **extra,
+        }
         emit(f"appearance.{stage}", payload)
-        logger.info("appearance %s (%s)%s", stage, source, f": {extra['error']}" if "error" in extra else "")
+        logger.info(
+            "appearance %s (%s)%s",
+            stage,
+            source,
+            f": {extra['error']}" if "error" in extra else "",
+        )
         if self._on_progress is None:
             return
         try:
             await self._on_progress(payload)
         except Exception:
-            logger.exception("appearance on_progress hook failed for stage %r", stage)
+            logger.exception(
+                "appearance on_progress hook failed for stage %r", stage
+            )
 
     async def _finish(self, result: CompileResult, source: str) -> None:
         stage = "done" if result.outcome == "published" else "staged"
@@ -430,17 +737,84 @@ class AvatarEvolution:
 
     # --- Trigger A: user-prompted ------------------------------------------
 
-    def _schedule_background(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
+    def _schedule_background(
+        self, coro: Coroutine[Any, Any, Any]
+    ) -> asyncio.Task:
         task = asyncio.ensure_future(coro)
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
         return task
+
+    def is_direct_look_request(self, request: str) -> bool:
+        """Whether `request` is just a request to become one of the installed models, or to build the
+        current look again: asked for plainly enough to be carried out without the designer.
+        """
+        return _named_model(
+            request, available_custom_templates(self._settings.deploy_dir)
+        ) is not None or (
+            _wants_rebuild(request)
+            and self.current_look_spec().base_template.startswith(
+                _CUSTOM_PREFIX
+            )
+        )
+
+    def promised_look_change(self, user_text: str, reply: str) -> str | None:
+        """The installed model the companion said it is switching to, when the user's message names
+        exactly one: for a reply that says "switching to ..." but sent no action. The words of the
+        request are not looked at for a switch word (asking to "test" or "try" a model is a request
+        too); the companion's own promise is the check. Returns the model's name as a request for
+        `change_appearance`, or None."""
+        if not _PROMISES_A_CHANGE.search(reply or ""):
+            return None
+        template = _model_the_user_named(
+            user_text, available_custom_templates(self._settings.deploy_dir)
+        )
+        return _model_title(template) if template else None
 
     async def change_appearance(self, request: str) -> str:
         """The real `change_appearance` tool handler (replaces router.py's
         stub): reply immediately, do the actual synthesis+compile in the
         background, cancelling any in-flight autonomous build first (user
         intent always wins). An imported look is locked: see look_locked()."""
+        if _wants_rebuild(
+            request
+        ) and self.current_look_spec().base_template.startswith(_CUSTOM_PREFIX):
+            cancel_running_build()
+            self._schedule_background(
+                self.generate_from_full_spec(
+                    self.current_look_spec(), source="user"
+                )
+            )
+            return "Rebuilding my look. Give me a minute."
+        # (the companion's own request for the change, "sci fi soldier", has no "change" in it)
+        named = _named_model(
+            request,
+            available_custom_templates(self._settings.deploy_dir),
+            needs_switch_word=False,
+        )
+        if named is not None:
+            # A named installed model is a direct request, not a redesign: it is made even
+            # while an imported look is kept.
+            current = self.current_look_spec()
+            switched = current.model_copy(update={"base_template": named})
+            try:
+                validate_against_catalogs(switched, self._settings.deploy_dir)
+            except CatalogError:
+                logger.info(
+                    "cannot switch to %s with the current wardrobe; asking the designer",
+                    named,
+                )
+            else:
+                cancel_running_build()
+                self._schedule_background(
+                    self.generate_from_full_spec(switched, source="user")
+                )
+                name = named.removeprefix(_CUSTOM_PREFIX).replace("_", " ")
+                if (
+                    named == current.base_template
+                ):  # (the model's files may have changed under it)
+                    return f"I'm already wearing the {name} model, so I'm building it again. Give me a minute."
+                return f"Switching to {name}. Give me a minute to change."
         if self.look_locked():
             if _wants_unlock(request):
                 return await self.unlock_appearance()
@@ -457,8 +831,14 @@ class AvatarEvolution:
         later version (docs/ADR_GENERATED_BODIES.md) has real requests to
         design against; nothing here changes how the look is built."""
         emit("appearance.unmet", {"request": request, "missing": missing})
-        logger.info("appearance request not fully expressible with the catalogs: %s (%s)", request, missing)
-        self._store.add_memory_note(f"Couldn't fully do an appearance request ({request!r}): {missing}")
+        logger.info(
+            "appearance request not fully expressible with the catalogs: %s (%s)",
+            request,
+            missing,
+        )
+        self._store.add_memory_note(
+            f"Couldn't fully do an appearance request ({request!r}): {missing}"
+        )
 
     async def _run_trigger_a(self, request: str) -> CompileResult | None:
         current = self.current_look_spec()
@@ -468,7 +848,10 @@ class AvatarEvolution:
             # No spoken follow-up (the caller already replied with "let me
             # put something together"); the failed stage is what tells the
             # user, via the overlay's status pill.
-            logger.info("Trigger A: could not synthesize a valid delta for request=%r", request)
+            logger.info(
+                "Trigger A: could not synthesize a valid delta for request=%r",
+                request,
+            )
             if isinstance(self._last_error, CatalogError):
                 # The model reached for an option that does not exist.
                 self._record_unmet(request, str(self._last_error))
@@ -484,26 +867,37 @@ class AvatarEvolution:
         if merged == current:
             # The design came back identical to what is already worn; a
             # rebuild would publish a new version that looks exactly the same.
-            logger.info("Trigger A: design for request=%r matches the current look, not rebuilding", request)
+            logger.info(
+                "Trigger A: design for request=%r matches the current look, not rebuilding",
+                request,
+            )
             await self._progress("unchanged", "user", request=request)
             return None
         await self._progress("building", "user", summary=look_summary(merged))
         try:
-            result = await compile_and_publish(self._settings, merged, is_user_present=lambda: True)
+            result = await compile_and_publish(
+                self._settings, merged, is_user_present=lambda: True
+            )
         except Exception as exc:
             # This runs as a detached background task (see
             # change_appearance()) -- an uncaught exception here would
             # otherwise only surface via asyncio's default handler.
-            logger.exception("Trigger A: compile_and_publish failed for request=%r", request)
+            logger.exception(
+                "Trigger A: compile_and_publish failed for request=%r", request
+            )
             await self._progress("failed", "user", error=str(exc)[:200])
             return None
         await self._finish(result, "user")
         if result.outcome == "published":
             self._stamp_redesign_metadata(current, merged)
-            self._store.add_memory_note(f"Changed appearance at the user's request: {look_summary(merged)}.")
+            self._store.add_memory_note(
+                f"Changed appearance at the user's request: {look_summary(merged)}."
+            )
         return result
 
-    async def generate_from_full_spec(self, look_spec: LookSpec) -> CompileResult | None:
+    async def generate_from_full_spec(
+        self, look_spec: LookSpec, *, source: str = "api"
+    ) -> CompileResult | None:
         """Backs `POST /appearance/generate`: the caller already
         supplied a complete `LookSpec` directly (no delta-synthesis LLM call
         needed at all, unlike Trigger A's free-text `change_appearance()`).
@@ -513,17 +907,27 @@ class AvatarEvolution:
         reveal, same as Trigger A -- a direct API call implies an operator
         is watching for the result."""
         current = self.current_look_spec()
-        await self._progress("building", "api", summary=look_summary(look_spec))
+        await self._progress(
+            "building", source, summary=look_summary(look_spec)
+        )
         try:
-            result = await compile_and_publish(self._settings, look_spec, is_user_present=lambda: True)
+            result = await compile_and_publish(
+                self._settings, look_spec, is_user_present=lambda: True
+            )
         except Exception as exc:
-            logger.exception("generate_from_full_spec: compile_and_publish failed")
-            await self._progress("failed", "api", error=str(exc)[:200])
+            logger.exception(
+                "generate_from_full_spec: compile_and_publish failed"
+            )
+            await self._progress("failed", source, error=str(exc)[:200])
             return None
-        await self._finish(result, "api")
+        await self._finish(result, source)
         if result.outcome == "published":
             self._stamp_redesign_metadata(current, look_spec)
-            self._store.add_memory_note(f"Appearance set directly via the API: {look_summary(look_spec)}.")
+            self._store.add_memory_note(
+                f"Appearance set directly via the API: {look_summary(look_spec)}."
+                if source == "api"
+                else f"Changed appearance at the user's request: {look_summary(look_spec)}."
+            )
         return result
 
     def schedule_generate_from_full_spec(self, look_spec: LookSpec) -> None:
@@ -552,16 +956,28 @@ class AvatarEvolution:
 
         target_version = manifest.current_version - 1
         target_entry = manifest.get_version(target_version)
-        if target_entry is None or not (self._settings.current_dir / target_entry.glb_filename).is_file():
+        if (
+            target_entry is None
+            or not (
+                self._settings.current_dir / target_entry.glb_filename
+            ).is_file()
+        ):
             return "I can't revert that far back -- that look isn't kept around anymore."
 
         reverted = revert_to_version(manifest, target_version)
         save_manifest(self._settings.deploy_dir, reverted)
         self._refresh_lock()
-        self._store.set_agent_state("last_redesign_timestamp", str(self._clock()))
+        self._store.set_agent_state(
+            "last_redesign_timestamp", str(self._clock())
+        )
+        await self._progress(
+            "done", "user", version=target_version
+        )  # the overlay hot-reloads on "done"
         return f"Done -- back to how I looked before: {look_summary(LookSpec.model_validate(target_entry.look_spec))}."
 
-    async def _restore_version(self, manifest: AssetManifest | None, version: int) -> str:
+    async def _restore_version(
+        self, manifest: AssetManifest | None, version: int
+    ) -> str:
         entry = manifest.get_version(version) if manifest is not None else None
         if manifest is None or entry is None:
             return f"I don't have a look numbered {version}."
@@ -569,19 +985,30 @@ class AvatarEvolution:
             return f"I already look like version {version}."
         spec = LookSpec.model_validate(entry.look_spec)
         if (self._settings.current_dir / entry.glb_filename).is_file():
-            save_manifest(self._settings.deploy_dir, revert_to_version(manifest, version))
+            save_manifest(
+                self._settings.deploy_dir, revert_to_version(manifest, version)
+            )
             self._refresh_lock()
-            self._store.set_agent_state("last_redesign_timestamp", str(self._clock()))
+            self._store.set_agent_state(
+                "last_redesign_timestamp", str(self._clock())
+            )
+            await self._progress(
+                "done", "user", version=version
+            )  # the overlay hot-reloads on "done"
             return f"Done -- back to version {version}: {look_summary(spec)}."
         cancel_running_build()
         self._schedule_background(self._rebuild_version(version, spec))
         return f"Version {version} isn't kept around, but I remember how it went. Let me put it back together..."
 
-    async def _rebuild_version(self, version: int, spec: LookSpec) -> CompileResult | None:
+    async def _rebuild_version(
+        self, version: int, spec: LookSpec
+    ) -> CompileResult | None:
         current = self.current_look_spec()
         await self._progress("building", "user", summary=look_summary(spec))
         try:
-            result = await compile_and_publish(self._settings, spec, is_user_present=lambda: True)
+            result = await compile_and_publish(
+                self._settings, spec, is_user_present=lambda: True
+            )
         except Exception as exc:
             logger.exception("rebuilding look version %d failed", version)
             await self._progress("failed", "user", error=str(exc)[:200])
@@ -589,7 +1016,9 @@ class AvatarEvolution:
         await self._finish(result, "user")
         if result.outcome == "published":
             self._stamp_redesign_metadata(current, spec)
-            self._store.add_memory_note(f"Went back to the look of version {version}: {look_summary(spec)}.")
+            self._store.add_memory_note(
+                f"Went back to the look of version {version}: {look_summary(spec)}."
+            )
         return result
 
     # --- Trigger B: autonomous evolution ------------------------------------
@@ -598,16 +1027,26 @@ class AvatarEvolution:
         """The real `on_eligible` callback for
         `reflect.maybe_trigger_autonomous_redesign()`."""
         if self.look_locked():
-            logger.info("Trigger B: the look is locked to an imported model, not redesigning")
+            logger.info(
+                "Trigger B: the look is locked to an imported model, not redesigning"
+            )
             return
         current = self.current_look_spec()
         traits = self._store.get_traits()
         mood = self._store.get_mood()
-        allow_base_template = base_template_change_allowed(self._store, traits.get("openness", 50.0))
+        allow_base_template = base_template_change_allowed(
+            self._store, traits.get("openness", 50.0)
+        )
 
         bias_lines = trigger_b_bias_lines(traits, mood)
-        base_clause = _BASE_TEMPLATE_ALLOWED_CLAUSE if allow_base_template else _BASE_TEMPLATE_FORBIDDEN_CLAUSE
-        budget_block = _AUTONOMOUS_BUDGET_BLOCK.format(base_template_clause=base_clause)
+        base_clause = (
+            _BASE_TEMPLATE_ALLOWED_CLAUSE
+            if allow_base_template
+            else _BASE_TEMPLATE_FORBIDDEN_CLAUSE
+        )
+        budget_block = _AUTONOMOUS_BUDGET_BLOCK.format(
+            base_template_clause=base_clause
+        )
         if bias_lines:
             budget_block = "\n".join(bias_lines) + "\n" + budget_block
 
@@ -619,14 +1058,24 @@ class AvatarEvolution:
             allow_base_template_change=allow_base_template,
         )
         if delta is None:
-            logger.info("Trigger B: could not synthesize a valid delta this cycle")
-            await self._progress("failed", "autonomous", error="couldn't come up with a valid design")
+            logger.info(
+                "Trigger B: could not synthesize a valid delta this cycle"
+            )
+            await self._progress(
+                "failed",
+                "autonomous",
+                error="couldn't come up with a valid design",
+            )
             return
 
         merged = merge_delta(current, delta)
-        await self._progress("building", "autonomous", summary=look_summary(merged))
+        await self._progress(
+            "building", "autonomous", summary=look_summary(merged)
+        )
         try:
-            result = await compile_and_publish(self._settings, merged, is_user_present=self._is_user_active)
+            result = await compile_and_publish(
+                self._settings, merged, is_user_present=self._is_user_active
+            )
         except Exception as exc:
             # Called directly from reflect.maybe_trigger_autonomous_redesign()
             # -- an uncaught exception here would propagate into the
@@ -650,11 +1099,16 @@ class AvatarEvolution:
 
     # --- presence-transition reveal hook ------------------------------------
 
-    async def on_presence_transition(self, old_state: PresenceState, new_state: PresenceState) -> None:
+    async def on_presence_transition(
+        self, old_state: PresenceState, new_state: PresenceState
+    ) -> None:
         """Wired as `DesktopPresenceBridge`'s `on_transition` callback.
         Reveals a staged build exactly on an Away|Idle -> Active edge, never
         on boot (boot reconciliation is a separate method below)."""
-        if new_state != PresenceState.ACTIVE or old_state == PresenceState.ACTIVE:
+        if (
+            new_state != PresenceState.ACTIVE
+            or old_state == PresenceState.ACTIVE
+        ):
             return
 
         staged_raw = self._store.get_agent_state("staged_version")
@@ -672,12 +1126,19 @@ class AvatarEvolution:
             # The staged file can legitimately go missing between boot
             # reconciliation and an observed transition (e.g. manual
             # cleanup mid-session); clear the stale pointer and move on.
-            logger.exception("failed to reveal staged version %s on presence transition; clearing it", version)
+            logger.exception(
+                "failed to reveal staged version %s on presence transition; clearing it",
+                version,
+            )
             self._store.set_agent_state("staged_version", None)
             return
 
         self._store.set_agent_state("staged_version", None)
-        revealed_entry = result.manifest.get_version(version) if result.manifest is not None else None
+        revealed_entry = (
+            result.manifest.get_version(version)
+            if result.manifest is not None
+            else None
+        )
         if revealed_entry is not None:
             new_look = LookSpec.model_validate(revealed_entry.look_spec)
             self._refresh_lock()
@@ -685,7 +1146,9 @@ class AvatarEvolution:
             self._store.add_memory_note(
                 f"Revealed an appearance change that was staged while away: {look_summary(new_look)}."
             )
-            self._schedule_background(ensure_thumbnails(self._settings, result.manifest))
+            self._schedule_background(
+                ensure_thumbnails(self._settings, result.manifest)
+            )
 
     def reconcile_staged_on_boot(self) -> None:
         """Boot-time crash reconciliation: if `staged_version` is set but
@@ -698,7 +1161,11 @@ class AvatarEvolution:
             return
         glb_path = self._settings.staged_dir / f"look-v{staged_raw}.glb"
         if not glb_path.is_file():
-            logger.warning("agent_state.staged_version=%s but %s is missing; clearing", staged_raw, glb_path)
+            logger.warning(
+                "agent_state.staged_version=%s but %s is missing; clearing",
+                staged_raw,
+                glb_path,
+            )
             self._store.set_agent_state("staged_version", None)
 
     # --- asset-swap-failure rollback ----------------------------------------
@@ -712,7 +1179,10 @@ class AvatarEvolution:
         back to instead."""
         manifest = load_manifest(self._settings.deploy_dir)
         if manifest is None:
-            logger.critical("asset_swap_result ok:false for version %s but no manifest exists", failed_version)
+            logger.critical(
+                "asset_swap_result ok:false for version %s but no manifest exists",
+                failed_version,
+            )
             return
         manifest = mark_version_status(manifest, failed_version, "corrupted")
         if failed_version <= 1:

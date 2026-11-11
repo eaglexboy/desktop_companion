@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Literal
 
 from blender.viseme_shapekeys import VISEME_CODES
+from brain.appearance.glb_tools import hoist_skinned_meshes
 from brain.appearance.manifest import (
     AssetManifest,
     append_version,
@@ -46,7 +47,7 @@ from brain.config import Settings
 logger = logging.getLogger("deskmate.appearance")
 
 GENERATOR_SCRIPT = Path(__file__).resolve().parents[2] / "blender" / "generator.py"
-BUILD_TIMEOUT_S = 120.0
+BUILD_TIMEOUT_S = 160.0
 GLTF_MAGIC = b"glTF"
 
 _build_lock = asyncio.Lock()
@@ -60,7 +61,7 @@ class GenerationError(RuntimeError):
 
 
 class BuildTimeoutError(GenerationError):
-    """The 120s subprocess timeout expired; the process was SIGKILLed and
+    """The 160s subprocess timeout expired; the process was SIGKILLed and
     scratch artifacts discarded."""
 
 
@@ -91,7 +92,11 @@ def _clean_blender_env() -> dict[str, str]:
     env.pop("PYTHONHOME", None)
     env.pop("PYTHONPATH", None)
     if venv:
-        parts = [p for p in env.get("PATH", "").split(os.pathsep) if p and not p.startswith(venv)]
+        parts = [
+            p
+            for p in env.get("PATH", "").split(os.pathsep)
+            if p and not p.startswith(venv)
+        ]
         env["PATH"] = os.pathsep.join(parts)
     return env
 
@@ -100,8 +105,10 @@ def _discard_scratch(build_dir: Path) -> None:
     shutil.rmtree(build_dir, ignore_errors=True)
 
 
-async def _run_blender(settings: Settings, spec_path: Path, out_glb: Path, build_dir: Path) -> dict:
-    """Runs blender headless, enforces the 120s timeout (SIGKILL + scratch
+async def _run_blender(
+    settings: Settings, spec_path: Path, out_glb: Path, build_dir: Path
+) -> dict:
+    """Runs blender headless, enforces the 160s timeout (SIGKILL + scratch
     discard on expiry), and parses the DESKMATE_BUILD_OK/FAIL stdout
     contract. Returns the parsed build.json dict on success."""
     global _current_proc
@@ -129,26 +136,45 @@ async def _run_blender(settings: Settings, spec_path: Path, out_glb: Path, build
     _current_proc = proc
     try:
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=BUILD_TIMEOUT_S)
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=BUILD_TIMEOUT_S
+            )
         except TimeoutError:
             proc.kill()
             await proc.wait()
             _discard_scratch(build_dir)
-            raise BuildTimeoutError(f"blender build exceeded {BUILD_TIMEOUT_S}s timeout, process killed") from None
+            raise BuildTimeoutError(
+                f"blender build exceeded {BUILD_TIMEOUT_S}s timeout, process killed"
+            ) from None
     finally:
         _current_proc = None
 
     stdout_text = stdout.decode(errors="replace")
     if proc.returncode == -15:  # SIGTERM, from cancel_running_build()
-        raise BuildCancelledError("build cancelled (SIGTERM) to prioritize a higher-priority request")
+        raise BuildCancelledError(
+            "build cancelled (SIGTERM) to prioritize a higher-priority request"
+        )
     if "DESKMATE_BUILD_OK" not in stdout_text:
-        last_line = next((line for line in reversed(stdout_text.strip().splitlines()) if line.strip()), "")
-        reason = last_line or stderr.decode(errors="replace").strip() or f"exit code {proc.returncode}"
+        last_line = next(
+            (
+                line
+                for line in reversed(stdout_text.strip().splitlines())
+                if line.strip()
+            ),
+            "",
+        )
+        reason = (
+            last_line
+            or stderr.decode(errors="replace").strip()
+            or f"exit code {proc.returncode}"
+        )
         raise GenerationError(f"blender build failed: {reason}")
 
     build_json_path = out_glb.with_suffix(".build.json")
     if not build_json_path.is_file():
-        raise GenerationError(f"blender exited OK but {build_json_path.name} is missing")
+        raise GenerationError(
+            f"blender exited OK but {build_json_path.name} is missing"
+        )
     build_json = json.loads(build_json_path.read_text())
     if build_json.get("status") != "ok":
         raise GenerationError(f"build.json status != 'ok': {build_json}")
@@ -159,31 +185,43 @@ def _verify_build_output(out_glb: Path, build_json: dict, has_face: bool) -> Non
     """Ground-truth verification: glTF binary magic bytes, all 9 canonical
     viseme shape keys if has_face, and the core clips (idle_*, move, think)."""
     if not out_glb.is_file():
-        raise GenerationError(f"{out_glb} was not produced despite a DESKMATE_BUILD_OK exit")
+        raise GenerationError(
+            f"{out_glb} was not produced despite a DESKMATE_BUILD_OK exit"
+        )
     magic = out_glb.read_bytes()[:4]
     if magic != GLTF_MAGIC:
-        raise GenerationError(f"{out_glb} does not start with glTF binary magic bytes (got {magic!r})")
+        raise GenerationError(
+            f"{out_glb} does not start with glTF binary magic bytes (got {magic!r})"
+        )
 
     if has_face:
         expected = {f"viseme_{code}" for code in VISEME_CODES}
         got = set(build_json.get("viseme_shape_keys", []))
         missing = expected - got
         if missing:
-            raise GenerationError(f"build.json is missing viseme shape keys: {sorted(missing)}")
+            raise GenerationError(
+                f"build.json is missing viseme shape keys: {sorted(missing)}"
+            )
 
     clip_names = {clip["name"] for clip in build_json.get("animation_clips", [])}
     if not any(name.startswith("idle_") for name in clip_names):
         raise GenerationError(f"build.json has no idle_* clips: {sorted(clip_names)}")
     for required in ("move", "think"):
         if required not in clip_names:
-            raise GenerationError(f"build.json is missing required core clip {required!r}: {sorted(clip_names)}")
+            raise GenerationError(
+                f"build.json is missing required core clip {required!r}: {sorted(clip_names)}"
+            )
 
 
 _glb_filename = glb_filename_for
 
 
 def _publish_version(
-    settings: Settings, out_glb: Path, build_json: dict, look_spec_dict: dict, existing_manifest: AssetManifest | None
+    settings: Settings,
+    out_glb: Path,
+    build_json: dict,
+    look_spec_dict: dict,
+    existing_manifest: AssetManifest | None,
 ) -> CompileResult:
     """Same-filesystem atomic commit: copy into assets/, copy into
     data/current/, then the manifest commit point -- in that order, so a
@@ -199,7 +237,12 @@ def _publish_version(
     save_manifest(settings.deploy_dir, manifest)
 
     _prune_old_versions(settings, manifest)
-    return CompileResult(outcome="published", version=version, glb_path=settings.current_dir / filename, manifest=manifest)
+    return CompileResult(
+        outcome="published",
+        version=version,
+        glb_path=settings.current_dir / filename,
+        manifest=manifest,
+    )
 
 
 def _prune_old_versions(settings: Settings, manifest: AssetManifest) -> None:
@@ -215,7 +258,13 @@ def _prune_old_versions(settings: Settings, manifest: AssetManifest) -> None:
             (directory / _glb_filename(old_version)).unlink(missing_ok=True)
 
 
-def _stage_version(settings: Settings, out_glb: Path, build_json: dict, look_spec_dict: dict, version: int) -> CompileResult:
+def _stage_version(
+    settings: Settings,
+    out_glb: Path,
+    build_json: dict,
+    look_spec_dict: dict,
+    version: int,
+) -> CompileResult:
     """Option B: the live manifest/data/current are untouched; the compiled
     asset and the metadata needed to publish it later without recompiling
     are held under assets/staged/ instead."""
@@ -224,7 +273,12 @@ def _stage_version(settings: Settings, out_glb: Path, build_json: dict, look_spe
     atomic_write(settings.staged_dir / filename, out_glb.read_bytes())
     meta = {"build_json": build_json, "look_spec": look_spec_dict}
     atomic_write(settings.staged_dir / f"look-v{version}.meta.json", json.dumps(meta))
-    return CompileResult(outcome="staged", version=version, glb_path=settings.staged_dir / filename, manifest=None)
+    return CompileResult(
+        outcome="staged",
+        version=version,
+        glb_path=settings.staged_dir / filename,
+        manifest=None,
+    )
 
 
 async def compile_and_publish(
@@ -255,14 +309,31 @@ async def compile_and_publish(
             build_json = await _run_blender(settings, spec_path, out_glb, build_dir)
             # the build's own has_face is authoritative: an imported model without
             # visemes is built faceless even if the spec asked for a face
-            _verify_build_output(out_glb, build_json, build_json.get("has_face", look_spec.has_face))
+            _verify_build_output(
+                out_glb, build_json, build_json.get("has_face", look_spec.has_face)
+            )
+
+            moved = hoist_skinned_meshes(out_glb)
+            if moved:
+                logger.info(
+                    "moved skinned meshes out from under a transformed parent: %s",
+                    ", ".join(moved),
+                )
 
             existing_manifest = load_manifest(settings.deploy_dir)
             if is_user_present():
-                result = _publish_version(settings, out_glb, build_json, look_spec_dict, existing_manifest)
+                result = _publish_version(
+                    settings, out_glb, build_json, look_spec_dict, existing_manifest
+                )
             else:
-                next_version = (existing_manifest.latest_version_number() if existing_manifest else 0) + 1
-                result = _stage_version(settings, out_glb, build_json, look_spec_dict, next_version)
+                next_version = (
+                    existing_manifest.latest_version_number()
+                    if existing_manifest
+                    else 0
+                ) + 1
+                result = _stage_version(
+                    settings, out_glb, build_json, look_spec_dict, next_version
+                )
         finally:
             _discard_scratch(build_dir)
             if on_status:
@@ -288,11 +359,15 @@ def reveal_staged(settings: Settings, version: int) -> CompileResult:
     staged_glb = settings.staged_dir / filename
     meta_path = settings.staged_dir / f"look-v{version}.meta.json"
     if not staged_glb.is_file() or not meta_path.is_file():
-        raise GenerationError(f"no staged build found for version {version} under {settings.staged_dir}")
+        raise GenerationError(
+            f"no staged build found for version {version} under {settings.staged_dir}"
+        )
 
     meta = json.loads(meta_path.read_text())
     existing_manifest = load_manifest(settings.deploy_dir)
-    result = _publish_version(settings, staged_glb, meta["build_json"], meta["look_spec"], existing_manifest)
+    result = _publish_version(
+        settings, staged_glb, meta["build_json"], meta["look_spec"], existing_manifest
+    )
     staged_glb.unlink(missing_ok=True)
     meta_path.unlink(missing_ok=True)
     return result

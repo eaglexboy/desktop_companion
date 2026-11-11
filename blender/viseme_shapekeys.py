@@ -21,8 +21,7 @@ SHAPE_KEY_PREFIX = "viseme_"
 
 def shape_key_name(code: str) -> str:
     if code not in VISEME_CODES:
-        raise ValueError(f"Unknown viseme code {code!r}, expected one of {VISEME_CODES}")
+        raise ValueError(
+            f"Unknown viseme code {code!r}, expected one of {VISEME_CODES}"
+        )
     return f"{SHAPE_KEY_PREFIX}{code}"
-
-
-ALL_SHAPE_KEY_NAMES: tuple[str, ...] = tuple(shape_key_name(c) for c in VISEME_CODES)

@@ -66,12 +66,16 @@ async def test_nonzero_exit_raises_lipsync_error(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_extract_visemes_if_needed_bypassed_when_faceless(tmp_path):
     lipsync = RhubarbLipSync("/should/never/be/invoked")
-    result = await extract_visemes_if_needed(lipsync, tmp_path / "x.wav", has_face=False)
+    result = await extract_visemes_if_needed(
+        lipsync, tmp_path / "x.wav", has_face=False
+    )
     assert result == []
 
 
 @pytest.mark.asyncio
-async def test_extract_visemes_parses_mouth_cues_from_mocked_output(tmp_path, monkeypatch):
+async def test_extract_visemes_parses_mouth_cues_from_mocked_output(
+    tmp_path, monkeypatch
+):
     """Mocks the subprocess but exercises real JSON parsing + shape_key_name
     mapping, independent of whether rhubarb is actually installed here."""
     lipsync = RhubarbLipSync("rhubarb")
@@ -88,7 +92,16 @@ async def test_extract_visemes_parses_mouth_cues_from_mocked_output(tmp_path, mo
         # args[-1] is the wav path; -o's value is two before it when no dialog file
         out_index = args.index("-o") + 1
         out_path = Path(args[out_index])
-        out_path.write_text(json.dumps({"mouthCues": [{"start": 0.0, "end": 0.1, "value": "X"}, {"start": 0.1, "end": 0.3, "value": "D"}]}))
+        out_path.write_text(
+            json.dumps(
+                {
+                    "mouthCues": [
+                        {"start": 0.0, "end": 0.1, "value": "X"},
+                        {"start": 0.1, "end": 0.3, "value": "D"},
+                    ]
+                }
+            )
+        )
         return _FakeProc()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
@@ -109,7 +122,7 @@ async def test_extract_visemes_parses_mouth_cues_from_mocked_output(tmp_path, mo
 async def test_real_rhubarb_on_silence_produces_rest_viseme(tmp_path):
     """Real rhubarb, no piper needed: a silent WAV should produce a
     rest/closed-mouth viseme (X) covering it, not an error."""
-    lipsync = RhubarbLipSync(shutil.which("rhubarb"))
+    lipsync = RhubarbLipSync(shutil.which("rhubarb") or "rhubarb")
     wav_path = tmp_path / "silence.wav"
     _silent_wav(wav_path, duration_s=1.0)
 
@@ -119,7 +132,9 @@ async def test_real_rhubarb_on_silence_produces_rest_viseme(tmp_path):
     assert frames[0].shape_key == "viseme_X"
 
 
-@pytest.mark.skipif(not (HAS_RHUBARB and HAS_PIPER), reason="needs both rhubarb and piper on PATH")
+@pytest.mark.skipif(
+    not (HAS_RHUBARB and HAS_PIPER), reason="needs both rhubarb and piper on PATH"
+)
 @pytest.mark.asyncio
 async def test_real_piper_to_rhubarb_end_to_end(tmp_path):
     """The actual pipeline this module exists for: real TTS audio in,
@@ -140,14 +155,18 @@ async def test_real_piper_to_rhubarb_end_to_end(tmp_path):
     await proc.communicate(input=text.encode("utf-8"))
     assert wav_path.is_file()
 
-    lipsync = RhubarbLipSync(shutil.which("rhubarb"))
-    frames = await extract_visemes_if_needed(lipsync, wav_path, has_face=True, dialog_text=text)
+    lipsync = RhubarbLipSync(shutil.which("rhubarb") or "rhubarb")
+    frames = await extract_visemes_if_needed(
+        lipsync, wav_path, has_face=True, dialog_text=text
+    )
 
     assert len(frames) > 1
     assert all(f.shape_key.startswith("viseme_") for f in frames)
     assert frames[0].start_s == 0.0
     # frames should be in non-decreasing chronological order
-    assert all(frames[i].start_s <= frames[i + 1].start_s for i in range(len(frames) - 1))
+    assert all(
+        frames[i].start_s <= frames[i + 1].start_s for i in range(len(frames) - 1)
+    )
 
 
 def _find_piper_voice() -> Path:

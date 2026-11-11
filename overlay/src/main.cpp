@@ -41,23 +41,37 @@ int main(int argc, char *argv[])
     ShortcutManager shortcuts;
 
     QQmlApplicationEngine engine;
-    engine.rootContext()->setContextProperty(QStringLiteral("ipc"), &ipc);
-    engine.rootContext()->setContextProperty(QStringLiteral("audioCapture"), &audioCapture);
-    engine.rootContext()->setContextProperty(QStringLiteral("shortcutManager"), &shortcuts);
     // qml/Main.qml's currentLookPath resolution needs a real value, which
     // only exists once the daemon's `welcome` handshake hands us its real
     // asset_dir.
     engine.rootContext()->setContextProperty(QStringLiteral("dataDir"), QString());
+    // Testing only: DESKMATE_SIT_TEST_SECONDS makes the companion sit after that many idle seconds, for as long.
+    engine.rootContext()->setContextProperty(QStringLiteral("testSitSeconds"),
+                                             qEnvironmentVariableIntValue("DESKMATE_SIT_TEST_SECONDS"));
+    // Likewise DESKMATE_SLEEP_TEST_SECONDS (lie down and sleep after that many idle seconds) and
+    // DESKMATE_WORKOUT_TEST_SECONDS (work out after that many).
+    engine.rootContext()->setContextProperty(QStringLiteral("testSleepSeconds"),
+                                             qEnvironmentVariableIntValue("DESKMATE_SLEEP_TEST_SECONDS"));
+    engine.rootContext()->setContextProperty(QStringLiteral("testWorkoutSeconds"),
+                                             qEnvironmentVariableIntValue("DESKMATE_WORKOUT_TEST_SECONDS"));
+    // And DESKMATE_ATTENTION_TEST_SECONDS (ask for attention every that many seconds).
+    engine.rootContext()->setContextProperty(QStringLiteral("testAttentionSeconds"),
+                                             qEnvironmentVariableIntValue("DESKMATE_ATTENTION_TEST_SECONDS"));
 
     QObject::connect(&ipc, &IpcClient::welcomeReceived, &engine,
-                      [&engine](const QVariantMap &, const QVariantMap &, const QString &assetDir) {
-                          engine.rootContext()->setContextProperty(QStringLiteral("dataDir"), assetDir);
-                      });
+                     [&engine](const QVariantMap &, const QVariantMap &, const QString &assetDir)
+                     {
+                         engine.rootContext()->setContextProperty(QStringLiteral("dataDir"), assetDir);
+                     });
 
     QObject::connect(
         &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
-        []() { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
+        []()
+        { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
 
+    engine.setInitialProperties({{QStringLiteral("ipc"), QVariant::fromValue(&ipc)},
+                                 {QStringLiteral("audioCapture"), QVariant::fromValue(&audioCapture)},
+                                 {QStringLiteral("shortcutManager"), QVariant::fromValue(&shortcuts)}});
     engine.loadFromModule("Deskmate", "Main");
 
     // Outputs coming back (unlock / wake): ask the QML side to re-show and
@@ -65,10 +79,10 @@ int main(int argc, char *argv[])
     QTimer displayRecovery;
     displayRecovery.setSingleShot(true);
     displayRecovery.setInterval(600);
-    QObject::connect(&displayRecovery, &QTimer::timeout, &app, [&engine]() {
+    QObject::connect(&displayRecovery, &QTimer::timeout, &app, [&engine]()
+                     {
         if (!engine.rootObjects().isEmpty())
-            QMetaObject::invokeMethod(engine.rootObjects().first(), "recoverDisplay");
-    });
+            QMetaObject::invokeMethod(engine.rootObjects().first(), "recoverDisplay"); });
     QObject::connect(&app, &QGuiApplication::screenAdded, &displayRecovery, qOverload<>(&QTimer::start));
 
     ipc.connectToBrain(ipcHost, ipcPort, clientId);

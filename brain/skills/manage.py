@@ -1,7 +1,7 @@
 """Enable, disable and pin installed Agent Skills; see what they cost in context.
 
     python -m brain.skills.manage list
-    python -m brain.skills.manage enable|disable|pin|unpin <skill> 
+    python -m brain.skills.manage enable|disable|pin|unpin <skill>
     python -m brain.skills.manage alias <skill> <short-name>
 
 `<skill>` is `source/name`, a unique bare name, or an alias. The rules here are
@@ -55,7 +55,11 @@ class SkillView:
 
     @property
     def exposure(self) -> str:
-        return "stub" if self.enabled and self.pinned else "discoverable" if self.enabled else "absent"
+        return (
+            "stub"
+            if self.enabled and self.pinned
+            else "discoverable" if self.enabled else "absent"
+        )
 
     @property
     def stub(self) -> str:
@@ -67,7 +71,9 @@ def default_enabled(tier: str) -> bool:
     return tier in ("local", "bundled")
 
 
-def build_views(root: Path, skills: list[AgentSkill], states: dict[str, SkillState]) -> list[SkillView]:
+def build_views(
+    root: Path, skills: list[AgentSkill], states: dict[str, SkillState]
+) -> list[SkillView]:
     names = display_names(root, skills)
     views = []
     for k in skills:
@@ -76,7 +82,10 @@ def build_views(root: Path, skills: list[AgentSkill], states: dict[str, SkillSta
         row = states.get(sid)
         views.append(
             SkillView(
-                id=sid, skill=k, display=names[sid], tier=tier,
+                id=sid,
+                skill=k,
+                display=names[sid],
+                tier=tier,
                 enabled=row.enabled if row else default_enabled(tier),
                 pinned=row.pinned if row else False,
                 alias=row.alias if row else None,
@@ -98,7 +107,10 @@ def resolve(views: list[SkillView], ref: str) -> SkillView:
         if len(match) == 1:
             return match[0]
         if len(match) > 1:
-            raise StateChangeError(f"{ref!r} is ambiguous; use one of: " + ", ".join(sorted(v.id for v in match)))
+            raise StateChangeError(
+                f"{ref!r} is ambiguous; use one of: "
+                + ", ".join(sorted(v.id for v in match))
+            )
     raise StateChangeError(f"no installed skill {ref!r}")
 
 
@@ -123,8 +135,13 @@ def change_state(
 
     if new_enabled and not view.enabled:
         if not confirmed:
-            raise StateChangeError("enabling a skill needs your confirmation (typed or clicked, not spoken)")
-        if view.tier == "flagged" and confirm_text.strip().lower() != view.skill.name.lower():
+            raise StateChangeError(
+                "enabling a skill needs your confirmation (typed or clicked, not spoken)"
+            )
+        if (
+            view.tier == "flagged"
+            and confirm_text.strip().lower() != view.skill.name.lower()
+        ):
             raise StateChangeError(
                 f"{view.id} is flagged (scripts, dangerous tools or scan findings): type its name, "
                 f"{view.skill.name!r}, to enable it"
@@ -133,7 +150,12 @@ def change_state(
         raise StateChangeError("only an enabled skill can be pinned")
     if not new_enabled:
         new_pinned = False  # disabling a skill also un-pins it
-    if new_pinned and not view.pinned and sum(1 for v in views if v.enabled and v.pinned and v.id != view.id) >= max_pinned:
+    if (
+        new_pinned
+        and not view.pinned
+        and sum(1 for v in views if v.enabled and v.pinned and v.id != view.id)
+        >= max_pinned
+    ):
         raise StateChangeError(f"at most {max_pinned} skills can be pinned")
 
     new_alias = view.alias
@@ -142,18 +164,34 @@ def change_state(
             new_alias = None
         else:
             if not _ALIAS_RE.fullmatch(alias):
-                raise StateChangeError("an alias is lowercase letters, digits and hyphens")
+                raise StateChangeError(
+                    "an alias is lowercase letters, digits and hyphens"
+                )
             if any(v.alias == alias and v.id != view.id for v in views):
                 raise StateChangeError(f"alias {alias!r} is already used")
             new_alias = alias
-    return store.put(view.id, enabled=new_enabled, pinned=new_pinned, alias=new_alias, changed_by=changed_by)
+    return store.put(
+        view.id,
+        enabled=new_enabled,
+        pinned=new_pinned,
+        alias=new_alias,
+        changed_by=changed_by,
+    )
 
 
-def summarize(skills_cfg: Any, context_tokens: int, views: list[SkillView]) -> dict[str, Any]:
+def summarize(
+    skills_cfg: Any, context_tokens: int, views: list[SkillView]
+) -> dict[str, Any]:
     """The budget meter: what the pinned stubs would cost against what fits.
     Imported skills are inert in V1, so none of this is in a prompt yet."""
-    budget = context.budget_tokens(context_tokens, skills_cfg.catalog_fraction, skills_cfg.catalog_token_cap)
-    pinned = sorted((v for v in views if v.enabled and v.pinned), key=lambda v: v.id)
+    budget = context.budget_tokens(
+        context_tokens,
+        skills_cfg.catalog_fraction,
+        skills_cfg.catalog_token_cap,
+    )
+    pinned = sorted(
+        (v for v in views if v.enabled and v.pinned), key=lambda v: v.id
+    )
     plan = context.plan_stubs([(v.id, v.stub) for v in pinned], budget)
     return {
         "context_tokens": context_tokens,
@@ -170,14 +208,39 @@ def summarize(skills_cfg: Any, context_tokens: int, views: list[SkillView]) -> d
 
 def view_json(v: SkillView) -> dict[str, Any]:
     prov = read_provenance(v.skill.path)
-    keys = ("source", "origin", "commit", "category", "scripts_in_source", "scripts_installed", "dangerous_tools", "findings", "installed_at")
+    keys = (
+        "source",
+        "origin",
+        "commit",
+        "category",
+        "scripts_in_source",
+        "scripts_installed",
+        "dangerous_tools",
+        "findings",
+        "installed_at",
+    )
     return {
-        "id": v.id, "name": v.skill.name, "display": v.display, "alias": v.alias,
-        "description": v.skill.description, "track": v.skill.track, "has_scripts": v.skill.has_scripts,
-        "license": v.skill.license, "path": str(v.skill.path), "warnings": list(v.skill.warnings),
-        "tier": v.tier, "enabled": v.enabled, "pinned": v.pinned, "exposure": v.exposure,
-        "stub_tokens": context.estimate_tokens(v.stub + "\n") if v.exposure == "stub" else 0,
-        "changed_by": v.changed_by, "status": "inert",
+        "id": v.id,
+        "name": v.skill.name,
+        "display": v.display,
+        "alias": v.alias,
+        "description": v.skill.description,
+        "track": v.skill.track,
+        "has_scripts": v.skill.has_scripts,
+        "license": v.skill.license,
+        "path": str(v.skill.path),
+        "warnings": list(v.skill.warnings),
+        "tier": v.tier,
+        "enabled": v.enabled,
+        "pinned": v.pinned,
+        "exposure": v.exposure,
+        "stub_tokens": (
+            context.estimate_tokens(v.stub + "\n")
+            if v.exposure == "stub"
+            else 0
+        ),
+        "changed_by": v.changed_by,
+        "status": "inert",
         "provenance": {k: prov.get(k) for k in keys} if prov else None,
     }
 
@@ -195,25 +258,38 @@ def _ask(prompt: str) -> str:
 def _confirm(view: SkillView) -> tuple[bool, str]:
     if view.tier == "flagged":
         print(f"{view.id} is FLAGGED: " + _why_flagged(view))
-        typed = _ask(f"Type the skill's name ({view.skill.name}) to enable it, anything else cancels: ")
+        typed = _ask(
+            f"Type the skill's name ({view.skill.name}) to enable it, anything else cancels: "
+        )
         return typed.strip().lower() == view.skill.name.lower(), typed
-    typed = _ask(f"Enable {view.id} ({view.skill.description[:80]})? Type 'yes' to confirm: ")
+    typed = _ask(
+        f"Enable {view.id} ({view.skill.description[:80]})? Type 'yes' to confirm: "
+    )
     return typed.strip().lower() == "yes", typed
 
 
 def _why_flagged(view: SkillView) -> str:
     prov = read_provenance(view.skill.path)
-    bits = list(prov.get("dangerous_tools") or []) + list(prov.get("findings") or [])
+    bits = list(prov.get("dangerous_tools") or []) + list(
+        prov.get("findings") or []
+    )
     if prov.get("scripts_in_source"):
         bits.append("has scripts/")
     return ", ".join(bits) or "see .source"
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="python -m brain.skills.manage", description=(__doc__ or "").split("\n\n")[0])
-    ap.add_argument("action", choices=["list", "enable", "disable", "pin", "unpin", "alias"])
+    ap = argparse.ArgumentParser(
+        prog="python -m brain.skills.manage",
+        description=(__doc__ or "").split("\n\n")[0],
+    )
+    ap.add_argument(
+        "action", choices=["list", "enable", "disable", "pin", "unpin", "alias"]
+    )
     ap.add_argument("skill", nargs="?")
-    ap.add_argument("alias_name", nargs="?", help="for `alias`; an empty string clears it")
+    ap.add_argument(
+        "alias_name", nargs="?", help="for `alias`; an empty string clears it"
+    )
     args = ap.parse_args(argv)
 
     from brain.config import load_settings
@@ -224,11 +300,18 @@ def main(argv: list[str] | None = None) -> int:
     views = build_views(settings.skills_dir, skills, store.all())
     try:
         if args.action == "list":
-            meter = summarize(settings.skills, settings.llm.smallest_context_tokens(), views)
+            meter = summarize(
+                settings.skills, settings.llm.smallest_context_tokens(), views
+            )
             for v in sorted(views, key=lambda x: x.id):
-                print(f"{'on ' if v.enabled else 'off'} {'pin' if v.pinned else '   '} {v.tier:9} {v.id}" + (f"  (alias {v.alias})" if v.alias else ""))
-            print(f"\n{meter['enabled']}/{meter['installed']} enabled, {meter['pinned']}/{meter['max_pinned']} pinned, "
-                  f"stubs {meter['tokens_used']}/{meter['budget_tokens']} tokens (context {meter['context_tokens']}); imported skills are inert for now")
+                print(
+                    f"{'on ' if v.enabled else 'off'} {'pin' if v.pinned else '   '} {v.tier:9} {v.id}"
+                    + (f"  (alias {v.alias})" if v.alias else "")
+                )
+            print(
+                f"\n{meter['enabled']}/{meter['installed']} enabled, {meter['pinned']}/{meter['max_pinned']} pinned, "
+                f"stubs {meter['tokens_used']}/{meter['budget_tokens']} tokens (context {meter['context_tokens']}); imported skills are inert for now"
+            )
             return 0
         if not args.skill:
             ap.error("a skill is required")
@@ -250,8 +333,18 @@ def main(argv: list[str] | None = None) -> int:
             if args.alias_name is None:
                 ap.error("alias needs a name (or '' to clear)")
             kwargs["alias"] = args.alias_name
-        state = change_state(store, views, args.skill, changed_by="cli", max_pinned=settings.skills.max_pinned, **kwargs)
-        print(f"{state.skill_id}: enabled={state.enabled} pinned={state.pinned}" + (f" alias={state.alias}" if state.alias else ""))
+        state = change_state(
+            store,
+            views,
+            args.skill,
+            changed_by="cli",
+            max_pinned=settings.skills.max_pinned,
+            **kwargs,
+        )
+        print(
+            f"{state.skill_id}: enabled={state.enabled} pinned={state.pinned}"
+            + (f" alias={state.alias}" if state.alias else "")
+        )
         return 0
     except StateChangeError as exc:
         print(f"refused: {exc}", file=sys.stderr)

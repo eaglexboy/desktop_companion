@@ -43,7 +43,9 @@ logger = logging.getLogger("deskmate.skills.agentskills")
 MAX_NAME_LENGTH = 64
 MAX_DESCRIPTION_LENGTH = 1024
 MAX_COMPATIBILITY_LENGTH = 500
-MAX_SKILL_MD_BYTES = 256 * 1024  # a SKILL.md bigger than this is not a skill, it is a payload
+MAX_SKILL_MD_BYTES = (
+    256 * 1024
+)  # a SKILL.md bigger than this is not a skill, it is a payload
 NAMESPACE = "deskmate."
 TRACKS = ("script", "tool", "agent")
 
@@ -59,22 +61,29 @@ class SkillParseError(ValueError):
 class AgentSkill:
     name: str
     description: str
-    body: str                                   # markdown instructions (loaded on activation, not at startup)
-    path: Path | None = None                    # the skill directory
+    body: str  # markdown instructions (loaded on activation, not at startup)
+    path: Path | None = None  # the skill directory
     license: str = ""
     compatibility: str = ""
-    allowed_tools: tuple[str, ...] = ()         # as declared; experimental in the spec, never trusted by us
+    allowed_tools: tuple[
+        str, ...
+    ] = ()  # as declared; experimental in the spec, never trusted by us
     metadata: dict[str, Any] = field(default_factory=dict)
-    warnings: tuple[str, ...] = ()              # spec deviations we tolerated
+    warnings: tuple[str, ...] = ()  # spec deviations we tolerated
 
     @property
     def track(self) -> str:
-        value = str(self.metadata.get(NAMESPACE + "track", "agent")).strip().lower()
+        value = (
+            str(self.metadata.get(NAMESPACE + "track", "agent")).strip().lower()
+        )
         return value if value in TRACKS else "agent"
 
     def deskmate_flag(self, key: str) -> bool:
         """A `deskmate.<key>` metadata flag; anything but an explicit "true" is False."""
-        return str(self.metadata.get(NAMESPACE + key, "")).strip().lower() == "true"
+        return (
+            str(self.metadata.get(NAMESPACE + key, "")).strip().lower()
+            == "true"
+        )
 
     @property
     def has_scripts(self) -> bool:
@@ -83,7 +92,9 @@ class AgentSkill:
 
 def validate_name(name: str) -> None:
     if not 1 <= len(name) <= MAX_NAME_LENGTH:
-        raise SkillParseError(f"name must be 1-{MAX_NAME_LENGTH} characters, got {len(name)}")
+        raise SkillParseError(
+            f"name must be 1-{MAX_NAME_LENGTH} characters, got {len(name)}"
+        )
     if not _NAME_RE.fullmatch(name):
         raise SkillParseError(
             f"name {name!r} must be lowercase letters, digits and single hyphens, "
@@ -107,10 +118,12 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
         raise SkillParseError(f"frontmatter is not valid YAML: {exc}") from exc
     if not isinstance(front, dict):
         raise SkillParseError("frontmatter must be a mapping")
-    return front, rest[end.end():].lstrip("\r\n")
+    return front, rest[end.end() :].lstrip("\r\n")
 
 
-def parse_skill_md(text: str, *, dirname: str | None = None, path: Path | None = None) -> AgentSkill:
+def parse_skill_md(
+    text: str, *, dirname: str | None = None, path: Path | None = None
+) -> AgentSkill:
     """Strictly validates `text` against the spec. Raises SkillParseError.
 
     A name that differs from the directory name is tolerated with a warning:
@@ -127,7 +140,9 @@ def parse_skill_md(text: str, *, dirname: str | None = None, path: Path | None =
     validate_name(name)
     description = description.strip()
     if len(description) > MAX_DESCRIPTION_LENGTH:
-        raise SkillParseError(f"description is longer than {MAX_DESCRIPTION_LENGTH} characters")
+        raise SkillParseError(
+            f"description is longer than {MAX_DESCRIPTION_LENGTH} characters"
+        )
 
     compat = front.get("compatibility", "")
     if compat is None:
@@ -135,7 +150,9 @@ def parse_skill_md(text: str, *, dirname: str | None = None, path: Path | None =
     if not isinstance(compat, str):
         raise SkillParseError("compatibility must be text")
     if len(compat) > MAX_COMPATIBILITY_LENGTH:
-        raise SkillParseError(f"compatibility is longer than {MAX_COMPATIBILITY_LENGTH} characters")
+        raise SkillParseError(
+            f"compatibility is longer than {MAX_COMPATIBILITY_LENGTH} characters"
+        )
 
     licence = front.get("license", "")
     licence = "" if licence is None else str(licence)
@@ -146,13 +163,19 @@ def parse_skill_md(text: str, *, dirname: str | None = None, path: Path | None =
         metadata = {}
 
     allowed = front.get("allowed-tools", "")
-    if isinstance(allowed, list):  # some vendors write a YAML list; the spec says space-separated text
+    if isinstance(
+        allowed, list
+    ):  # some vendors write a YAML list; the spec says space-separated text
         allowed = " ".join(str(a) for a in allowed)
-        warnings.append("allowed-tools should be space-separated text, not a list")
+        warnings.append(
+            "allowed-tools should be space-separated text, not a list"
+        )
     allowed_tools = tuple(str(allowed).split()) if allowed else ()
 
     if dirname is not None and dirname != name:
-        warnings.append(f"name {name!r} does not match its directory {dirname!r}")
+        warnings.append(
+            f"name {name!r} does not match its directory {dirname!r}"
+        )
 
     return AgentSkill(
         name=name,
@@ -169,12 +192,23 @@ def parse_skill_md(text: str, *, dirname: str | None = None, path: Path | None =
 
 def load_skill_dir(path: Path) -> AgentSkill:
     """Loads `<path>/SKILL.md` (or `skill.md`). Raises SkillParseError / OSError."""
-    md = next((p for p in (path / "SKILL.md", path / "skill.md") if p.is_file() and not p.is_symlink()), None)
+    md = next(
+        (
+            p
+            for p in (path / "SKILL.md", path / "skill.md")
+            if p.is_file() and not p.is_symlink()
+        ),
+        None,
+    )
     if md is None:
         raise SkillParseError(f"no SKILL.md in {path}")
     if md.stat().st_size > MAX_SKILL_MD_BYTES:
-        raise SkillParseError(f"SKILL.md is larger than {MAX_SKILL_MD_BYTES // 1024} KiB")
-    return parse_skill_md(md.read_text(encoding="utf-8"), dirname=path.name, path=path)
+        raise SkillParseError(
+            f"SKILL.md is larger than {MAX_SKILL_MD_BYTES // 1024} KiB"
+        )
+    return parse_skill_md(
+        md.read_text(encoding="utf-8"), dirname=path.name, path=path
+    )
 
 
 def discover(root: Path) -> tuple[list[AgentSkill], list[dict[str, str]]]:
@@ -197,11 +231,19 @@ def discover(root: Path) -> tuple[list[AgentSkill], list[dict[str, str]]]:
             logger.warning("skipping skill at %s: %s", d, exc)
             rejected.append({"path": str(d), "reason": str(exc)})
 
-    for child in sorted(p for p in root.iterdir() if p.is_dir() and not p.is_symlink() and not p.name.startswith(".")):
+    for child in sorted(
+        p
+        for p in root.iterdir()
+        if p.is_dir() and not p.is_symlink() and not p.name.startswith(".")
+    ):
         if has_md(child):
             load(child)
             continue
-        for grandchild in sorted(p for p in child.iterdir() if p.is_dir() and not p.is_symlink() and not p.name.startswith(".")):
+        for grandchild in sorted(
+            p
+            for p in child.iterdir()
+            if p.is_dir() and not p.is_symlink() and not p.name.startswith(".")
+        ):
             if has_md(grandchild):
                 load(grandchild)
     return skills, rejected
@@ -240,4 +282,9 @@ def display_names(root: Path, skills: list[AgentSkill]) -> dict[str, str]:
     counts: dict[str, int] = {}
     for k in skills:
         counts[k.name] = counts.get(k.name, 0) + 1
-    return {skill_id(root, k): (k.name if counts[k.name] == 1 else f"{k.name}@{source_of(root, k)}") for k in skills}
+    return {
+        skill_id(root, k): (
+            k.name if counts[k.name] == 1 else f"{k.name}@{source_of(root, k)}"
+        )
+        for k in skills
+    }

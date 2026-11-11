@@ -27,8 +27,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
-SurfaceMaterial = Literal["matte", "metallic", "glossy", "glass", "emissive_circuit"]
-Outfit = Literal["none", "hoodie", "wizard_robe", "tshirt_jeans", "lab_coat", "vest", "armor_light"]
+SurfaceMaterial = Literal[
+    "matte", "metallic", "glossy", "glass", "emissive_circuit"
+]
 Footwear = Literal["none", "sneakers", "boots", "sandals"]
 
 _SOCKET_NAMES: tuple[str, ...] = (
@@ -67,7 +68,9 @@ class PaletteSpec(_Strict):
 
 
 class WardrobeSpec(_Strict):
-    outfit: Outfit = "none"
+    # A procedural garment from the wardrobe catalog, or an outfit model installed for
+    # the body (brain/appearance/models.py); validate_against_catalogs checks which.
+    outfit: str = "none"
     footwear: Footwear = "none"
 
 
@@ -135,18 +138,41 @@ def ensure_catalogs_seeded(deploy_dir: Path) -> Path:
 
 def _custom_template_exists(deploy_dir: Path, name: str) -> bool:
     custom_dir = deploy_dir / "assets" / "custom_templates"
-    return any((custom_dir / f"{name}{ext}").is_file() for ext in (".glb", ".blend"))
+    return any(
+        (custom_dir / f"{name}{ext}").is_file() for ext in (".glb", ".blend")
+    )
+
+
+def hold_path(deploy_dir: Path, name: str) -> Path:
+    """The marker that holds the installed model `name` back (see `hold_reason`)."""
+    return deploy_dir / "assets" / "custom_templates" / f"{name}.hold"
+
+
+def hold_reason(deploy_dir: Path, name: str) -> str | None:
+    """Why the installed model `name` is held back, or None if it is not. A held
+    model stays installed but is neither offered to the designer nor accepted for a
+    look (say, until its licence is checked); `models release` frees it."""
+    path = hold_path(deploy_dir, name)
+    if not path.is_file():
+        return None
+    return path.read_text().strip() or "held"
 
 
 def available_custom_templates(deploy_dir: Path) -> list[str]:
     """`custom:<name>` ids for every model file the user has dropped under
     `<deploy_dir>/assets/custom_templates/` -- offered to the designer
-    alongside the catalog templates."""
+    alongside the catalog templates. Models that are held back are left out."""
     custom_dir = deploy_dir / "assets" / "custom_templates"
     if not custom_dir.is_dir():
         return []
-    names = {p.stem for p in custom_dir.iterdir() if p.suffix in (".glb", ".blend")}
-    return [f"custom:{name}" for name in sorted(names)]
+    names = {
+        p.stem for p in custom_dir.iterdir() if p.suffix in (".glb", ".blend")
+    }
+    return [
+        f"custom:{name}"
+        for name in sorted(names)
+        if hold_reason(deploy_dir, name) is None
+    ]
 
 
 def validate_against_catalogs(look_spec: LookSpec, deploy_dir: Path) -> None:
@@ -154,7 +180,9 @@ def validate_against_catalogs(look_spec: LookSpec, deploy_dir: Path) -> None:
     for Tier 1, no on-disk custom template file) declares -- entirely
     without invoking Blender. Does not check proportion support or
     template/socket compatibility; see this module's docstring."""
-    templates = load_templates_catalog(deploy_dir / "assets" / "catalogs")["templates"]
+    templates = load_templates_catalog(deploy_dir / "assets" / "catalogs")[
+        "templates"
+    ]
     wardrobe_catalog = load_wardrobe_catalog(deploy_dir / "assets" / "catalogs")
 
     base_template = look_spec.base_template
@@ -165,25 +193,48 @@ def validate_against_catalogs(look_spec: LookSpec, deploy_dir: Path) -> None:
         )
     if base_template.startswith("custom:"):
         custom_name = base_template[len("custom:") :]
+        held = hold_reason(deploy_dir, custom_name)
+        if held is not None:
+            raise CatalogError(
+                f"custom base_template {base_template!r} is held back ({held}); "
+                f"release it with: python -m brain.appearance.models release {base_template}"
+            )
         if not _custom_template_exists(deploy_dir, custom_name):
             raise CatalogError(
                 f"custom base_template {base_template!r} has no file under "
                 f"{deploy_dir / 'assets' / 'custom_templates'} (expected {custom_name}.glb or .blend)"
             )
     elif base_template not in templates:
-        raise CatalogError(f"base_template {base_template!r} is not in templates_catalog.json: {sorted(templates)}")
+        raise CatalogError(
+            f"base_template {base_template!r} is not in templates_catalog.json: {sorted(templates)}"
+        )
 
-    if look_spec.wardrobe.outfit not in wardrobe_catalog["outfits"]:
-        raise CatalogError(f"wardrobe.outfit {look_spec.wardrobe.outfit!r} is not in wardrobe_catalog.json")
-    if look_spec.wardrobe.footwear not in wardrobe_catalog["footwear"]:
-        raise CatalogError(f"wardrobe.footwear {look_spec.wardrobe.footwear!r} is not in wardrobe_catalog.json")
+    # What this body can actually wear: the catalog plus accessory models on
+    # disk, minus sockets its rig lacks (brain/appearance/models.py).
+    from brain.appearance.models import effective_wardrobe_catalog
 
+    effective = effective_wardrobe_catalog(deploy_dir, base_template)
+    # A generic garment on an installed body is harmless (the generator says it was not
+    # layered, as before); an id that is neither a catalog garment nor a model made for
+    # this body is a mistake.
+    for field, key, value in (
+        ("outfit", "outfits", look_spec.wardrobe.outfit),
+        ("footwear", "footwear", look_spec.wardrobe.footwear),
+    ):
+        if value not in effective[key] and value not in wardrobe_catalog[key]:
+            raise CatalogError(
+                f"wardrobe.{field} {value!r} is not available for {base_template!r}; options: {effective[key]}"
+            )
+    wearable = effective["accessories"]
     for socket_name, item in look_spec.accessories.items():
         if item is None:
             continue
-        allowed = wardrobe_catalog["accessories"].get(socket_name, [])
+        allowed = wearable.get(socket_name, [])
         if item not in allowed:
-            raise CatalogError(f"accessories.{socket_name} {item!r} is not in wardrobe_catalog.json: {allowed}")
+            raise CatalogError(
+                f"accessories.{socket_name} {item!r} is not available for {base_template!r}; "
+                f"options for {socket_name} on this body: {allowed or 'none'}"
+            )
 
 
 def _deep_merge(base: dict, delta: dict) -> dict:
@@ -210,7 +261,12 @@ def example_look_spec() -> LookSpec:
         base_template="primitive_blob",
         has_face=True,
         seed=42,
-        palette=PaletteSpec(primary="#4A90D9", secondary="#FFFFFF", accent="#F5A623", emissive="#7FD1FF"),
+        palette=PaletteSpec(
+            primary="#4A90D9",
+            secondary="#FFFFFF",
+            accent="#F5A623",
+            emissive="#7FD1FF",
+        ),
         wardrobe=WardrobeSpec(),
     )
 
@@ -226,7 +282,13 @@ def look_summary(look_spec: LookSpec) -> str:
         parts.append(f"wearing {look_spec.wardrobe.outfit}")
     if look_spec.wardrobe.footwear != "none":
         parts.append(look_spec.wardrobe.footwear)
-    accessories = [item for _socket, item in look_spec.accessories.items() if item is not None]
+    accessories = [
+        item
+        for _socket, item in look_spec.accessories.items()
+        if item is not None
+    ]
     parts.extend(accessories)
-    parts.append(f"palette {look_spec.palette.primary}/{look_spec.palette.accent}")
+    parts.append(
+        f"palette {look_spec.palette.primary}/{look_spec.palette.accent}"
+    )
     return f"[Appearance: {', '.join(parts)}]"

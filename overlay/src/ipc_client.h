@@ -6,6 +6,7 @@
 
 #include <QByteArray>
 #include <QObject>
+#include <QQmlEngine>
 #include <QString>
 #include <QTimer>
 #include <QVariantList>
@@ -17,6 +18,8 @@ class QJsonObject;
 class IpcClient : public QObject
 {
     Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Created by main.cpp")
     Q_PROPERTY(bool connected READ isConnected NOTIFY connectedChanged)
 
 public:

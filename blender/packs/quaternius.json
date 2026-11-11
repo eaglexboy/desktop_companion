@@ -1,0 +1,64 @@
+{
+  "format": 1,
+  "name": "quaternius",
+  "description": "Quaternius' Universal Animation Library (CC0), the supported source: its clip names fill the base roles, and its sit sets are the ones a body sits down with.",
+  "source": "https://quaternius.com/",
+  "license": "CC0-1.0",
+  "roles": {
+    "idle": [
+      "Idle_Loop"
+    ],
+    "talk": [
+      "Idle_Talking_Loop"
+    ],
+    "run": [
+      "Sprint_Loop",
+      "Jog_Fwd_Loop"
+    ],
+    "walk": [
+      "Walk_Loop"
+    ],
+    "idle_alt": [
+      "Idle_FoldArms_Loop"
+    ],
+    "celebrate": [
+      "Dance_Loop"
+    ]
+  },
+  "sit_sets": [
+    {
+      "chair": false,
+      "clips": {
+        "sit_enter": [
+          "GroundSit_Enter"
+        ],
+        "sit_idle": [
+          "GroundSit_Idle",
+          "GroundSit_Idle_Loop"
+        ],
+        "sit_exit": [
+          "GroundSit_Exit"
+        ]
+      }
+    },
+    {
+      "chair": true,
+      "clips": {
+        "sit_enter": [
+          "Sitting_Enter"
+        ],
+        "sit_idle": [
+          "Sitting_Idle_Loop"
+        ],
+        "sit_exit": [
+          "Sitting_Exit"
+        ]
+      }
+    }
+  ],
+  "time_scale": {
+    "idle": 2.5,
+    "idle_alt": 2.5,
+    "sit_idle": 2.0
+  }
+}

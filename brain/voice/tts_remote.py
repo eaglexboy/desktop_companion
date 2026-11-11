@@ -42,10 +42,17 @@ def _read_voice_sample(config: TTSRemoteEntry) -> bytes | None:
 class TTSServeBackend(TTSBackend):
     def __init__(self, config: TTSRemoteEntry) -> None:
         self._config = config
-        self._http = httpx.AsyncClient(base_url=config.base_url, timeout=config.timeout_s)
+        self._http = httpx.AsyncClient(
+            base_url=config.base_url, timeout=config.timeout_s
+        )
 
     async def synthesize(
-        self, text: str, out_wav_path: Path, *, voice_id: str | None = None, params: dict[str, Any] | None = None
+        self,
+        text: str,
+        out_wav_path: Path,
+        *,
+        voice_id: str | None = None,
+        params: dict[str, Any] | None = None,
     ) -> None:
         # voice_id is an accommodation for a future voice-selection feature,
         # with no meaning for tts-serve today: each configured remote
@@ -90,11 +97,22 @@ class GenericOpenAITTSBackend(TTSBackend):
 
     def __init__(self, config: TTSRemoteEntry) -> None:
         self._config = config
-        headers = {"Authorization": f"Bearer {config.api_key}"} if config.api_key else {}
-        self._http = httpx.AsyncClient(base_url=config.base_url, timeout=config.timeout_s, headers=headers)
+        headers = (
+            {"Authorization": f"Bearer {config.api_key}"}
+            if config.api_key
+            else {}
+        )
+        self._http = httpx.AsyncClient(
+            base_url=config.base_url, timeout=config.timeout_s, headers=headers
+        )
 
     async def synthesize(
-        self, text: str, out_wav_path: Path, *, voice_id: str | None = None, params: dict[str, Any] | None = None
+        self,
+        text: str,
+        out_wav_path: Path,
+        *,
+        voice_id: str | None = None,
+        params: dict[str, Any] | None = None,
     ) -> None:
         # model/voice are mandatory per the OpenAI contract but have no
         # sane engine-agnostic default -- they must come from this entry's

@@ -15,6 +15,7 @@ __pycache__/
 overlay/build/
 overlay/CMakeFiles/
 overlay/CMakeCache.txt
+overlay/.qmlls.ini
 
 # Blender
 *.blend1

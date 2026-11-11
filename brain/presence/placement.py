@@ -42,7 +42,12 @@ class Rect:
         return self.y + self.h
 
     def overlaps(self, other: Rect) -> bool:
-        return self.x < other.right and self.right > other.x and self.y < other.bottom and self.bottom > other.y
+        return (
+            self.x < other.right
+            and self.right > other.x
+            and self.y < other.bottom
+            and self.bottom > other.y
+        )
 
 
 @dataclass(frozen=True)
@@ -64,10 +69,17 @@ class Placement:
     x: int
     y: int
     screen_name: str
-    hidden: bool = False  # true only when overlap is truly unavoidable (single fullscreen screen)
+    hidden: bool = (
+        False  # true only when overlap is truly unavoidable (single fullscreen screen)
+    )
 
 
-def is_own_window(window: WindowState, placement: Placement, avatar_size: tuple[int, int], tolerance: int = 4) -> bool:
+def is_own_window(
+    window: WindowState,
+    placement: Placement,
+    avatar_size: tuple[int, int],
+    tolerance: int = 4,
+) -> bool:
     """True if `window` is the avatar's own overlay surface rather than a user
     window: it sits exactly where we last placed the avatar and has exactly
     the avatar's size. Matching on geometry instead of a window class/name is
@@ -84,9 +96,14 @@ def is_own_window(window: WindowState, placement: Placement, avatar_size: tuple[
     )
 
 
-def _corner_candidates(screen: Rect, avatar_w: int, avatar_h: int, margin: int) -> list[tuple[int, int]]:
+def _corner_candidates(
+    screen: Rect, avatar_w: int, avatar_h: int, margin: int
+) -> list[tuple[int, int]]:
     return [
-        (screen.right - avatar_w - margin, screen.bottom - avatar_h - margin),  # bottom-right
+        (
+            screen.right - avatar_w - margin,
+            screen.bottom - avatar_h - margin,
+        ),  # bottom-right
         (screen.x + margin, screen.bottom - avatar_h - margin),  # bottom-left
         (screen.right - avatar_w - margin, screen.y + margin),  # top-right
         (screen.x + margin, screen.y + margin),  # top-left
@@ -99,7 +116,11 @@ def _primary_screen(screens: list[ScreenInfo]) -> ScreenInfo:
     return screens[0]
 
 
-def _migration_target(screens: list[ScreenInfo], exclude_name: str | None, affinity: DisplayAffinity) -> ScreenInfo | None:
+def _migration_target(
+    screens: list[ScreenInfo],
+    exclude_name: str | None,
+    affinity: DisplayAffinity,
+) -> ScreenInfo | None:
     """Picks the screen to migrate to when the window's own screen is
     unusable (maximized/colliding or fullscreen), honoring
     `display_affinity`. Falls back to any other screen if the affinity's
@@ -130,12 +151,18 @@ def choose_position(
         return Placement(x, y, screen.name)
 
     screen_by_name = {s.name: s for s in screens}
-    window_screen = screen_by_name.get(window.screen_name) if window.screen_name else None
+    window_screen = (
+        screen_by_name.get(window.screen_name) if window.screen_name else None
+    )
 
     if window.fullscreen:
-        target = _migration_target(screens, window.screen_name, display_affinity)
+        target = _migration_target(
+            screens, window.screen_name, display_affinity
+        )
         if target is not None:
-            x, y = _corner_candidates(target.rect, avatar_w, avatar_h, margin)[0]
+            x, y = _corner_candidates(target.rect, avatar_w, avatar_h, margin)[
+                0
+            ]
             return Placement(x, y, target.name)
         # only one screen and it's fullscreen: nothing left to do but tuck
         # into a corner and let the overlay itself fade/peek there.

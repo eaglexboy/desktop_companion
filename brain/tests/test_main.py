@@ -32,9 +32,19 @@ HAS_RHUBARB = shutil.which("rhubarb") is not None
 
 def _settings(tmp_path: Path, **overrides) -> Settings:
     fields = {
-        "storage": {"workspace_dir": str(tmp_path / "ws"), "deploy_dir": str(tmp_path / "deploy")},
-        "llm": {"local": {"base_url": "http://127.0.0.1:11434/v1", "model": "test-model"}},
-        "presence": {"dbus_service_name": ""},  # skip DesktopPresenceBridge -- no D-Bus dependency in these tests
+        "storage": {
+            "workspace_dir": str(tmp_path / "ws"),
+            "deploy_dir": str(tmp_path / "deploy"),
+        },
+        "llm": {
+            "local": {
+                "base_url": "http://127.0.0.1:11434/v1",
+                "model": "test-model",
+            }
+        },
+        "presence": {
+            "dbus_service_name": ""
+        },  # skip DesktopPresenceBridge -- no D-Bus dependency in these tests
         "voice": {"rhubarb_bin": shutil.which("rhubarb") or "rhubarb"},
     }
     fields.update(overrides)
@@ -43,7 +53,9 @@ def _settings(tmp_path: Path, **overrides) -> Settings:
 
 def _mock_chat_transport(reply_text: str) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"choices": [{"message": {"content": reply_text}}]})
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": reply_text}}]}
+        )
 
     return httpx.MockTransport(handler)
 
@@ -52,7 +64,9 @@ class _SilentWavTTSBackend(TTSBackend):
     """Writes a real, valid silent WAV -- so lipsync (real rhubarb, not
     faked) has genuine audio to run against, deterministically."""
 
-    async def synthesize(self, text, out_wav_path, *, voice_id=None, params=None) -> None:
+    async def synthesize(
+        self, text, out_wav_path, *, voice_id=None, params=None
+    ) -> None:
         out_wav_path.parent.mkdir(parents=True, exist_ok=True)
         with wave.open(str(out_wav_path), "wb") as wf:
             wf.setnchannels(1)
@@ -82,7 +96,9 @@ def client(tmp_path, monkeypatch):
     built_state = build_app_state(settings)
     _wire_fakes(built_state)
 
-    monkeypatch.setattr("brain.main.build_app_state", lambda *a, **kw: built_state)
+    monkeypatch.setattr(
+        "brain.main.build_app_state", lambda *a, **kw: built_state
+    )
     with TestClient(app) as c:
         yield c, built_state
 
@@ -123,7 +139,9 @@ def test_health_returns_200_with_documented_fields(client):
 @pytest.mark.skipif(not HAS_RHUBARB, reason="rhubarb binary not found on PATH")
 def test_chat_broadcasts_chat_response_and_speech_with_visemes(client):
     c, _state = client
-    with c.websocket_connect("/ws/overlay", headers={"host": "127.0.0.1:8765"}) as ws:
+    with c.websocket_connect(
+        "/ws/overlay", headers={"host": "127.0.0.1:8765"}
+    ) as ws:
         ws.send_json(_hello())
         ws.receive_json()  # welcome
 
@@ -145,10 +163,18 @@ def test_chat_broadcasts_chat_response_and_speech_with_visemes(client):
         assert speech["payload"]["chunk_seq"] == 0
         assert speech["payload"]["final"] is True
         assert speech["payload"]["audio_url"] == f"/audio/{utterance_id}_0.wav"
-        assert speech["payload"]["delivery"] in ("deadpan", "animated", "subdued", "explanatory")
+        assert speech["payload"]["delivery"] in (
+            "deadpan",
+            "animated",
+            "subdued",
+            "explanatory",
+        )
         # real rhubarb ran against a real silent WAV -- at least the rest viseme
         assert len(speech["payload"]["visemes"]) >= 1
-        assert all(v["shape_key"].startswith("viseme_") for v in speech["payload"]["visemes"])
+        assert all(
+            v["shape_key"].startswith("viseme_")
+            for v in speech["payload"]["visemes"]
+        )
         # The fake TTS wrote mono; by the time the chunk is announced the file
         # the overlay will fetch is stereo (same track on both channels).
         with wave.open(speech["payload"]["wav_path"], "rb") as announced:
@@ -158,7 +184,9 @@ def test_chat_broadcasts_chat_response_and_speech_with_visemes(client):
 
 def test_chat_speak_false_skips_speech_broadcast(client):
     c, _state = client
-    with c.websocket_connect("/ws/overlay", headers={"host": "127.0.0.1:8765"}) as ws:
+    with c.websocket_connect(
+        "/ws/overlay", headers={"host": "127.0.0.1:8765"}
+    ) as ws:
         ws.send_json(_hello())
         ws.receive_json()  # welcome
 
@@ -174,7 +202,10 @@ def test_chat_speak_false_skips_speech_broadcast(client):
         c.post("/chat", json={"text": "second message", "speak": False})
         second = ws.receive_json()
         assert second["type"] == "chat_response"
-        assert second["payload"]["utterance_id"] != chat_response["payload"]["utterance_id"]
+        assert (
+            second["payload"]["utterance_id"]
+            != chat_response["payload"]["utterance_id"]
+        )
 
 
 def test_chat_logs_interactions_to_personality_store(client):
@@ -186,19 +217,106 @@ def test_chat_logs_interactions_to_personality_store(client):
     assert "Hello there!" in texts
 
 
+def test_a_plain_request_to_become_an_installed_model_gets_the_changes_own_reply(
+    client, monkeypatch
+):
+    """The model is not told which models are installed, so it may answer that it has none: the
+    change is made all the same, and the user is told so rather than that."""
+    c, state = client
+    _wire_fakes(state, chat_reply="I don't have a model called mech Mike.")
+    asked = []
+
+    async def switch(request: str) -> str:
+        asked.append(request)
+        return "Switching to mech mike. Give me a minute to change."
+
+    monkeypatch.setattr(
+        state.evolution, "is_direct_look_request", lambda _t: True
+    )
+    monkeypatch.setattr(state.evolution, "change_appearance", switch)
+    c.post("/chat", json={"text": "Change to mech Mike model", "speak": False})
+    texts = [row["text"] for row in state.store.pending_interactions()]
+    assert asked == ["Change to mech Mike model"]
+    assert "Switching to mech mike. Give me a minute to change." in texts
+    assert "I don't have a model called mech Mike." not in texts
+
+
+def test_a_reply_that_says_it_is_switching_but_sends_no_action_makes_the_change(
+    client, monkeypatch
+):
+    """ "Now let's test the robot polygonal one" has no switch word, so it is not a direct request;
+    the model said it is switching and left the action out."""
+    c, state = client
+    _wire_fakes(
+        state,
+        chat_reply='{"say": "Switching to the polygonal robot.", "do": []}',
+    )
+    asked = []
+
+    async def switch(request: str) -> str:
+        asked.append(request)
+        return "Switching."
+
+    monkeypatch.setattr(
+        state.evolution, "is_direct_look_request", lambda _t: False
+    )
+    monkeypatch.setattr(
+        state.evolution,
+        "promised_look_change",
+        lambda user, reply: (
+            "robot polygonal"
+            if "polygonal" in user and "Switching" in reply
+            else None
+        ),
+    )
+    monkeypatch.setattr(state.evolution, "change_appearance", switch)
+    c.post(
+        "/chat",
+        json={"text": "Now let's test the robot polygonal one", "speak": False},
+    )
+    texts = [row["text"] for row in state.store.pending_interactions()]
+    assert asked == ["robot polygonal"]
+    assert (
+        "Switching to the polygonal robot." in texts
+    )  # its own words are kept
+
+
+def test_the_event_stream_ends_when_the_daemon_is_stopping(client):
+    """The status page's stream is open for as long as the page is, and uvicorn waits for it
+    before it stops: it ends the moment the daemon is told to stop."""
+    import brain.main as main
+
+    c, _state = client
+    main._stopping.set()
+    try:
+        with c.stream("GET", "/api/events?since=999999999") as response:
+            assert response.status_code == 200
+            assert (
+                list(response.iter_lines()) == []
+            )  # ended, with nothing more to say
+    finally:
+        main._stopping.clear()
+
+
 # --- synthetic WS golden path: hello -> welcome -> user_text_input -> chat_response + speech ---
 
 
 @pytest.mark.skipif(not HAS_RHUBARB, reason="rhubarb binary not found on PATH")
 def test_golden_path_user_text_input_over_websocket(client):
     c, _state = client
-    with c.websocket_connect("/ws/overlay", headers={"host": "127.0.0.1:8765"}) as ws:
+    with c.websocket_connect(
+        "/ws/overlay", headers={"host": "127.0.0.1:8765"}
+    ) as ws:
         ws.send_json(_hello())
         welcome = ws.receive_json()
         assert welcome["type"] == "welcome"
 
         ws.send_json(
-            {"type": "user_text_input", "timestamp": time.time(), "payload": {"text": "hello", "client_id": "desktop_primary"}}
+            {
+                "type": "user_text_input",
+                "timestamp": time.time(),
+                "payload": {"text": "hello", "client_id": "desktop_primary"},
+            }
         )
 
         chat_response = ws.receive_json()
@@ -217,7 +335,12 @@ def _valid_look_spec_payload() -> dict:
     return {
         "base_template": "primitive_blob",
         "has_face": True,
-        "palette": {"primary": "#4A90D9", "secondary": "#FFFFFF", "accent": "#F5A623", "emissive": "#7FD1FF"},
+        "palette": {
+            "primary": "#4A90D9",
+            "secondary": "#FFFFFF",
+            "accent": "#F5A623",
+            "emissive": "#7FD1FF",
+        },
         "wardrobe": {"outfit": "none", "footwear": "none"},
     }
 
@@ -225,18 +348,30 @@ def _valid_look_spec_payload() -> dict:
 def test_appearance_generate_accepts_valid_spec(client, monkeypatch):
     c, _state = client
 
-    async def fake_compile_and_publish(settings, look_spec, *, is_user_present, on_status=None):
+    async def fake_compile_and_publish(
+        settings, look_spec, *, is_user_present, on_status=None
+    ):
         from brain.appearance.blender_gen import CompileResult
 
-        return CompileResult(outcome="published", version=1, glb_path=Path("/tmp/x.glb"), manifest=None)
+        return CompileResult(
+            outcome="published",
+            version=1,
+            glb_path=Path("/tmp/x.glb"),
+            manifest=None,
+        )
 
     import brain.evolution as evolution_module
 
-    monkeypatch.setattr(evolution_module, "compile_and_publish", fake_compile_and_publish)
+    monkeypatch.setattr(
+        evolution_module, "compile_and_publish", fake_compile_and_publish
+    )
 
     response = c.post("/appearance/generate", json=_valid_look_spec_payload())
     assert response.status_code == 202
-    assert response.json() == {"status": "building", "task": "appearance_generation"}
+    assert response.json() == {
+        "status": "building",
+        "task": "appearance_generation",
+    }
 
 
 def test_appearance_generate_rejects_bad_catalog_value_with_422(client):
@@ -250,9 +385,13 @@ def test_appearance_generate_rejects_bad_catalog_value_with_422(client):
     assert response.status_code == 422
 
 
-def test_appearance_generate_rejects_malformed_spec_with_422_from_pydantic(client):
+def test_appearance_generate_rejects_malformed_spec_with_422_from_pydantic(
+    client,
+):
     c, _state = client
-    response = c.post("/appearance/generate", json={"base_template": "primitive_blob"})  # missing required fields
+    response = c.post(
+        "/appearance/generate", json={"base_template": "primitive_blob"}
+    )  # missing required fields
     assert response.status_code == 422
 
 
@@ -270,14 +409,32 @@ def test_appearance_revert_with_no_history_reports_error_status(client):
 def test_appearance_revert_rewrites_manifest_pointer(client):
     c, state = client
     build_json = {
-        "glb_filename": "look-v1.glb", "sha256": "a" * 64, "created_at": 1.0, "status": "ok", "seed": 42,
-        "evaluated_triangles": 100, "size_bytes": 20, "has_face": True, "speech_indicator_mode": "viseme_shapekeys",
-        "capabilities": {"has_head": True, "has_arms": False, "has_legs": False, "has_face": True},
-        "viseme_shape_keys": [], "animation_clips": [], "bounds": {"height_m": 1, "width_m": 1, "depth_m": 1},
+        "glb_filename": "look-v1.glb",
+        "sha256": "a" * 64,
+        "created_at": 1.0,
+        "status": "ok",
+        "seed": 42,
+        "evaluated_triangles": 100,
+        "size_bytes": 20,
+        "has_face": True,
+        "speech_indicator_mode": "viseme_shapekeys",
+        "capabilities": {
+            "has_head": True,
+            "has_arms": False,
+            "has_legs": False,
+            "has_face": True,
+        },
+        "viseme_shape_keys": [],
+        "animation_clips": [],
+        "bounds": {"height_m": 1, "width_m": 1, "depth_m": 1},
         "warnings": [],
     }
     manifest = append_version(None, build_json, _valid_look_spec_payload())
-    manifest = append_version(manifest, {**build_json, "glb_filename": "look-v2.glb"}, _valid_look_spec_payload())
+    manifest = append_version(
+        manifest,
+        {**build_json, "glb_filename": "look-v2.glb"},
+        _valid_look_spec_payload(),
+    )
     save_manifest(state.settings.deploy_dir, manifest)
     state.settings.current_dir.mkdir(parents=True, exist_ok=True)
     (state.settings.current_dir / "look-v1.glb").write_bytes(b"glTF-fake")
@@ -294,7 +451,11 @@ def test_reflect_with_nothing_pending(client):
     c, _state = client
     response = c.post("/reflect")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "notes_created": 0, "trait_deltas": {}}
+    assert response.json() == {
+        "status": "ok",
+        "notes_created": 0,
+        "trait_deltas": {},
+    }
 
 
 def test_reflect_applies_and_reports_real_deltas(client):
@@ -303,12 +464,19 @@ def test_reflect_applies_and_reports_real_deltas(client):
 
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.dumps(
-            {"trait_deltas": {"openness": 5}, "mood_deltas": {}, "memory_notes": ["likes novelty"]}
+            {
+                "trait_deltas": {"openness": 5},
+                "mood_deltas": {},
+                "memory_notes": ["likes novelty"],
+            }
         )
-        return httpx.Response(200, json={"choices": [{"message": {"content": payload}}]})
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": payload}}]}
+        )
 
     state.local_pool._entries[0].client._http = httpx.AsyncClient(
-        base_url="http://127.0.0.1:11434/v1", transport=httpx.MockTransport(handler)
+        base_url="http://127.0.0.1:11434/v1",
+        transport=httpx.MockTransport(handler),
     )
 
     response = c.post("/reflect")
@@ -356,10 +524,17 @@ def test_get_asset_serves_a_real_file(client):
 
 
 def test_split_sentences_splits_on_terminators_and_keeps_trailing_fragment():
-    from brain.main import split_sentences
+    from brain.pipeline import split_sentences
 
-    assert split_sentences("Hi there! How are you? Fine.") == ["Hi there!", "How are you?", "Fine."]
-    assert split_sentences("One. Two without terminator") == ["One.", "Two without terminator"]
+    assert split_sentences("Hi there! How are you? Fine.") == [
+        "Hi there!",
+        "How are you?",
+        "Fine.",
+    ]
+    assert split_sentences("One. Two without terminator") == [
+        "One.",
+        "Two without terminator",
+    ]
     assert split_sentences("Wait... what?!") == ["Wait...", "what?!"]
     assert split_sentences("...") == []
     assert split_sentences("") == []
@@ -369,19 +544,29 @@ def test_split_sentences_splits_on_terminators_and_keeps_trailing_fragment():
 def test_multi_sentence_reply_is_spoken_as_ordered_chunks(client):
     c, state = client
     _wire_fakes(state, chat_reply="First one. Second one! Third?")
-    with c.websocket_connect("/ws/overlay", headers={"host": "127.0.0.1:8765"}) as ws:
+    with c.websocket_connect(
+        "/ws/overlay", headers={"host": "127.0.0.1:8765"}
+    ) as ws:
         ws.send_json(_hello())
         ws.receive_json()  # welcome
 
-        utterance_id = c.post("/chat", json={"text": "hi", "speak": True}).json()["utterance_id"]
+        utterance_id = c.post(
+            "/chat", json={"text": "hi", "speak": True}
+        ).json()["utterance_id"]
         assert ws.receive_json()["type"] == "chat_response"
 
         chunks = [ws.receive_json()["payload"] for _ in range(3)]
 
     assert [ch["chunk_seq"] for ch in chunks] == [0, 1, 2]
     assert [ch["final"] for ch in chunks] == [False, False, True]
-    assert [ch["text"] for ch in chunks] == ["First one.", "Second one!", "Third?"]
-    assert [ch["audio_url"] for ch in chunks] == [f"/audio/{utterance_id}_{n}.wav" for n in range(3)]
+    assert [ch["text"] for ch in chunks] == [
+        "First one.",
+        "Second one!",
+        "Third?",
+    ]
+    assert [ch["audio_url"] for ch in chunks] == [
+        f"/audio/{utterance_id}_{n}.wav" for n in range(3)
+    ]
     assert {ch["utterance_id"] for ch in chunks} == {utterance_id}
 
 
@@ -390,7 +575,9 @@ def test_overlay_gets_current_placement_right_after_handshake(client):
 
     c, state = client
     state.last_presence = (None, [ScreenInfo("DP-1", Rect(0, 0, 1920, 1080))])
-    with c.websocket_connect("/ws/overlay", headers={"host": "127.0.0.1:8765"}) as ws:
+    with c.websocket_connect(
+        "/ws/overlay", headers={"host": "127.0.0.1:8765"}
+    ) as ws:
         ws.send_json(_hello())
         assert ws.receive_json()["type"] == "welcome"
         position = ws.receive_json()
@@ -402,7 +589,9 @@ def test_overlay_gets_current_placement_right_after_handshake(client):
 def test_no_set_position_after_handshake_when_no_presence_telemetry_yet(client):
     c, state = client
     assert state.last_presence is None
-    with c.websocket_connect("/ws/overlay", headers={"host": "127.0.0.1:8765"}) as ws:
+    with c.websocket_connect(
+        "/ws/overlay", headers={"host": "127.0.0.1:8765"}
+    ) as ws:
         ws.send_json(_hello())
         assert ws.receive_json()["type"] == "welcome"
         # nothing else is queued for a client that connected before any telemetry
@@ -410,12 +599,17 @@ def test_no_set_position_after_handshake_when_no_presence_telemetry_yet(client):
         assert ws.receive_json()["type"] == "chat_response"
 
 
-async def test_own_overlay_window_telemetry_does_not_make_the_avatar_flap(client):
-    from brain.main import _handle_presence_update
+async def test_own_overlay_window_telemetry_does_not_make_the_avatar_flap(
+    client,
+):
+    from brain.pipeline import _handle_presence_update
     from brain.presence.placement import Rect, ScreenInfo, WindowState
 
     _c, state = client
-    screens = [ScreenInfo("DP-3", Rect(2560, 0, 2560, 1440)), ScreenInfo("DP-2", Rect(0, 0, 2560, 1440))]
+    screens = [
+        ScreenInfo("DP-3", Rect(2560, 0, 2560, 1440)),
+        ScreenInfo("DP-2", Rect(0, 0, 2560, 1440)),
+    ]
     broadcasts: list[dict] = []
 
     async def fake_broadcast(event_type, payload):
@@ -431,13 +625,21 @@ async def test_own_overlay_window_telemetry_does_not_make_the_avatar_flap(client
 
     # The adapter now reports the overlay's own window at exactly that spot
     # (focused input bar). It must be ignored -- no new placement, no flip.
-    size = (state.settings.presence.avatar_width_px, state.settings.presence.avatar_height_px)
-    own = WindowState(Rect(placed.x, placed.y, *size), placed.screen_name, False, 1)
+    size = (
+        state.settings.presence.avatar_width_px,
+        state.settings.presence.avatar_height_px,
+    )
+    own = WindowState(
+        Rect(placed.x, placed.y, *size), placed.screen_name, False, 1
+    )
     for _ in range(5):
         await _handle_presence_update(state, own, screens)
     assert len(broadcasts) == 1
     assert state.last_placement == placed
-    assert state.last_presence == (None, screens)  # the bogus report was not remembered either
+    assert state.last_presence == (
+        None,
+        screens,
+    )  # the bogus report was not remembered either
 
     # A genuine user window still moves the avatar.
     user = WindowState(Rect(2560, 0, 2560, 1396), "DP-3", False, 1)
@@ -446,13 +648,17 @@ async def test_own_overlay_window_telemetry_does_not_make_the_avatar_flap(client
 
 
 @pytest.mark.skipif(not HAS_RHUBARB, reason="rhubarb binary not installed")
-async def test_speak_logs_backend_and_warns_when_piper_fallback_was_used(client, caplog):
-    from brain.main import _speak
+async def test_speak_logs_backend_and_warns_when_piper_fallback_was_used(
+    client, caplog
+):
+    from brain.pipeline import _speak
 
     _c, state = client
 
     class _Failing(TTSBackend):
-        async def synthesize(self, text, out_wav_path, *, voice_id=None, params=None) -> None:
+        async def synthesize(
+            self, text, out_wav_path, *, voice_id=None, params=None
+        ) -> None:
             raise RuntimeError("remote down")
 
     # one remote that always fails, with the (silent-WAV) fake as the Piper fallback
@@ -471,17 +677,21 @@ async def _noop_broadcast(event_type, payload):
     return None
 
 
-async def test_lipsync_overlaps_next_sentence_and_chunks_stay_in_order(client, monkeypatch):
+async def test_lipsync_overlaps_next_sentence_and_chunks_stay_in_order(
+    client, monkeypatch
+):
     import asyncio
 
-    import brain.main as main_module
+    import brain.pipeline as main_module
 
     _c, state = client
     events: list[str] = []
     broadcast_order: list[int] = []
 
     class _RecordingTTS(TTSBackend):
-        async def synthesize(self, text, out_wav_path, *, voice_id=None, params=None) -> None:
+        async def synthesize(
+            self, text, out_wav_path, *, voice_id=None, params=None
+        ) -> None:
             events.append(f"synth:{text}")
             await asyncio.sleep(0.01)
             out_wav_path.parent.mkdir(parents=True, exist_ok=True)
@@ -522,9 +732,13 @@ def test_reload_with_changed_volume_pushes_config_update(client):
     from brain.main import _apply_reloaded_settings
 
     c, state = client
-    with c.websocket_connect("/ws/overlay", headers={"host": "127.0.0.1:8765"}) as ws:
+    with c.websocket_connect(
+        "/ws/overlay", headers={"host": "127.0.0.1:8765"}
+    ) as ws:
         ws.send_json(_hello())
-        assert ws.receive_json()["payload"]["config"]["voice"] == {"volume": 1.0}
+        assert ws.receive_json()["payload"]["config"]["voice"] == {
+            "volume": 1.0
+        }
 
         reloaded = state.settings.model_copy(deep=True)
         reloaded.voice.tts.volume = 0.3
@@ -533,7 +747,10 @@ def test_reload_with_changed_volume_pushes_config_update(client):
         update = ws.receive_json()
         assert update["type"] == "config_update"
         assert update["payload"]["voice"] == {"volume": 0.3}
-        assert update["payload"]["presence"]["avatar_width_px"] == reloaded.presence.avatar_width_px
+        assert (
+            update["payload"]["presence"]["avatar_width_px"]
+            == reloaded.presence.avatar_width_px
+        )
     assert state.hub.settings.voice.tts.volume == 0.3
 
 
@@ -541,7 +758,9 @@ def test_reload_without_overlay_relevant_change_sends_nothing(client):
     from brain.main import _apply_reloaded_settings
 
     c, state = client
-    with c.websocket_connect("/ws/overlay", headers={"host": "127.0.0.1:8765"}) as ws:
+    with c.websocket_connect(
+        "/ws/overlay", headers={"host": "127.0.0.1:8765"}
+    ) as ws:
         ws.send_json(_hello())
         ws.receive_json()  # welcome
 
@@ -563,10 +782,17 @@ def _chat_with_reply(tmp_path, monkeypatch, reply: str):
     settings = _settings(tmp_path)
     built_state = build_app_state(settings)
     _wire_fakes(built_state, chat_reply=reply)
-    monkeypatch.setattr("brain.main.build_app_state", lambda *a, **kw: built_state)
+    monkeypatch.setattr(
+        "brain.main.build_app_state", lambda *a, **kw: built_state
+    )
     before = max((e["seq"] for e in bus.since(0)), default=0)
     with TestClient(app) as c:
-        assert c.post("/chat", json={"text": "hi there", "speak": False}).status_code == 200
+        assert (
+            c.post(
+                "/chat", json={"text": "hi there", "speak": False}
+            ).status_code
+            == 200
+        )
         # Read before the app shuts down (it closes the database on exit).
         saved = [
             dict(r)
@@ -578,22 +804,34 @@ def _chat_with_reply(tmp_path, monkeypatch, reply: str):
     return saved, [e for e in bus.since(before)]
 
 
-def test_raw_reply_is_emitted_and_saved_next_to_the_cleaned_text(tmp_path, monkeypatch):
-    saved, events = _chat_with_reply(tmp_path, monkeypatch, "*smiles* Hello there.")
+def test_raw_reply_is_emitted_and_saved_next_to_the_cleaned_text(
+    tmp_path, monkeypatch
+):
+    saved, events = _chat_with_reply(
+        tmp_path, monkeypatch, "*smiles* Hello there."
+    )
 
     raw_events = [e for e in events if e["type"] == "reply.raw"]
     assert [e["data"]["text"] for e in raw_events] == ["*smiles* Hello there."]
     said = [e for e in events if e["type"] == "turn.reply"]
-    assert said and said[-1]["data"]["text"] == "Hello there."  # cleaned: the stage direction is not spoken
+    assert (
+        said and said[-1]["data"]["text"] == "Hello there."
+    )  # cleaned: the stage direction is not spoken
 
     assistant = [r for r in saved if r["role"] == "assistant"]
-    assert [(r["text"], r["raw"]) for r in assistant] == [("Hello there.", "*smiles* Hello there.")]
+    assert [(r["text"], r["raw"]) for r in assistant] == [
+        ("Hello there.", "*smiles* Hello there.")
+    ]
     assert [r["raw"] for r in saved if r["role"] == "user"] == [None]
 
 
-def test_raw_reply_event_comes_before_the_turns_final_reply(tmp_path, monkeypatch):
+def test_raw_reply_event_comes_before_the_turns_final_reply(
+    tmp_path, monkeypatch
+):
     _saved, events = _chat_with_reply(tmp_path, monkeypatch, "Hello there.")
-    order = [e["type"] for e in events if e["type"] in ("reply.raw", "turn.reply")]
+    order = [
+        e["type"] for e in events if e["type"] in ("reply.raw", "turn.reply")
+    ]
     assert order == ["reply.raw", "turn.reply"]
 
 
@@ -603,15 +841,25 @@ def _install_pdf_skill(state, *, scripts: bool = False):
     skills_dir = state.settings.skills_dir
     src = skills_dir.parent / "src" / "pdf-tools"
     src.mkdir(parents=True, exist_ok=True)
-    (src / "SKILL.md").write_text("---\nname: pdf-tools\ndescription: Extract text from PDFs. Use for PDFs.\n---\nbody\n")
+    (src / "SKILL.md").write_text(
+        "---\nname: pdf-tools\ndescription: Extract text from PDFs. Use for PDFs.\n---\nbody\n"
+    )
     if scripts:
         (src / "scripts").mkdir(exist_ok=True)
         (src / "scripts" / "run.sh").write_text("echo hi\n")
-    assert install(src, skills_dir, source="example", commit="abc12345", category="docs/pdf").ok
+    assert install(
+        src,
+        skills_dir,
+        source="example",
+        commit="abc12345",
+        category="docs/pdf",
+    ).ok
     return skills_dir
 
 
-def test_api_skills_lists_installed_agent_skills_with_provenance_and_rejections(client):
+def test_api_skills_lists_installed_agent_skills_with_provenance_and_rejections(
+    client,
+):
     c, state = client
     skills_dir = _install_pdf_skill(state, scripts=True)
     (skills_dir / "broken").mkdir()
@@ -619,40 +867,88 @@ def test_api_skills_lists_installed_agent_skills_with_provenance_and_rejections(
 
     body = c.get("/api/skills").json()
     (k,) = body["installed"]
-    assert (k["id"], k["name"], k["status"], k["has_scripts"]) == ("example/pdf-tools", "pdf-tools", "inert", False)
-    assert (k["tier"], k["enabled"], k["pinned"], k["exposure"]) == ("flagged", False, False, "absent")  # imports start off
-    assert k["provenance"]["commit"] == "abc12345" and k["provenance"]["category"] == "docs/pdf"
-    assert k["provenance"]["scripts_in_source"] is True and k["provenance"]["scripts_installed"] is False
+    assert (k["id"], k["name"], k["status"], k["has_scripts"]) == (
+        "example/pdf-tools",
+        "pdf-tools",
+        "inert",
+        False,
+    )
+    assert (k["tier"], k["enabled"], k["pinned"], k["exposure"]) == (
+        "flagged",
+        False,
+        False,
+        "absent",
+    )  # imports start off
+    assert (
+        k["provenance"]["commit"] == "abc12345"
+        and k["provenance"]["category"] == "docs/pdf"
+    )
+    assert (
+        k["provenance"]["scripts_in_source"] is True
+        and k["provenance"]["scripts_installed"] is False
+    )
     assert [r["path"].endswith("broken") for r in body["rejected"]] == [True]
     assert body["skills"]  # the typed actions are unaffected
-    assert body["budget"]["in_prompt"] is False and body["budget"]["installed"] == 1
+    assert (
+        body["budget"]["in_prompt"] is False
+        and body["budget"]["installed"] == 1
+    )
 
 
-def test_enabling_over_the_api_needs_confirmation_and_flagged_skills_need_the_name_typed(client):
+def test_enabling_over_the_api_needs_confirmation_and_flagged_skills_need_the_name_typed(
+    client,
+):
     c, state = client
     _install_pdf_skill(state, scripts=True)  # scripts make it flagged
-    post = lambda **kw: c.post("/api/skills/state", json={"skill": "pdf-tools", **kw})
+    post = lambda **kw: c.post(
+        "/api/skills/state", json={"skill": "pdf-tools", **kw}
+    )
 
-    assert post(enabled=True).status_code == 409                                     # not confirmed
-    assert post(enabled=True, confirmed=True).status_code == 409                     # flagged: name not typed
-    assert post(enabled=True, confirmed=True, confirm_text="yes").status_code == 409
-    assert post(pinned=True).status_code == 409                                      # cannot pin a disabled skill
-    assert post(enabled=True, confirmed=True, confirm_text="pdf-tools").status_code == 200
+    assert post(enabled=True).status_code == 409  # not confirmed
+    assert (
+        post(enabled=True, confirmed=True).status_code == 409
+    )  # flagged: name not typed
+    assert (
+        post(enabled=True, confirmed=True, confirm_text="yes").status_code
+        == 409
+    )
+    assert post(pinned=True).status_code == 409  # cannot pin a disabled skill
+    assert (
+        post(enabled=True, confirmed=True, confirm_text="pdf-tools").status_code
+        == 200
+    )
     assert post(pinned=True).status_code == 200
     k = c.get("/api/skills").json()["installed"][0]
-    assert (k["enabled"], k["pinned"], k["exposure"], k["changed_by"]) == (True, True, "stub", "api")
+    assert (k["enabled"], k["pinned"], k["exposure"], k["changed_by"]) == (
+        True,
+        True,
+        "stub",
+        "api",
+    )
     assert k["stub_tokens"] > 0
-    assert post(enabled=False).status_code == 200                                    # disabling needs no confirmation
+    assert (
+        post(enabled=False).status_code == 200
+    )  # disabling needs no confirmation
     k = c.get("/api/skills").json()["installed"][0]
-    assert (k["enabled"], k["pinned"]) == (False, False)                             # and un-pins
+    assert (k["enabled"], k["pinned"]) == (False, False)  # and un-pins
 
 
 def test_nothing_the_model_can_do_changes_skill_state(client):
     """Invariant 3: enabling is the user's act. The model reaches skills only through the registry."""
     _c, state = client
     names = {s.name for s in state.skills.enabled}
-    assert names.isdisjoint({"enable_skill", "disable_skill", "pin_skill", "skill_state", "use_skill"})
-    assert not any("skill_state" in repr(s.handler) for s in state.skills.enabled)
+    assert names.isdisjoint(
+        {
+            "enable_skill",
+            "disable_skill",
+            "pin_skill",
+            "skill_state",
+            "use_skill",
+        }
+    )
+    assert not any(
+        "skill_state" in repr(s.handler) for s in state.skills.enabled
+    )
 
 
 def test_api_status_works_before_any_avatar_manifest_exists(client):
@@ -660,14 +956,19 @@ def test_api_status_works_before_any_avatar_manifest_exists(client):
     c, _state = client
     r = c.get("/api/status")
     assert r.status_code == 200
-    assert r.json()["look"]["current_version"] is None and r.json()["look"]["versions"] == 0
+    assert (
+        r.json()["look"]["current_version"] is None
+        and r.json()["look"]["versions"] == 0
+    )
 
 
 # --- return-from-away greeting ----------------------------------------------
 
 
-async def _transition(state, old, new, monkeypatch) -> tuple[list[str], list[str]]:
-    from brain.main import _handle_presence_transition
+async def _transition(
+    state, old, new, monkeypatch
+) -> tuple[list[str], list[str]]:
+    from brain.pipeline import _handle_presence_transition
 
     gestures: list[str] = []
     spoken: list[str] = []
@@ -680,31 +981,46 @@ async def _transition(state, old, new, monkeypatch) -> tuple[list[str], list[str
         spoken.append(text)
 
     state.hub.broadcast = fake_broadcast
-    monkeypatch.setattr("brain.main._speak", fake_speak)
+    monkeypatch.setattr(
+        type(state.hub), "connected_client_ids", ["desktop_primary"]
+    )
+    monkeypatch.setattr("brain.pipeline._speak", fake_speak)
     await _handle_presence_transition(state, old, new)
     return gestures, spoken
 
 
-async def test_returning_from_away_greets_with_wave_and_speech(client, monkeypatch):
+async def test_returning_from_away_greets_with_wave_and_speech(
+    client, monkeypatch
+):
     from brain.presence.desktop_bridge import PresenceState
 
     _c, state = client
-    gestures, spoken = await _transition(state, PresenceState.AWAY, PresenceState.ACTIVE, monkeypatch)
+    gestures, spoken = await _transition(
+        state, PresenceState.AWAY, PresenceState.ACTIVE, monkeypatch
+    )
     assert gestures == ["greet"]
     assert len(spoken) == 1
     assert state.store.get_agent_state("last_greeting_timestamp") is not None
 
 
-async def test_greeting_respects_cooldown_and_idle_is_not_a_return(client, monkeypatch):
+async def test_greeting_respects_cooldown_and_idle_is_not_a_return(
+    client, monkeypatch
+):
     from brain.presence.desktop_bridge import PresenceState
 
     _c, state = client
-    await _transition(state, PresenceState.AWAY, PresenceState.ACTIVE, monkeypatch)
-    _g, spoken = await _transition(state, PresenceState.AWAY, PresenceState.ACTIVE, monkeypatch)
+    await _transition(
+        state, PresenceState.AWAY, PresenceState.ACTIVE, monkeypatch
+    )
+    _g, spoken = await _transition(
+        state, PresenceState.AWAY, PresenceState.ACTIVE, monkeypatch
+    )
     assert spoken == []  # inside greet_cooldown_s
 
     state.store.set_agent_state("last_greeting_timestamp", None)
-    _g, spoken = await _transition(state, PresenceState.IDLE, PresenceState.ACTIVE, monkeypatch)
+    _g, spoken = await _transition(
+        state, PresenceState.IDLE, PresenceState.ACTIVE, monkeypatch
+    )
     assert spoken == []  # idle -> active is not a login
 
 
@@ -713,5 +1029,99 @@ async def test_greeting_can_be_disabled(client, monkeypatch):
 
     _c, state = client
     state.settings.presence.greet_on_return = False
-    gestures, spoken = await _transition(state, PresenceState.AWAY, PresenceState.ACTIVE, monkeypatch)
+    gestures, spoken = await _transition(
+        state, PresenceState.AWAY, PresenceState.ACTIVE, monkeypatch
+    )
     assert gestures == [] and spoken == []
+
+
+async def test_greeting_waits_for_overlay_then_speaks(client, monkeypatch):
+    from brain.presence.desktop_bridge import PresenceState
+
+    _c, state = client
+    calls = {"n": 0}
+
+    def late_client(_self):
+        calls["n"] += 1
+        return [] if calls["n"] < 3 else ["desktop_primary"]
+
+    async def fast_sleep(_s):
+        return None
+
+    _g, spoken = await _transition(
+        state, PresenceState.AWAY, PresenceState.ACTIVE, monkeypatch
+    )
+    state.settings.presence.greet_cooldown_s = 0
+    monkeypatch.setattr(
+        type(state.hub), "connected_client_ids", property(late_client)
+    )
+    monkeypatch.setattr("brain.pipeline.asyncio.sleep", fast_sleep)
+    from brain.pipeline import _handle_presence_transition
+
+    await _handle_presence_transition(
+        state, PresenceState.AWAY, PresenceState.ACTIVE
+    )
+    assert calls["n"] >= 3 and state.pending_greeting is None
+
+
+async def test_greeting_held_without_overlay_and_delivered_on_connect(
+    client, monkeypatch
+):
+    from brain.pipeline import (
+        _deliver_pending_greeting,
+        _handle_presence_transition,
+    )
+    from brain.presence.desktop_bridge import PresenceState
+
+    _c, state = client
+    spoken: list[str] = []
+
+    async def fake_speak(_state, text, **_kw):
+        spoken.append(text)
+
+    async def noop_broadcast(*_a, **_k):
+        return None
+
+    state.hub.broadcast = noop_broadcast
+    monkeypatch.setattr(type(state.hub), "connected_client_ids", [])
+    monkeypatch.setattr("brain.pipeline._speak", fake_speak)
+    monkeypatch.setattr("brain.pipeline._GREETING_CLIENT_WAIT_S", 0.0)
+    state.store.set_agent_state("last_greeting_timestamp", None)
+
+    await _handle_presence_transition(
+        state, PresenceState.AWAY, PresenceState.ACTIVE
+    )
+    assert spoken == [] and state.pending_greeting is not None
+    assert (
+        state.store.get_agent_state("last_greeting_timestamp") is None
+    )  # cooldown not spent
+
+    task = _deliver_pending_greeting(state)
+    assert task is not None
+    await task
+    assert len(spoken) == 1 and state.pending_greeting is None
+    assert state.store.get_agent_state("last_greeting_timestamp") is not None
+
+
+async def test_stale_held_greeting_is_dropped(client):
+    import time
+    from brain.pipeline import _deliver_pending_greeting
+
+    _c, state = client
+    state.pending_greeting = ("Hey, you're back!", time.time() - 10_000)
+    assert _deliver_pending_greeting(state) is None
+    assert state.pending_greeting is None
+
+
+def test_mood_label_names_what_the_overlay_acts_out():
+    from brain.personality.mood_label import mood_label
+
+    assert mood_label({}) == "neutral"
+    assert mood_label({"valence": 50, "energy": 50, "stress": 50}) == "neutral"
+    assert mood_label({"valence": 20, "energy": 90, "stress": 10}) == "sad"
+    assert mood_label({"valence": 50, "energy": 20, "stress": 50}) == "bored"
+    assert mood_label({"valence": 80, "energy": 50, "stress": 20}) == "content"
+    assert mood_label({"valence": 50, "energy": 80, "stress": 50}) == "curious"
+    assert (
+        mood_label({"valence": 10, "energy": 10, "stress": 90}) == "fidget"
+    )  # stress first

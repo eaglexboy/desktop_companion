@@ -65,7 +65,7 @@ designing -> coding (attempt n/3) -> building -> done | failed
 ### 3.4 Open questions
 
 * Is `bwrap` available inside every supported install (it is on the reference machine), and does the Blender binary location need extra read-only binds when it is not under `/usr`?
-* How should the build-time budget interact with the 120 s `BUILD_TIMEOUT_S` when the model is slow, given that LLM time is outside that timeout?
+* How should the build-time budget interact with the 160 s `BUILD_TIMEOUT_S` when the model is slow, given that LLM time is outside that timeout?
 * Should a generated body be offered for sharing/export, and if so, how is a script from elsewhere re-vetted?
 
 ## 4. What V1 ships (groundwork only)

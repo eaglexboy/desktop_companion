@@ -4,7 +4,7 @@ import { esc } from "./util.js";
 
 // A word-level LCS table is O(n*m); replies are a few hundred words, so this
 // only guards against a runaway generation freezing the page.
-const MAX_WORDS = 1500;
+const MAX_WORDS = 1_500;
 
 const words = (s) =>
   String(s ?? "")
