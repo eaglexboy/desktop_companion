@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "name": "toon_basic",
+  "signature": [
+    "Hips",
+    "Abdomen",
+    "Torso",
+    "Shoulder.L",
+    "UpperArm.L",
+    "UpperLeg.L"
+  ],
+  "bones": {
+    "Hips": "pelvis",
+    "Abdomen": "spine_01",
+    "Torso": "spine_03",
+    "Neck": "neck_01",
+    "Head": "Head",
+    "Shoulder.L": "clavicle_l",
+    "Shoulder.R": "clavicle_r",
+    "UpperArm.L": "upperarm_l",
+    "UpperArm.R": "upperarm_r",
+    "LowerArm.L": "lowerarm_l",
+    "LowerArm.R": "lowerarm_r",
+    "Fist.L": "hand_l",
+    "Fist.R": "hand_r",
+    "UpperLeg.L": "thigh_l",
+    "UpperLeg.R": "thigh_r",
+    "LowerLeg.L": "calf_l",
+    "LowerLeg.R": "calf_r"
+  }
+}

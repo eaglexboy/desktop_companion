@@ -39,7 +39,9 @@ class _ScriptedBackend(TTSBackend):
         self.fails = fails
         self.calls: list[str] = []
 
-    async def synthesize(self, text, out_wav_path, *, voice_id=None, params=None) -> None:
+    async def synthesize(
+        self, text, out_wav_path, *, voice_id=None, params=None
+    ) -> None:
         self.calls.append(text)
         if self.fails:
             raise RuntimeError("synthesis failed")
@@ -101,34 +103,55 @@ async def test_pool_skips_a_remote_still_in_cooldown(tmp_path):
     local = _ScriptedBackend()
     pool = TTSPool([("remote-1", remote)], local, cooldown_s=9999)
 
-    await pool.synthesize("first", tmp_path / "a.wav")  # fails, cools down, falls to local
+    await pool.synthesize(
+        "first", tmp_path / "a.wav"
+    )  # fails, cools down, falls to local
     assert len(remote.calls) == 1
-    await pool.synthesize("second", tmp_path / "b.wav")  # remote skipped this time
+    await pool.synthesize(
+        "second", tmp_path / "b.wav"
+    )  # remote skipped this time
     assert len(remote.calls) == 1  # not retried while cooling down
     assert local.calls == ["first", "second"]
 
 
-async def test_pool_logs_a_warning_when_a_remote_fails_and_piper_takes_over(tmp_path, caplog):
+async def test_pool_logs_a_warning_when_a_remote_fails_and_piper_takes_over(
+    tmp_path, caplog
+):
     class _TimeoutBackend(TTSBackend):
-        async def synthesize(self, text, out_wav_path, *, voice_id=None, params=None) -> None:
-            raise httpx.ReadTimeout("")  # str(exc) is "" -- the log must still say what happened
+        async def synthesize(
+            self, text, out_wav_path, *, voice_id=None, params=None
+        ) -> None:
+            raise httpx.ReadTimeout(
+                ""
+            )  # str(exc) is "" -- the log must still say what happened
 
     pool = TTSPool([("vox", _TimeoutBackend())], _ScriptedBackend())
     with caplog.at_level("INFO", logger="deskmate.voice.tts"):
         assert await pool.synthesize("hello", tmp_path / "a.wav") == "local"
     failure = [r for r in caplog.records if r.levelname == "WARNING"]
-    assert failure and "'vox'" in failure[0].getMessage() and "ReadTimeout" in failure[0].getMessage()
+    assert (
+        failure
+        and "'vox'" in failure[0].getMessage()
+        and "ReadTimeout" in failure[0].getMessage()
+    )
 
 
-async def test_pool_logs_cooldown_when_every_remote_is_skipped(tmp_path, caplog):
+async def test_pool_logs_cooldown_when_every_remote_is_skipped(
+    tmp_path, caplog
+):
     flaky = _ScriptedBackend(fails=True)
     pool = TTSPool([("vox", flaky)], _ScriptedBackend(), cooldown_s=60.0)
-    await pool.synthesize("first", tmp_path / "a.wav")  # fails once -> cooldown starts
+    await pool.synthesize(
+        "first", tmp_path / "a.wav"
+    )  # fails once -> cooldown starts
     caplog.clear()
     with caplog.at_level("INFO", logger="deskmate.voice.tts"):
         assert await pool.synthesize("second", tmp_path / "b.wav") == "local"
     assert flaky.calls == ["first"]  # skipped, not retried
-    assert any("cooling down" in r.getMessage() and "local Piper" in r.getMessage() for r in caplog.records)
+    assert any(
+        "cooling down" in r.getMessage() and "local Piper" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_pool_has_remote_reflects_configuration():
@@ -146,7 +169,10 @@ def test_pool_is_empty_only_when_nothing_configured():
 
 
 def _piper_config(**overrides) -> TTSLocalConfig:
-    fields = {"voice_model_path": "voice.onnx", "voice_config_path": "voice.onnx.json"}
+    fields = {
+        "voice_model_path": "voice.onnx",
+        "voice_config_path": "voice.onnx.json",
+    }
     fields.update(overrides)
     return TTSLocalConfig.model_validate(fields)
 
@@ -154,7 +180,9 @@ def _piper_config(**overrides) -> TTSLocalConfig:
 @pytest.mark.asyncio
 async def test_piper_missing_binary_raises_clear_error(tmp_path):
     (tmp_path / "voice.onnx").write_bytes(b"fake")
-    backend = PiperTTSBackend(_piper_config(), tmp_path, piper_bin="/definitely/not/a/real/piper")
+    backend = PiperTTSBackend(
+        _piper_config(), tmp_path, piper_bin="/definitely/not/a/real/piper"
+    )
     with pytest.raises(RuntimeError, match="not found"):
         await backend.synthesize("hello", tmp_path / "out.wav")
 
@@ -173,9 +201,15 @@ async def test_piper_resolves_voice_id_override_when_file_exists(tmp_path):
     backend = PiperTTSBackend(_piper_config(), tmp_path, piper_bin="piper")
 
     assert backend._resolve_voice_path(None) == tmp_path / "voice.onnx"
-    assert backend._resolve_voice_path("piper:alt_voice") == tmp_path / "alt_voice.onnx"
+    assert (
+        backend._resolve_voice_path("piper:alt_voice")
+        == tmp_path / "alt_voice.onnx"
+    )
     # named but missing -> falls back to the configured default rather than erroring
-    assert backend._resolve_voice_path("piper:nonexistent") == tmp_path / "voice.onnx"
+    assert (
+        backend._resolve_voice_path("piper:nonexistent")
+        == tmp_path / "voice.onnx"
+    )
 
 
 @pytest.mark.asyncio
@@ -198,7 +232,9 @@ async def test_piper_passes_params_as_cli_flags(tmp_path, monkeypatch):
     import asyncio
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    await backend.synthesize("hello", tmp_path / "out.wav", params={"length_scale": 1.2})
+    await backend.synthesize(
+        "hello", tmp_path / "out.wav", params={"length_scale": 1.2}
+    )
 
     assert "--length_scale" in captured["args"]
     assert "1.2" in captured["args"]
@@ -216,7 +252,12 @@ async def test_real_piper_synthesis_produces_wav(tmp_path):
             "to a real .onnx voice model's path to run this test"
         )
     backend = PiperTTSBackend(
-        TTSLocalConfig.model_validate({"voice_model_path": voice_path.name, "voice_config_path": f"{voice_path.name}.json"}),
+        TTSLocalConfig.model_validate(
+            {
+                "voice_model_path": voice_path.name,
+                "voice_config_path": f"{voice_path.name}.json",
+            }
+        ),
         voice_path.parent,
     )
     out_wav = tmp_path / "out.wav"
@@ -256,7 +297,9 @@ async def test_tts_serve_decodes_and_writes_real_response_shape(tmp_path):
         )
 
     backend = TTSServeBackend(_tts_serve_entry())
-    backend._http = httpx.AsyncClient(base_url="http://testserver", transport=_mock_transport(handler))
+    backend._http = httpx.AsyncClient(
+        base_url="http://testserver", transport=_mock_transport(handler)
+    )
 
     out_wav = tmp_path / "out.wav"
     await backend.synthesize("Hello there", out_wav)
@@ -274,14 +317,31 @@ async def test_tts_serve_merges_config_and_call_params(tmp_path):
 
         captured_payload.update(json.loads(request.content))
         encoded = base64.b64encode(b"x").decode()
-        return httpx.Response(200, json={"audio_base64": encoded, "sample_rate": 1, "seed": 1, "time_used": 0.0, "rtf": None})
+        return httpx.Response(
+            200,
+            json={
+                "audio_base64": encoded,
+                "sample_rate": 1,
+                "seed": 1,
+                "time_used": 0.0,
+                "rtf": None,
+            },
+        )
 
     entry = _tts_serve_entry(params={"normalize": True})
     backend = TTSServeBackend(entry)
-    backend._http = httpx.AsyncClient(base_url="http://testserver", transport=_mock_transport(handler))
+    backend._http = httpx.AsyncClient(
+        base_url="http://testserver", transport=_mock_transport(handler)
+    )
 
-    await backend.synthesize("hi", tmp_path / "out.wav", params={"language": "en"})
-    assert captured_payload == {"text": "hi", "normalize": True, "language": "en"}
+    await backend.synthesize(
+        "hi", tmp_path / "out.wav", params={"language": "en"}
+    )
+    assert captured_payload == {
+        "text": "hi",
+        "normalize": True,
+        "language": "en",
+    }
 
 
 @pytest.mark.asyncio
@@ -290,7 +350,9 @@ async def test_tts_serve_raises_on_http_error(tmp_path):
         return httpx.Response(422, json={"detail": "unknown field"})
 
     backend = TTSServeBackend(_tts_serve_entry())
-    backend._http = httpx.AsyncClient(base_url="http://testserver", transport=_mock_transport(handler))
+    backend._http = httpx.AsyncClient(
+        base_url="http://testserver", transport=_mock_transport(handler)
+    )
 
     with pytest.raises(httpx.HTTPStatusError):
         await backend.synthesize("hi", tmp_path / "out.wav")
@@ -302,13 +364,17 @@ async def test_tts_serve_health_check(tmp_path):
         return httpx.Response(200)
 
     backend = TTSServeBackend(_tts_serve_entry())
-    backend._http = httpx.AsyncClient(base_url="http://testserver", transport=_mock_transport(ok_handler))
+    backend._http = httpx.AsyncClient(
+        base_url="http://testserver", transport=_mock_transport(ok_handler)
+    )
     assert await backend.health_check() is True
 
     def fail_handler(request):
         return httpx.Response(500)
 
-    backend._http = httpx.AsyncClient(base_url="http://testserver", transport=_mock_transport(fail_handler))
+    backend._http = httpx.AsyncClient(
+        base_url="http://testserver", transport=_mock_transport(fail_handler)
+    )
     assert await backend.health_check() is False
 
 
@@ -341,7 +407,9 @@ async def test_generic_openai_writes_raw_response_bytes(tmp_path):
     entry = _openai_entry(api_key="secret-key")
     backend = GenericOpenAITTSBackend(entry)
     backend._http = httpx.AsyncClient(
-        base_url="http://testserver", headers={"Authorization": "Bearer secret-key"}, transport=_mock_transport(handler)
+        base_url="http://testserver",
+        headers={"Authorization": "Bearer secret-key"},
+        transport=_mock_transport(handler),
     )
 
     out_wav = tmp_path / "out.wav"
@@ -356,14 +424,20 @@ async def test_generic_openai_writes_raw_response_bytes(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_generic_openai_lets_call_params_override_response_format(tmp_path):
+async def test_generic_openai_lets_call_params_override_response_format(
+    tmp_path,
+):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"mp3-bytes")
 
     backend = GenericOpenAITTSBackend(_openai_entry())
-    backend._http = httpx.AsyncClient(base_url="http://testserver", transport=_mock_transport(handler))
+    backend._http = httpx.AsyncClient(
+        base_url="http://testserver", transport=_mock_transport(handler)
+    )
 
-    await backend.synthesize("hi", tmp_path / "out.mp3", params={"response_format": "mp3"})
+    await backend.synthesize(
+        "hi", tmp_path / "out.mp3", params={"response_format": "mp3"}
+    )
     # no assertion error means setdefault correctly didn't clobber the override;
     # exercised fully by test_generic_openai_writes_raw_response_bytes's payload check
 
@@ -372,8 +446,12 @@ async def test_generic_openai_lets_call_params_override_response_format(tmp_path
 
 
 def test_build_remote_tts_backend_dispatches_on_provider_type():
-    assert isinstance(build_remote_tts_backend(_tts_serve_entry()), TTSServeBackend)
-    assert isinstance(build_remote_tts_backend(_openai_entry()), GenericOpenAITTSBackend)
+    assert isinstance(
+        build_remote_tts_backend(_tts_serve_entry()), TTSServeBackend
+    )
+    assert isinstance(
+        build_remote_tts_backend(_openai_entry()), GenericOpenAITTSBackend
+    )
 
 
 def test_build_remote_tts_backend_rejects_unknown_provider_type():
@@ -381,9 +459,15 @@ def test_build_remote_tts_backend_rejects_unknown_provider_type():
     # config load time) -- model_construct bypasses that validation so the
     # registry's own runtime guard can be exercised directly.
     bad_entry = TTSRemoteEntry.model_construct(
-        provider_type="something_else", base_url="http://x", endpoint="/synthesize",
-        capabilities_endpoint="/capabilities", priority=100, enabled=True, timeout_s=10.0,
-        api_key="", params={},
+        provider_type="something_else",
+        base_url="http://x",
+        endpoint="/synthesize",
+        capabilities_endpoint="/capabilities",
+        priority=100,
+        enabled=True,
+        timeout_s=10.0,
+        api_key="",
+        params={},
     )
     with pytest.raises(ValueError, match="Unknown provider_type"):
         build_remote_tts_backend(bad_entry)
@@ -397,16 +481,31 @@ def test_build_tts_pool_wires_remote_and_local_from_settings(tmp_path):
 
     settings = Settings.model_validate(
         {
-            "storage": {"workspace_dir": str(tmp_path / "ws"), "deploy_dir": str(tmp_path / "deploy")},
+            "storage": {
+                "workspace_dir": str(tmp_path / "ws"),
+                "deploy_dir": str(tmp_path / "deploy"),
+            },
             "llm": {"local": {"base_url": "http://x", "model": "m"}},
             "voice": {
                 "tts": {
                     "active_backend": "remote",
                     "voices_dir": str(tmp_path),
-                    "local": {"voice_model_path": "voice.onnx", "voice_config_path": "voice.onnx.json"},
+                    "local": {
+                        "voice_model_path": "voice.onnx",
+                        "voice_config_path": "voice.onnx.json",
+                    },
                     "remote": {
-                        "voxcpm_elsrig": {"provider_type": "tts_serve", "base_url": "http://127.0.0.1:7500", "priority": 10},
-                        "disabled_one": {"provider_type": "tts_serve", "base_url": "http://x", "enabled": False, "priority": 50},
+                        "voxcpm_elsrig": {
+                            "provider_type": "tts_serve",
+                            "base_url": "http://127.0.0.1:7500",
+                            "priority": 10,
+                        },
+                        "disabled_one": {
+                            "provider_type": "tts_serve",
+                            "base_url": "http://x",
+                            "enabled": False,
+                            "priority": 50,
+                        },
                     },
                 }
             },
@@ -429,15 +528,25 @@ def test_build_tts_pool_active_backend_local_skips_remotes_entirely(tmp_path):
 
     settings = Settings.model_validate(
         {
-            "storage": {"workspace_dir": str(tmp_path / "ws"), "deploy_dir": str(tmp_path / "deploy")},
+            "storage": {
+                "workspace_dir": str(tmp_path / "ws"),
+                "deploy_dir": str(tmp_path / "deploy"),
+            },
             "llm": {"local": {"base_url": "http://x", "model": "m"}},
             "voice": {
                 "tts": {
                     "active_backend": "local",
                     "voices_dir": str(tmp_path),
-                    "local": {"voice_model_path": "voice.onnx", "voice_config_path": "voice.onnx.json"},
+                    "local": {
+                        "voice_model_path": "voice.onnx",
+                        "voice_config_path": "voice.onnx.json",
+                    },
                     "remote": {
-                        "voxcpm_elsrig": {"provider_type": "tts_serve", "base_url": "http://127.0.0.1:7500", "priority": 10},
+                        "voxcpm_elsrig": {
+                            "provider_type": "tts_serve",
+                            "base_url": "http://127.0.0.1:7500",
+                            "priority": 10,
+                        },
                     },
                 }
             },
@@ -462,11 +571,17 @@ async def test_tts_serve_voice_sample_replaces_seed(tmp_path):
 
     def handler(request):
         seen.update(json.loads(request.content))
-        return httpx.Response(200, json={"audio_base64": base64.b64encode(b"x").decode()})
+        return httpx.Response(
+            200, json={"audio_base64": base64.b64encode(b"x").decode()}
+        )
 
-    entry = TTSRemoteEntry(base_url="http://t", voice_sample=str(sample), voice_sample_text="hello")
+    entry = TTSRemoteEntry(
+        base_url="http://t", voice_sample=str(sample), voice_sample_text="hello"
+    )
     backend = TTSServeBackend(entry)
-    backend._http = httpx.AsyncClient(base_url="http://t", transport=_mock_transport(handler))
+    backend._http = httpx.AsyncClient(
+        base_url="http://t", transport=_mock_transport(handler)
+    )
     await backend.synthesize("hi", tmp_path / "o.wav", params={"seed": 5})
     assert "seed" not in seen
     assert base64.b64decode(seen["audio_base64"]) == b"REF"
@@ -481,22 +596,36 @@ async def test_tts_serve_seed_used_without_sample(tmp_path):
 
     def handler(request):
         seen.update(json.loads(request.content))
-        return httpx.Response(200, json={"audio_base64": base64.b64encode(b"x").decode()})
+        return httpx.Response(
+            200, json={"audio_base64": base64.b64encode(b"x").decode()}
+        )
 
     backend = TTSServeBackend(TTSRemoteEntry(base_url="http://t"))
-    backend._http = httpx.AsyncClient(base_url="http://t", transport=_mock_transport(handler))
+    backend._http = httpx.AsyncClient(
+        base_url="http://t", transport=_mock_transport(handler)
+    )
     await backend.synthesize("hi", tmp_path / "o.wav", params={"seed": 5})
     assert seen["seed"] == 5 and "audio_base64" not in seen
 
 
 def test_voice_sample_validation(tmp_path):
     with pytest.raises(ValueError, match="not found"):
-        TTSRemoteEntry(base_url="http://t", voice_sample=str(tmp_path / "missing.wav"))
+        TTSRemoteEntry(
+            base_url="http://t", voice_sample=str(tmp_path / "missing.wav")
+        )
     with pytest.raises(ValueError, match="generic_openai"):
         f = tmp_path / "a.wav"
         f.write_bytes(b"x")
-        TTSRemoteEntry(provider_type="generic_openai", base_url="http://t", voice_sample=str(f))
-    TTSRemoteEntry(base_url="http://t", voice_sample=str(tmp_path / "missing.wav"), enabled=False)
+        TTSRemoteEntry(
+            provider_type="generic_openai",
+            base_url="http://t",
+            voice_sample=str(f),
+        )
+    TTSRemoteEntry(
+        base_url="http://t",
+        voice_sample=str(tmp_path / "missing.wav"),
+        enabled=False,
+    )
 
 
 # --- TTSPool.warm_up -----------------------------------------------------------

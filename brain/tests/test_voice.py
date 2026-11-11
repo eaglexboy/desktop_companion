@@ -20,7 +20,12 @@ import pytest
 
 from brain.config import STTLocalConfig, STTRemoteConfig
 from brain.voice.delivery import pick_delivery
-from brain.voice.stt import StreamingSTT, STTBackend, STTCoordinator, UnknownStreamError
+from brain.voice.stt import (
+    StreamingSTT,
+    STTBackend,
+    STTCoordinator,
+    UnknownStreamError,
+)
 from brain.voice.stt_remote import RemoteSTTBackend
 
 HAS_PIPER = shutil.which("piper") is not None
@@ -43,7 +48,9 @@ class _ScriptedSTTBackend(STTBackend):
             []
         )  # (n_channels, framerate, n_frames), or None if no real WAV
 
-    async def transcribe(self, wav_path: Path, *, language: str | None = None) -> str:
+    async def transcribe(
+        self, wav_path: Path, *, language: str | None = None
+    ) -> str:
         if wav_path.is_file():
             with wave.open(str(wav_path), "rb") as wf:
                 self.calls.append(
@@ -172,7 +179,9 @@ def test_trailing_silence_detection_uses_energy_not_just_elapsed_time():
     )  # only 0.4s since last voice
 
     clock.now = 0.7
-    streaming.feed_chunk("s_1", _pcm16le_tone(0))  # silence -- does not reset the clock
+    streaming.feed_chunk(
+        "s_1", _pcm16le_tone(0)
+    )  # silence -- does not reset the clock
     clock.now = 0.65  # 0.55s since the loud chunk at t=0.1
     assert streaming.is_trailing_silence_exceeded("s_1") is True
 

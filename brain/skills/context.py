@@ -28,7 +28,11 @@ def stub(display_name: str, description: str) -> str:
     one_line = " ".join(description.split())
     first = _SENTENCE_END.split(one_line, maxsplit=1)[0]
     line = f"{display_name}: {first}"
-    return line if len(line) <= STUB_MAX_CHARS else line[: STUB_MAX_CHARS - 1].rstrip() + "…"
+    return (
+        line
+        if len(line) <= STUB_MAX_CHARS
+        else line[: STUB_MAX_CHARS - 1].rstrip() + "…"
+    )
 
 
 def budget_tokens(context_tokens: int, fraction: float, cap: int) -> int:
@@ -38,8 +42,10 @@ def budget_tokens(context_tokens: int, fraction: float, cap: int) -> int:
 
 @dataclass(frozen=True)
 class StubPlan:
-    kept: list[tuple[str, str]]     # (skill id, stub text) that fit, in the order given
-    dropped: list[str]              # skill ids that did not fit
+    kept: list[
+        tuple[str, str]
+    ]  # (skill id, stub text) that fit, in the order given
+    dropped: list[str]  # skill ids that did not fit
     tokens_used: int
     budget: int
 

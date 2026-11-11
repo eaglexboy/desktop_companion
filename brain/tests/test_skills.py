@@ -34,7 +34,9 @@ class FakeState:
 
 
 def test_structured_reply_splits_dialogue_from_actions():
-    r = parse_reply('{"say": "Hi there!", "do": [{"skill": "gesture", "args": {"name": "greet"}}]}')
+    r = parse_reply(
+        '{"say": "Hi there!", "do": [{"skill": "gesture", "args": {"name": "greet"}}]}'
+    )
     assert r.structured and r.say == "Hi there!"
     assert [(a.skill, a.args) for a in r.actions] == [("gesture", {"name": "greet"})]
 
@@ -46,7 +48,9 @@ def test_code_fenced_json_and_surrounding_chatter_still_parse():
 
 def test_plain_text_is_all_dialogue_with_no_actions():
     r = parse_reply("Just chatting, no JSON here.")
-    assert not r.structured and r.say == "Just chatting, no JSON here." and r.actions == []
+    assert (
+        not r.structured and r.say == "Just chatting, no JSON here." and r.actions == []
+    )
 
 
 def test_json_without_say_is_not_guessed_into_actions():
@@ -60,8 +64,14 @@ def test_a_code_sample_in_dialogue_does_not_become_actions():
 
 
 def test_malformed_do_entries_are_skipped():
-    r = parse_reply('{"say": "x", "do": ["gesture", {"args": {}}, {"skill": "remember", "args": "nope"}]}')
-    assert r.structured and [a.skill for a in r.actions] == ["remember"] and r.actions[0].args == {}
+    r = parse_reply(
+        '{"say": "x", "do": ["gesture", {"args": {}}, {"skill": "remember", "args": "nope"}]}'
+    )
+    assert (
+        r.structured
+        and [a.skill for a in r.actions] == ["remember"]
+        and r.actions[0].args == {}
+    )
 
 
 # --- registry --------------------------------------------------------------------
@@ -75,7 +85,9 @@ def _registry(**kw) -> SkillRegistry:
 
 def test_prompt_block_lists_enabled_skills_only():
     block = _registry(disabled={"change_look"}).prompt_block()
-    assert "gesture(name: greet|agree|disagree|celebrate|shrug|angry|hip_thrust)" in block
+    assert (
+        "gesture(name: greet|agree|disagree|celebrate|shrug|angry|hip_thrust)" in block
+    )
     assert "change_look" not in block
     assert SkillRegistry().prompt_block() == ""
 
@@ -104,7 +116,12 @@ async def test_run_all_executes_valid_calls_and_refuses_the_rest():
     ]
     results = await reg.run_all(calls, state)
     assert [r["ok"] for r in results] == [True, False]
-    assert state.hub.sent == [("play_gesture", {"name": "greet", "clip": "greet", "loop": False, "intensity": 0.5})]  # a store with no mood: resting
+    assert state.hub.sent == [
+        (
+            "play_gesture",
+            {"name": "greet", "clip": "greet", "loop": False, "intensity": 0.5},
+        )
+    ]  # a store with no mood: resting
     assert state.store.notes == []
 
 
@@ -119,7 +136,9 @@ async def test_a_failing_skill_does_not_break_the_others():
 
     reg.register(Skill("boom", "x", boom))
     reg.register(Skill("fine", "y", fine, (Param("q", "z", required=False),)))
-    results = await reg.run_all([SkillCall("boom", {}), SkillCall("fine", {})], FakeState())
+    results = await reg.run_all(
+        [SkillCall("boom", {}), SkillCall("fine", {})], FakeState()
+    )
     assert [r["ok"] for r in results] == [False, True]
     assert "RuntimeError" in results[0]["error"]
 
@@ -134,18 +153,48 @@ def test_skills_config_parses_the_reserved_worker_key():
             "skills": {"max_script_workers": 2, "disabled": ["change_look"]},
         }
     )
-    assert s.skills.enabled and s.skills.disabled == ["change_look"] and s.skills.max_script_workers == 2
+    assert (
+        s.skills.enabled
+        and s.skills.disabled == ["change_look"]
+        and s.skills.max_script_workers == 2
+    )
 
 
 async def test_describe_reports_every_skill_with_usage_counters():
     reg, state = _registry(disabled={"change_look"}), FakeState()
-    await reg.run_all([SkillCall("gesture", {"name": "greet"}), SkillCall("gesture", {"name": "nope"})], state)
+    await reg.run_all(
+        [
+            SkillCall("gesture", {"name": "greet"}),
+            SkillCall("gesture", {"name": "nope"}),
+        ],
+        state,
+    )
     by_name = {s["name"]: s for s in reg.describe()}
-    assert set(by_name) == {"gesture", "remember", "change_look", "revert_look", "unlock_look"}
-    assert by_name["change_look"]["enabled"] is False and by_name["gesture"]["enabled"] is True
+    assert set(by_name) == {
+        "gesture",
+        "remember",
+        "change_look",
+        "revert_look",
+        "unlock_look",
+    }
+    assert (
+        by_name["change_look"]["enabled"] is False
+        and by_name["gesture"]["enabled"] is True
+    )
     assert (by_name["gesture"]["calls"], by_name["gesture"]["refused"]) == (1, 1)
-    assert by_name["gesture"]["params"][0]["enum"] == ["greet", "agree", "disagree", "celebrate", "shrug", "angry", "hip_thrust"]
-    assert by_name["gesture"]["last_used"] is not None and by_name["remember"]["last_used"] is None
+    assert by_name["gesture"]["params"][0]["enum"] == [
+        "greet",
+        "agree",
+        "disagree",
+        "celebrate",
+        "shrug",
+        "angry",
+        "hip_thrust",
+    ]
+    assert (
+        by_name["gesture"]["last_used"] is not None
+        and by_name["remember"]["last_used"] is None
+    )
 
 
 def test_a_gesture_is_more_animated_when_the_companion_is_happy_and_less_when_it_is_low():
@@ -163,7 +212,40 @@ def test_a_gesture_is_more_animated_when_the_companion_is_happy_and_less_when_it
             self.store = Store(**mood)
 
     assert gesture_intensity(State()) == pytest.approx(0.5)
-    assert gesture_intensity(State(valence=85.0, energy=75.0)) > 0.65   # very happy to see you
+    assert (
+        gesture_intensity(State(valence=85.0, energy=75.0)) > 0.65
+    )  # very happy to see you
     assert gesture_intensity(State(valence=20.0, energy=30.0, stress=70.0)) < 0.35
     assert gesture_intensity(State(valence=100.0, energy=100.0, stress=0.0)) <= 1.0
-    assert gesture_intensity(object()) == 0.5   # no store: a gesture never fails for want of a mood
+    assert (
+        gesture_intensity(object()) == 0.5
+    )  # no store: a gesture never fails for want of a mood
+
+
+def test_a_reply_cut_off_before_its_closing_brace_is_still_the_dialogue_not_the_raw_text():
+    from brain.skills.reply import parse_reply
+
+    cut = parse_reply('{"say": "Hey! *waves*", "do": []')
+    assert (cut.say, cut.actions, cut.structured) == ("Hey! *waves*", [], True)
+
+    gesture = parse_reply(
+        '{"say": "ok", "do": [{"skill": "gesture", "args": {"name": "greet"}}]'
+    )
+    assert [a.skill for a in gesture.actions] == [
+        "gesture"
+    ]  # complete but for the closing brace
+
+
+def test_a_reply_cut_off_inside_the_sentence_keeps_what_was_said_and_runs_nothing():
+    from brain.skills.reply import parse_reply
+
+    mid = parse_reply('{"say": "Hi, there')
+    assert (mid.say, mid.actions) == ("Hi, there", [])
+
+    half = parse_reply(
+        '{"say": "ok", "do": [{"skill": "change_look", "args": {"request": "BMO'
+    )
+    assert (half.say, half.actions) == (
+        "ok",
+        [],
+    )  # an action cut off in the middle is never guessed

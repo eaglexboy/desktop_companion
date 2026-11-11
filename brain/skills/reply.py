@@ -39,15 +39,37 @@ class ParsedReply:
     structured: bool = False
 
 
+# A reply cut off inside the object: `{"say": "Hi", "do": []` (the closing brace never came) or
+# `{"say": "Hi, there` (cut off in the middle of the sentence).
+_TRUNCATED_SAY = re.compile(r'^\s*\{\s*"say"\s*:\s*"((?:[^"\\]|\\.)*)', re.DOTALL)
+
+
 def _first_object(text: str) -> dict[str, Any] | None:
     start = text.find("{")
     if start < 0:
         return None
-    try:
-        obj, _end = json.JSONDecoder().raw_decode(text[start:])
-    except ValueError:
+    for tail in (
+        "",
+        "}",
+    ):  # the second: the object was complete but for its closing brace
+        try:
+            obj, _end = json.JSONDecoder().raw_decode(text[start:] + tail)
+        except ValueError:
+            continue
+        return obj if isinstance(obj, dict) else None
+    return None
+
+
+def _truncated_say(text: str) -> str | None:
+    """The dialogue of a reply that was cut off before it was a whole object. Only the "say" string is
+    taken (what was cut off is never run as an action)."""
+    match = _TRUNCATED_SAY.match(text)
+    if not match:
         return None
-    return obj if isinstance(obj, dict) else None
+    try:
+        return json.loads(f'"{match.group(1)}"').strip()
+    except ValueError:  # cut off inside an escape
+        return match.group(1).rstrip("\\").strip()
 
 
 def parse_reply(raw: str) -> ParsedReply:
@@ -57,6 +79,9 @@ def parse_reply(raw: str) -> ParsedReply:
         text = fenced.group(1)
     obj = _first_object(text)
     if obj is None or not isinstance(obj.get("say"), str):
+        cut = _truncated_say(text)
+        if cut:
+            return ParsedReply(say=cut, structured=True)
         return ParsedReply(say=raw.strip(), structured=False)
 
     actions: list[SkillCall] = []
@@ -65,7 +90,9 @@ def parse_reply(raw: str) -> ParsedReply:
         for item in do:
             if isinstance(item, dict) and isinstance(item.get("skill"), str):
                 args = item.get("args")
-                actions.append(SkillCall(item["skill"], args if isinstance(args, dict) else {}))
+                actions.append(
+                    SkillCall(item["skill"], args if isinstance(args, dict) else {})
+                )
     return ParsedReply(say=obj["say"].strip(), actions=actions, structured=True)
 
 

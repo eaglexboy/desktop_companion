@@ -11,10 +11,19 @@ docs/ADR_ACCESSORY_MODELS.md has the reasoning.
     python -m brain.appearance.models list
     python -m brain.appearance.models add-body <file> --name standard_humanoid_female
     python -m brain.appearance.models add-body <file> --name custom:my_robot
+    python -m brain.appearance.models add-body <file> --name custom:my_robot --replace
+    python -m brain.appearance.models remove-body custom:my_robot [--dry-run] [--force]
+    python -m brain.appearance.models meshes custom:my_robot
+    python -m brain.appearance.models rebind-mesh custom:my_robot --mesh <name> [--bone pelvis] [--rename body]
+    python -m brain.appearance.models rig-body <parts.glb> --name custom:my_robot [--yaw 180] [--arm-offset 0.09] [--limbless] [--split-loose] [--replace]
     python -m brain.appearance.models add-accessory <file> --socket socket_head_top --name top_hat
     python -m brain.appearance.models add-outfit <file> --body standard_humanoid_female --name ranger
     python -m brain.appearance.models add-animations <file> --name ual1
     python -m brain.appearance.models add-animations Mixamo_Greeting.fbx Mixamo_Angry.fbx --name Mixamo
+    python -m brain.appearance.models add-animations Bow.glb Meditate.glb --retarget --name Mesh2Motion
+    python -m brain.appearance.models profiles
+    python -m brain.appearance.models check-profile my_pack.json
+    python -m brain.appearance.models add-profile my_pack.json
     python -m brain.appearance.models add-body Mixamo_Character.fbx --name custom:vanguard
     python -m brain.appearance.models face-sidecar standard_humanoid_female
     python -m brain.appearance.models inspect-body custom:my_robot
@@ -34,34 +43,22 @@ name suffixes and shape keys, its wrapper scale), and its author and licence are
 
 from __future__ import annotations
 
-import argparse
+import functools
 import json
 import shutil
 import subprocess
 import sys
-import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Concatenate, ParamSpec, TypeVar
 
-from blender import rigs, sketchfab
-from brain.appearance import bundle
-from blender.animation_library import (
-    CHAIR_SIT_CLIPS,
-    is_retargeted,
-    late_starts,
-    library_folder,
-    rig_sidecar,
+from blender import pack_profiles
+from blender.animation_library import (  # noqa: F401 -- model_animations reaches it through here
     wanted_clips,
-    mixamo_derived_clips,
-    REQUIRED_BONES,
-    library_contents,
-    library_gaps,
-    library_support,
 )
 from brain.appearance.spec import (
     hold_path,
-    hold_reason,
     load_templates_catalog,
     load_wardrobe_catalog,
 )
@@ -135,7 +132,10 @@ def _model_file(deploy_dir: Path, base_template: str) -> Path | None:
     procedural."""
     assets = deploy_dir / "assets"
     if base_template.startswith("custom:"):
-        folder, name = assets / "custom_templates", base_template[len("custom:") :]
+        folder, name = (
+            assets / "custom_templates",
+            base_template[len("custom:") :],
+        )
     elif base_template in STANDARD_HUMANOIDS:
         folder, name = assets / "base_templates", base_template
     else:
@@ -164,7 +164,9 @@ def body_profile(
         return BodyProfile(
             imported=True,
             sockets=frozenset(caps.get("supported_sockets", [])),
-            capabilities={k: bool(v) for k, v in caps.get("capabilities", {}).items()},
+            capabilities={
+                k: bool(v) for k, v in caps.get("capabilities", {}).items()
+            },
         )
     if base_template.startswith("custom:"):
         return BodyProfile(
@@ -180,7 +182,9 @@ def body_profile(
     return BodyProfile(
         imported=False,
         sockets=frozenset(entry.get("supported_sockets", [])),
-        capabilities={k: bool(v) for k, v in entry.get("capabilities", {}).items()},
+        capabilities={
+            k: bool(v) for k, v in entry.get("capabilities", {}).items()
+        },
     )
 
 
@@ -214,7 +218,9 @@ def discover_accessory_models(deploy_dir: Path) -> list[AccessoryModel]:
         for glb in sorted(folder.glob("*.glb")):
             meta = _read_json(glb.with_suffix(".json")) or {}
             default_need = SOCKET_NEEDS.get(socket)
-            requires = meta.get("requires", [default_need] if default_need else [])
+            requires = meta.get(
+                "requires", [default_need] if default_need else []
+            )
             found.append(
                 AccessoryModel(
                     socket=socket,
@@ -229,7 +235,9 @@ def discover_accessory_models(deploy_dir: Path) -> list[AccessoryModel]:
     return found
 
 
-def outfit_model_path(deploy_dir: Path, base_template: str, outfit: str) -> Path:
+def outfit_model_path(
+    deploy_dir: Path, base_template: str, outfit: str
+) -> Path:
     """Where the outfit model `outfit` for a body lives. Mirrored by
     blender/generator.py `outfit_model_path` (a test keeps them equal)."""
     return (
@@ -243,9 +251,12 @@ def outfit_model_path(deploy_dir: Path, base_template: str, outfit: str) -> Path
 
 def discover_outfit_models(deploy_dir: Path, base_template: str) -> list[str]:
     """The outfit models made for this body (`assets/outfit_models/<body>/*.glb`).
-    They are skinned to the body's own skeleton, so a model belongs to one body."""
+    They are skinned to the body's own skeleton, so a model belongs to one body.
+    """
     folder = outfit_model_path(deploy_dir, base_template, "x").parent
-    return sorted(p.stem for p in folder.glob("*.glb")) if folder.is_dir() else []
+    return (
+        sorted(p.stem for p in folder.glob("*.glb")) if folder.is_dir() else []
+    )
 
 
 def effective_wardrobe_catalog(deploy_dir: Path, base_template: str) -> dict:
@@ -290,7 +301,9 @@ def effective_wardrobe_catalog(deploy_dir: Path, base_template: str) -> dict:
             if profile.imported
             else list(wardrobe["outfits"])
         ),
-        "footwear": ["none"] if profile.imported else list(wardrobe["footwear"]),
+        "footwear": (
+            ["none"] if profile.imported else list(wardrobe["footwear"])
+        ),
         "accessories": allowed,
     }
 
@@ -301,7 +314,9 @@ def effective_wardrobe_catalog(deploy_dir: Path, base_template: str) -> dict:
 def _run_inspect(model: Path, out_json: Path) -> dict:
     blender = shutil.which("blender")
     if blender is None:
-        raise SystemExit("blender is not on PATH; it is needed to read the model's rig")
+        raise SystemExit(
+            "blender is not on PATH; it is needed to read the model's rig"
+        )
     generator = Path(__file__).resolve().parents[2] / "blender" / "generator.py"
     proc = subprocess.run(
         [
@@ -330,13 +345,16 @@ def _run_inspect(model: Path, out_json: Path) -> dict:
 
 def add_body(deploy_dir: Path, source: Path, name: str) -> dict:
     """Installs a body model and records what its rig can carry. `name` is a
-    standard_humanoid_* id (replaces the procedural stand-in) or `custom:<n>`."""
+    standard_humanoid_* id (replaces the procedural stand-in) or `custom:<n>`.
+    """
     if source.suffix not in (".glb", ".blend"):
         raise SystemExit("a body must be a .glb or .blend file")
     if not source.is_file():
         raise SystemExit(f"{source} does not exist")
     if source.suffix == ".glb" and not _glb_json(source).get("meshes"):
-        raise SystemExit(f"{source.name} has no mesh in it (is it a valid .glb?)")
+        raise SystemExit(
+            f"{source.name} has no mesh in it (is it a valid .glb?)"
+        )
     if name.startswith("custom:"):
         folder, stem = (
             deploy_dir / "assets" / "custom_templates",
@@ -357,6 +375,75 @@ def add_body(deploy_dir: Path, source: Path, name: str) -> dict:
     shutil.copy2(source, dest)
     report = _run_inspect(dest, caps_path(dest))
     return report
+
+
+_BODY_SIDECARS = (
+    ".caps.json",
+    ".credits.json",
+    ".face.json",
+    ".pose.json",
+    ".rig.json",
+    ".hold",
+)
+
+
+def _body_files(deploy_dir: Path, name: str) -> list[Path]:
+    """Everything an installed body owns: the model, the files named after it beside it, and the
+    folder of animation libraries retargeted onto it. Only what exists, and only by exact name:
+    outfits made for the body, and the other models, are not touched."""
+    model = _model_file(deploy_dir, name)
+    if model is None:
+        return []
+    files = [model]
+    files += [
+        p
+        for p in (model.with_name(model.stem + s) for s in _BODY_SIDECARS)
+        if p.is_file()
+    ]
+    derived = deploy_dir / "assets" / "animation_library_body" / model.stem
+    if derived.is_dir() and not derived.is_symlink():
+        files += sorted(p for p in derived.iterdir() if p.is_file())
+        files.append(derived)
+    return files
+
+
+def current_base_template(deploy_dir: Path) -> str | None:
+    """The base template of the look the companion wears now, or None if there is no look yet."""
+    try:
+        manifest = json.loads((deploy_dir / "manifest.json").read_text())
+        current = manifest.get("current_version")
+        for entry in manifest.get("versions", []):
+            if entry.get("version") == current:
+                return entry.get("look_spec", {}).get("base_template")
+    except (OSError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def remove_body(
+    deploy_dir: Path, name: str, *, force: bool = False, dry_run: bool = False
+) -> list[Path]:
+    """Deletes an installed body (`custom:<name>` or a standard_humanoid_* id, which falls back to
+    the procedural stand-in) and what belongs to it, and returns what went (or, with `dry_run`,
+    what would). Refuses the body the companion is wearing unless `force`: its look stays as it was
+    built, but the next one could not use the model."""
+    files = _body_files(deploy_dir, name)
+    if not files:
+        raise SystemExit(f"{name} is not an installed body")
+    if not force and current_base_template(deploy_dir) == name:
+        raise SystemExit(
+            f"{name} is the body of the look the companion wears now (--force removes it anyway)"
+        )
+    if not dry_run:
+        for path in files:
+            if path.is_dir():
+                try:
+                    path.rmdir()  # last, once its files have gone
+                except OSError:
+                    pass  # something else was put in it: left alone
+            else:
+                path.unlink(missing_ok=True)
+    return files
 
 
 def _generator_run(
@@ -395,7 +482,8 @@ def convert_to_glb(
 ) -> Path:
     """A .glb for `source`: itself if it already is one (unless `always`),
     otherwise a converted copy in `out_dir` with every texture shrunk to
-    `max_texture` px and, if `max_triangles` is set, the meshes decimated to fit."""
+    `max_texture` px and, if `max_triangles` is set, the meshes decimated to fit.
+    """
     if source.suffix == ".blend" or (source.suffix == ".glb" and not always):
         return source  # a .blend body is installed as it is
     if source.suffix not in (".gltf", ".glb"):
@@ -424,7 +512,9 @@ def add_outfit(deploy_dir: Path, source: Path, body: str, name: str) -> Path:
     """Installs an outfit model for one body. It must be skinned to that body's
     skeleton; the generator checks the bones when it wears it."""
     if source.suffix != ".glb":
-        raise SystemExit("an outfit must be a .glb file (convert a .gltf first)")
+        raise SystemExit(
+            "an outfit must be a .glb file (convert a .gltf first)"
+        )
     if not source.is_file():
         raise SystemExit(f"{source} does not exist")
     if not _glb_json(source).get("skins"):
@@ -452,44 +542,6 @@ def animation_library_dir(deploy_dir: Path) -> Path:
 MIXAMO_TIMEOUT_S = 900.0
 
 
-def convert_mixamo_body(
-    source: Path, out_dir: Path, deploy_dir: Path | None = None
-) -> Path:
-    """A Mixamo character (.fbx) as a Quaternius-rigged .glb in `out_dir`. With an installed
-    standard humanoid to copy the bones' roll from (so that Quaternius clips turn the bones the
-    right way); without one the bones are only renamed."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    dest = out_dir / f"{source.stem}.glb"
-    host = next(
-        (
-            deploy_dir / "assets" / "base_templates" / f"{n}.glb"
-            for n in STANDARD_HUMANOIDS
-            if deploy_dir is not None
-            and (deploy_dir / "assets" / "base_templates" / f"{n}.glb").is_file()
-        ),
-        None,
-    )
-    proc = _generator_run(
-        ["body", str(source), str(dest), *([str(host)] if host else [])],
-        MIXAMO_TIMEOUT_S,
-        "mixamo_convert.py",
-    )
-    if proc.returncode != 0 or not dest.is_file():
-        text = (proc.stderr + proc.stdout).strip().splitlines()
-        reason = next(
-            (
-                line
-                for line in reversed(text)
-                if "SystemExit" in line or "Error" in line
-            ),
-            "conversion failed",
-        )
-        raise SystemExit(
-            f"converting {source.name} failed: {reason.split(':', 1)[-1].strip()}"
-        )
-    return dest
-
-
 SKETCHFAB_TIMEOUT_S = 900.0
 # A cleaned Sketchfab body larger than this is made again with smaller textures: a model of 50
 # materials has 50 textures, and the build (budget 15 MB) also has to carry its clips.
@@ -511,7 +563,10 @@ def credit_line(credits: dict | None) -> str:
     """`Title by Author (licence)`, for a listing."""
     if not credits:
         return ""
-    title, author = credits.get("title", ""), credits.get("author", "").split(" (")[0]
+    title, author = (
+        credits.get("title", ""),
+        credits.get("author", "").split(" (")[0],
+    )
     return (
         f"{title} by {author} ({credits.get('license', '').split(' ')[0]})"
         if author
@@ -519,240 +574,28 @@ def credit_line(credits: dict | None) -> str:
     )
 
 
-def convert_sketchfab_body(
-    source: Path, out_dir: Path, max_texture: int = DEFAULT_MAX_TEXTURE
-) -> Path:
-    """A Sketchfab download (.glb) cleaned up as a body (blender/sketchfab_convert.py, ADR 17): the
-    wrapper transforms baked in, the helper bones gone, the bones named as the author named them, no
-    shape keys, textures shrunk and the meshes decimated to the body budget. Made again with
-    smaller textures while the file is over `SKETCHFAB_MAX_BYTES`."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    dest = out_dir / f"{source.stem}.glb"
-    texture = max_texture
-    while True:
-        proc = _generator_run(
-            [str(source), str(dest), str(texture), str(BODY_MAX_TRIANGLES)],
-            SKETCHFAB_TIMEOUT_S,
-            "sketchfab_convert.py",
-        )
-        if proc.returncode != 0 or not dest.is_file():
-            text = (proc.stderr + proc.stdout).strip().splitlines()
-            reason = next(
-                (l for l in reversed(text) if "SystemExit" in l or "Error" in l),
-                "conversion failed",
-            )
-            raise SystemExit(
-                f"cleaning {source.name} up failed: {reason.split(':', 1)[-1].strip()}"
-            )
-        if dest.stat().st_size <= SKETCHFAB_MAX_BYTES or texture <= 256:
-            return dest
-        texture //= 2
-        print(
-            f"    {dest.stat().st_size / 1e6:.1f} MB: making it again with {texture} px textures"
-        )
-
-
 RIG_TIMEOUT_S = 900.0
 
 
-def convert_rig_body(source: Path, out_dir: Path) -> tuple[Path, str]:
-    """A body of a known rig (Character Creator, Auto-Rig Pro) renamed onto the Quaternius skeleton
-    (blender/rig_convert.py, ADR 18): (the file, what was done)."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    dest = out_dir / f"{source.stem}_quaternius.glb"
-    proc = _generator_run(
-        ["body", str(source), str(dest)], RIG_TIMEOUT_S, "rig_convert.py"
-    )
-    marker = next(
-        (l for l in proc.stdout.splitlines() if l.startswith("RIG_BODY_OK")), None
-    )
-    if proc.returncode != 0 or marker is None or not dest.is_file():
-        text = (proc.stderr + proc.stdout).strip().splitlines()
-        reason = next(
-            (l for l in reversed(text) if "SystemExit" in l or "Error" in l),
-            "conversion failed",
-        )
-        raise SystemExit(
-            f"converting {source.name}'s rig failed: {reason.split(':', 1)[-1].strip()}"
-        )
-    return dest, marker.split(" ", 2)[2]
+DEFAULT_ARM_OFFSET = 0.14
 
 
-def retarget_library_onto(deploy_dir: Path, stem: str, library: Path) -> list[str]:
-    """The clips of `library` (a Quaternius one) that a role uses, retargeted onto the installed
-    converted body `custom:<stem>` and written as that body's own library. The clip names.
-    """
-    model = _model_file(deploy_dir, f"custom:{stem}")
-    if model is None:
-        raise SystemExit(f"custom:{stem} is not installed")
-    joints, clips = library_contents(library)
-    if not REQUIRED_BONES <= joints:
-        return []  # not made for the Quaternius skeleton
-    wanted = wanted_clips(clips)
-    if not wanted:
-        return []
-    dest = library_folder(deploy_dir, model) / library.name
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="deskmate-retarget-") as scratch:
-        spec_path = Path(scratch) / "spec.json"
-        spec_path.write_text(
-            json.dumps(
-                {
-                    "body": str(model),
-                    "library": str(library),
-                    "out": str(dest),
-                    "clips": wanted,
-                }
-            )
-        )
-        proc = _generator_run(
-            ["clips", str(spec_path)], RIG_TIMEOUT_S, "rig_convert.py"
-        )
-    if proc.returncode != 0 or not dest.is_file():
-        raise SystemExit(
-            f"retargeting {library.stem} onto {stem} failed:\n{(proc.stderr + proc.stdout)[-600:]}"
-        )
-    return wanted
+P = ParamSpec("P")
+R = TypeVar("R")
 
 
-def converted_bodies(deploy_dir: Path) -> list[str]:
-    """The stems of the installed bodies that were converted from another rig."""
-    folder = deploy_dir / "assets" / "custom_templates"
-    return sorted(
-        p.stem for p in folder.glob("*.glb") if folder.is_dir() and is_retargeted(p)
-    )
+def _with_profiles(
+    fn: Callable[Concatenate[Path, P], R],
+) -> Callable[Concatenate[Path, P], R]:
+    """The function reads the animation profiles of this install (the user's are in its deploy
+    directory), so they are pointed at before it runs."""
 
+    @functools.wraps(fn)
+    def wrapper(deploy_dir: Path, *args: P.args, **kwargs: P.kwargs) -> R:
+        pack_profiles.configure(deploy_dir)
+        return fn(deploy_dir, *args, **kwargs)
 
-def retarget_all_libraries(deploy_dir: Path, stem: str) -> None:
-    folder = animation_library_dir(deploy_dir)
-    for library in sorted(folder.glob("*.glb")) if folder.is_dir() else []:
-        clips = retarget_library_onto(deploy_dir, stem, library)
-        if clips:
-            print(f"    retargeted {library.stem}: {len(clips)} clips onto {stem}")
-
-
-def _library_with_clip(deploy_dir: Path, clip: str) -> Path | None:
-    folder = animation_library_dir(deploy_dir)
-    for library in sorted(folder.glob("*.glb")) if folder.is_dir() else []:
-        if any(a.get("name") == clip for a in _glb_json(library).get("animations", [])):
-            return library
-    return None
-
-
-def convert_mixamo_clips(
-    deploy_dir: Path, sources: list[Path], name: str, options: dict | None = None
-) -> tuple[Path, list[str]]:
-    """Retargets Mixamo clips (.fbx) onto the Quaternius skeleton and installs them as one animation
-    library. Each file becomes a clip named for it (`Mixamo_Standing_Greeting.fbx` ->
-    `Standing_Greeting`), processed as `mixamo_clip_defaults` says for such a clip unless
-    `options` (clip name -> overrides) says otherwise. Seated clips are lined up with the seat of
-    an installed library's `Sitting_Idle_Loop`."""
-    from blender.animation_library import clip_name_from_file, mixamo_clip_defaults
-
-    host = next(
-        (
-            deploy_dir / "assets" / "base_templates" / f"{n}.glb"
-            for n in STANDARD_HUMANOIDS
-            if (deploy_dir / "assets" / "base_templates" / f"{n}.glb").is_file()
-        ),
-        None,
-    )
-    if host is None:
-        raise SystemExit(
-            "install a standard_humanoid body first: the clips are retargeted onto its skeleton"
-        )
-    reference = _library_with_clip(deploy_dir, "Sitting_Idle_Loop")
-    standing = _library_with_clip(deploy_dir, "Idle_Loop")
-    clips = []
-    for source in sources:
-        if not source.is_file():
-            raise SystemExit(f"{source} does not exist")
-        clip = clip_name_from_file(source.stem)
-        clips.append(
-            {
-                "fbx": str(source),
-                "name": clip,
-                "options": {
-                    **mixamo_clip_defaults(clip),
-                    **(options or {}).get(clip, {}),
-                },
-            }
-        )
-    clips += mixamo_derived_clips({c["name"] for c in clips})
-    dest = animation_library_dir(deploy_dir) / f"{name}.glb"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    spec = {
-        "host": str(host),
-        "out": str(dest),
-        "clips": clips,
-        "stand_reference": (
-            {"library": str(standing), "clip": "Idle_Loop"} if standing else None
-        ),
-        "seat_reference": (
-            {"library": str(reference), "clip": "Sitting_Idle_Loop"}
-            if reference
-            else None
-        ),
-    }
-    with tempfile.TemporaryDirectory(prefix="deskmate-mixamo-") as scratch:
-        spec_path = Path(scratch) / "spec.json"
-        spec_path.write_text(json.dumps(spec))
-        proc = _generator_run(
-            ["clips", str(spec_path)], MIXAMO_TIMEOUT_S, "mixamo_convert.py"
-        )
-    marker = next(
-        (
-            line
-            for line in proc.stdout.splitlines()
-            if line.startswith("MIXAMO_CLIPS_OK")
-        ),
-        None,
-    )
-    if proc.returncode != 0 or marker is None or not dest.is_file():
-        raise SystemExit(
-            f"converting the clips failed:\n{(proc.stderr + proc.stdout)[-800:]}"
-        )
-    late = late_starts(_glb_json(dest))
-    if late:
-        print(
-            f"warning: {len(late)} converted clip(s) start after time 0 (a T-pose flash): {', '.join(late[:5])}",
-            file=sys.stderr,
-        )
-    return dest, marker.split(" ", 2)[2].split(",")
-
-
-def add_animation_library(
-    deploy_dir: Path, source: Path, name: str
-) -> tuple[Path, list[str]]:
-    """Installs a pack of clips made for a rig (a .glb with that rig and its animations).
-    Any installed body that has all of the rig's bones plays the clips it needs from it
-    (`LIBRARY_ROLES` in blender/generator.py). Returns where it went and the clip names.
-    """
-    if source.suffix != ".glb":
-        raise SystemExit("an animation library must be a .glb file")
-    if not source.is_file():
-        raise SystemExit(f"{source} does not exist")
-    if not name.replace("_", "").isalnum():
-        raise SystemExit("name may only use letters, digits and underscores")
-    gltf = _glb_json(source)
-    clips = [anim.get("name", "") for anim in gltf.get("animations", [])]
-    if not clips:
-        raise SystemExit(f"{source.name} has no animations in it")
-    if not gltf.get("skins"):
-        raise SystemExit(
-            f"{source.name} has no skeleton; the clips need the rig they were made for"
-        )
-    late = late_starts(gltf)
-    if late:
-        print(
-            f"warning: {len(late)} clip(s) start after time 0 and will flash the rest pose "
-            f"(a T-pose) when they begin: {', '.join(late[:5])}",
-            file=sys.stderr,
-        )
-    dest = animation_library_dir(deploy_dir) / f"{name}.glb"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, dest)
-    return dest, clips
+    return wrapper
 
 
 def inspect_body(deploy_dir: Path, base_template: str) -> dict:
@@ -792,13 +635,18 @@ def generate_face_sidecar(model_file: Path, *, force: bool = False) -> str:
     if out.is_file() and not force:
         return "exists"
     proc = _generator_run(
-        ["--face-landmarks", str(model_file), "--out", str(out)], INSPECT_TIMEOUT_S
+        ["--face-landmarks", str(model_file), "--out", str(out)],
+        INSPECT_TIMEOUT_S,
     )
     if proc.returncode != 0 or not out.is_file():
         out.unlink(missing_ok=True)
         text = proc.stderr + proc.stdout
         reason = next(
-            (line.strip() for line in reversed(text.splitlines()) if "Error" in line),
+            (
+                line.strip()
+                for line in reversed(text.splitlines())
+                if "Error" in line
+            ),
             "no face found",
         )
         return reason.split("Error:", 1)[-1].strip()
@@ -883,641 +731,43 @@ def add_accessory(
     return dest
 
 
-def animation_support(
-    deploy_dir: Path, base_template: str
-) -> dict[str, dict[str, str]] | None:
-    """What each installed animation library gives this body: {library: {role: clip}}, with an
-    empty dict for a library whose bones the body's rig lacks. None when nothing is known
-    (a procedural body, which has no rig of the libraries', or a model never inspected).
-    """
-    model = _model_file(deploy_dir, base_template)
-    folder = library_folder(
-        deploy_dir, model
-    )  # a converted body plays libraries retargeted onto it
-    libraries = sorted(folder.glob("*.glb")) if folder.is_dir() else []
-    if not libraries:
-        return {}
-    caps = _read_json(caps_path(model)) if model is not None else None
-    if not caps:
-        return None
-    if not caps.get("bone_names"):
-        return {
-            "": {}
-        }  # a model with no rig of its own is given the built-in one, which no library fits
-    bones = set(caps["bone_names"])
-    return {lib.stem: library_support(bones, lib) for lib in libraries}
-
-
-def animation_gaps(deploy_dir: Path, base_template: str) -> dict[str, list[str]]:
-    """{library: the bones of its rig this body lacks} for the libraries it can wear: those clips
-    play without the tracks of those bones (a body with no fingers keeps still hands). A fully
-    fitting library is not listed."""
-    model = _model_file(deploy_dir, base_template)
-    folder = library_folder(deploy_dir, model)
-    caps = _read_json(caps_path(model)) if model is not None else None
-    if not caps or not caps.get("bone_names") or not folder.is_dir():
-        return {}
-    bones = set(caps["bone_names"])
-    gaps: dict[str, list[str]] = {}
-    for lib in sorted(folder.glob("*.glb")):
-        try:
-            missing = library_gaps(library_contents(lib)[0], bones)
-        except (OSError, ValueError):
-            continue
-        if missing:
-            gaps[lib.stem] = sorted(missing)
-    return gaps
-
-
-def _describe_gaps(missing: list[str]) -> str:
-    """`fingers and toes` style summary of a body's missing library bones."""
-    kinds = []
-    for word, test in (
-        (
-            "fingers",
-            lambda b: b.startswith(("thumb", "index", "middle", "ring", "pinky")),
-        ),
-        ("toes", lambda b: b.startswith("ball")),
-        ("clavicles", lambda b: b.startswith("clavicle")),
-        ("spine", lambda b: b.startswith("spine")),
-        ("neck and head", lambda b: b in ("neck_01", "Head")),
-    ):
-        if any(test(b) for b in missing):
-            kinds.append(word)
-    other = [
-        b
-        for b in missing
-        if not any(
-            b.startswith(p)
-            for p in (
-                "thumb",
-                "index",
-                "middle",
-                "ring",
-                "pinky",
-                "ball",
-                "clavicle",
-                "spine",
-            )
-        )
-        and b not in ("neck_01", "Head")
-    ]
-    return ", ".join(kinds + other)
-
-
-def _describe_animations(
-    support: dict[str, dict[str, str]], gaps: dict[str, list[str]] | None = None
-) -> str:
-    if "" in support:
-        return "none (it has no rig of its own, so it gets the built-in one)"
-    parts = []
-    for library, roles in support.items():
-        if not roles:
-            parts.append(f"{library}: does not fit this rig")
-            continue
-        names = [role for role in roles if not role.startswith("sit_")]
-        if "sit_idle" in roles:
-            names.append(
-                "sit (on a chair it brings)"
-                if roles["sit_idle"] in CHAIR_SIT_CLIPS
-                else "sit (on the ground)"
-            )
-        note = (
-            f" (no {_describe_gaps(gaps[library])}: those stay still)"
-            if gaps and library in gaps
-            else ""
-        )
-        parts.append(f"{library}: {', '.join(names)}{note}")
-    return "; ".join(parts)
-
-
-def animation_matrix(deploy_dir: Path) -> dict:
-    """What animations each installed body gets, for the status page (read-only):
-    {"libraries": [{name, clips, joints}], "bodies": [{body, installed, held, libraries:
-    {library: {fits, roles, sit, gaps}} | None}]}. `libraries` is None for a body whose rig was
-    never inspected, `{}` for one that has no rig of its own."""
-    folder = animation_library_dir(deploy_dir)
-    libraries = []
-    for lib in sorted(folder.glob("*.glb")) if folder.is_dir() else []:
-        try:
-            joints, clips = library_contents(lib)
-        except (OSError, ValueError):
-            continue
-        libraries.append(
-            {
-                "name": lib.stem,
-                "clips": sorted(c for c in clips if c),
-                "joints": len(joints),
-            }
-        )
-    templates = load_templates_catalog(deploy_dir / "assets" / "catalogs")["templates"]
-    custom_dir = deploy_dir / "assets" / "custom_templates"
-    customs = sorted(
-        {p.stem for suffix in (".glb", ".blend") for p in custom_dir.glob(f"*{suffix}")}
-    )
-    bodies = []
-    for body in sorted(templates) + [f"custom:{stem}" for stem in customs]:
-        profile = body_profile(deploy_dir, body, templates)
-        held = (
-            hold_reason(deploy_dir, body[len("custom:") :])
-            if body.startswith("custom:")
-            else None
-        )
-        support = animation_support(deploy_dir, body) if profile.imported else {}
-        gaps = animation_gaps(deploy_dir, body) if support else {}
-        fits = None
-        if support is not None and "" not in support:
-            fits = {
-                library: {
-                    "fits": bool(roles),
-                    "roles": [
-                        r for r in roles if not r.startswith("sit_") and "." not in r
-                    ],
-                    "sit": (
-                        ("chair" if roles["sit_idle"] in CHAIR_SIT_CLIPS else "ground")
-                        if "sit_idle" in roles
-                        else None
-                    ),
-                    "gaps": gaps.get(library, []),
-                }
-                for library, roles in support.items()
-            }
-        bodies.append(
-            {
-                "body": body,
-                "installed": profile.imported,
-                "held": held,
-                "credit": credit_line(read_credits(_model_file(deploy_dir, body))),
-                "libraries": fits,
-            }
-        )
-    return {"libraries": libraries, "bodies": bodies}
-
-
-def _print_matrix(deploy_dir: Path) -> None:
-    templates = load_templates_catalog(deploy_dir / "assets" / "catalogs")["templates"]
-    custom_dir = deploy_dir / "assets" / "custom_templates"
-    customs = sorted(
-        {p.stem for suffix in (".glb", ".blend") for p in custom_dir.glob(f"*{suffix}")}
-    )
-    bodies = sorted(templates) + [f"custom:{stem}" for stem in customs]
-    for body in bodies:
-        profile = body_profile(deploy_dir, body, templates)
-        held = (
-            hold_reason(deploy_dir, body[len("custom:") :])
-            if body.startswith("custom:")
-            else None
-        )
-        kind = ("installed model" if profile.imported else "procedural") + (
-            f", HELD: {held}" if held else ""
-        )
-        sockets = (
-            "unknown (never inspected)"
-            if profile.sockets is None
-            else ", ".join(s for s in SOCKETS if s in profile.sockets) or "none"
-        )
-        print(f"{body}  [{kind}]\n    sockets: {sockets}")
-        credit = credit_line(read_credits(_model_file(deploy_dir, body)))
-        if credit:
-            print(f"    credit: {credit}")
-        if is_retargeted(_model_file(deploy_dir, body)):
-            print(
-                "    rig: converted to the Quaternius skeleton; the libraries are retargeted onto it"
-            )
-        support = animation_support(deploy_dir, body)
-        if support:
-            print(
-                f"    animations: {_describe_animations(support, animation_gaps(deploy_dir, body))}"
-            )
-        elif support is None:
-            print(
-                "    animations: unknown (the rig was never inspected)"
-                if profile.imported
-                else "    animations: none (a built-in body has its own)"
-            )
-        catalog = effective_wardrobe_catalog(deploy_dir, body)
-        if profile.imported and len(catalog["outfits"]) > 1:
-            print(f"    outfits: {', '.join(catalog['outfits'][1:])}")
-        for socket, items in catalog["accessories"].items():
-            print(f"    {socket}: {', '.join(items)}")
-    libraries = (
-        sorted(animation_library_dir(deploy_dir).glob("*.glb"))
-        if animation_library_dir(deploy_dir).is_dir()
-        else []
-    )
-    print(f"\nanimation libraries: {len(libraries)}")
-    for lib in libraries:
-        print(f"    {lib.stem}  {len(_glb_json(lib).get('animations', []))} clips")
-    models = discover_accessory_models(deploy_dir)
-    print(f"\naccessory models on disk: {len(models)}")
-    for m in models:
-        print(
-            f"    {m.socket}/{m.item}  needs {', '.join(m.requires) or 'nothing'}  scale {m.scale}"
-        )
-
-
-def _export(
-    deploy_dir: Path,
-    out: Path,
-    *,
-    derived: bool,
-    include_look: bool = False,
-    look_version: int | None = None,
-) -> int:
-    seed = Path(__file__).resolve().parent / "catalogs_seed"
-    try:
-        report = bundle.export_bundle(
-            deploy_dir,
-            out,
-            derived=derived,
-            catalogs_seed=seed,
-            include_look=include_look,
-            look_version=look_version,
-        )
-    except bundle.BundleError as exc:
-        print(f"export failed: {exc}", file=sys.stderr)
-        return 1
-    print(
-        f"wrote {out}: {report.files} files, {report.bytes / 1e6:.1f} MB unpacked, {out.stat().st_size / 1e6:.1f} MB packed"
-    )
-    for kind, names in report.models.items():
-        print(
-            f"    {kind}: {len(names)} ({', '.join(names[:6])}{'...' if len(names) > 6 else ''})"
-        )
-    if report.look is not None:
-        print(
-            f"    look: version {report.look}, built (an install with no looks starts with it)"
-        )
-    print(
-        "    not in it: the database, look history, voices, catalogs and tools (a bundle holds models only)"
-    )
-    for line in report.skipped:
-        print(f"    left out: {line}")
-    for line in report.warnings:
-        print(f"    warning: {line}")
-    return 0
-
-
-def _import(deploy_dir: Path, args: argparse.Namespace) -> int:
-    try:
-        report = bundle.import_bundle(
-            args.bundle, deploy_dir, replace=args.replace, dry_run=args.dry_run
-        )
-    except bundle.BundleError as exc:
-        print(f"import failed: {exc}", file=sys.stderr)
-        return 1
-    prefix = "would " if args.dry_run else ""
-    print(
-        f"{prefix}add {len(report.added)}, replace {len(report.replaced)}, keep {len(report.unchanged)} already here"
-    )
-    for name in report.conflicts:
-        print(f"    conflict, left as it is: {name} (--replace overwrites)")
-    if report.look:
-        print(f"    look: {report.look}")
-    for note in report.notes:
-        print(f"    licence: {note}")
-    if args.dry_run:
-        return 0 if not report.conflicts else 2
-    if args.regenerate or report.derived_missing:
-        stems = converted_bodies(deploy_dir)
-        if args.regenerate:
-            for stem in stems:
-                retarget_all_libraries(deploy_dir, stem)
-        elif report.derived_missing:
-            print(
-                f"    the libraries for {', '.join(report.derived_missing)} are not in the bundle: "
-                "import again with --regenerate (needs Blender), or add-animations makes them"
-            )
-    return 0 if not report.conflicts else 2
-
-
 def main(argv: list[str] | None = None) -> int:
-    from brain.config import get_settings
+    """The command line (`python -m brain.appearance.models`); it lives in models_cli.py."""
+    from brain.appearance.models_cli import main as cli_main
 
-    parser = argparse.ArgumentParser(
-        prog="python -m brain.appearance.models",
-        description=(__doc__ or "").split("\n\n")[0],
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser(
-        "list",
-        help="show every body, what it can carry, and the accessory models on disk",
-    )
-    export = sub.add_parser(
-        "export",
-        help="write every installed model to one .zip, to put on another install (a thumb drive)",
-    )
-    export.add_argument("out", type=Path)
-    export.add_argument(
-        "--include-look",
-        action="store_true",
-        help="also carry a finished look: an install with no looks starts with it as version 1, and needs no Blender until it is asked for another",
-    )
-    export.add_argument(
-        "--look-version",
-        type=int,
-        help="the look to carry (default: the current one; only the newest few are kept)",
-    )
-    export.add_argument(
-        "--no-derived",
-        action="store_true",
-        help="leave out the libraries retargeted onto converted bodies (import --regenerate makes them again; it needs Blender)",
-    )
-    bring = sub.add_parser(
-        "import", help="put the models of an exported .zip into this install"
-    )
-    bring.add_argument("bundle", type=Path)
-    bring.add_argument(
-        "--replace",
-        action="store_true",
-        help="overwrite a model that is here with a different file (the default leaves it and says so)",
-    )
-    bring.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="check the bundle and say what would happen, writing nothing",
-    )
-    bring.add_argument(
-        "--regenerate",
-        action="store_true",
-        help="make the retargeted libraries again on this machine (needs Blender) instead of trusting the bundle's",
-    )
-    body = sub.add_parser("add-body", help="install a body model and inspect its rig")
-    body.add_argument("file", type=Path)
-    body.add_argument(
-        "--name",
-        required=True,
-        help="standard_humanoid_female, standard_humanoid_male or custom:<name>",
-    )
-    body.add_argument(
-        "--no-rig",
-        action="store_true",
-        help="do not convert a Character Creator or Auto-Rig Pro skeleton to the Quaternius one (it then plays no animation libraries)",
-    )
-    inspect = sub.add_parser(
-        "inspect-body",
-        help="read an installed body's rig into its .caps.json (no file is copied)",
-    )
-    inspect.add_argument(
-        "body", help="standard_humanoid_female, standard_humanoid_male or custom:<name>"
-    )
-    hold = sub.add_parser(
-        "hold",
-        help="hold an installed custom: model back (not offered, not accepted) until it is released",
-    )
-    hold.add_argument("body")
-    hold.add_argument("--reason", default="held")
-    release = sub.add_parser("release", help="release a held model")
-    release.add_argument("body")
-    face = sub.add_parser(
-        "face-sidecar",
-        help="find an installed body's eyes and mouth and write its face sidecar (lip-sync, blink)",
-    )
-    face.add_argument(
-        "body", help="standard_humanoid_female, standard_humanoid_male or custom:<name>"
-    )
-    face.add_argument(
-        "--force", action="store_true", help="replace an existing sidecar"
-    )
-    outfit = sub.add_parser(
-        "add-outfit", help="install an outfit model (skinned to a body's skeleton)"
-    )
-    outfit.add_argument("file", type=Path)
-    outfit.add_argument(
-        "--body",
-        required=True,
-        help="the body it is for: standard_humanoid_female, standard_humanoid_male or custom:<name>",
-    )
-    outfit.add_argument("--name", required=True)
-    outfit.add_argument(
-        "--max-triangles",
-        type=int,
-        default=OUTFIT_MAX_TRIANGLES,
-        help="decimate the outfit to about this many triangles (0 = keep as is)",
-    )
-    anim = sub.add_parser(
-        "add-animations",
-        help="install an animation library (clips for a rig; bodies with that rig play them)",
-    )
-    anim.add_argument(
-        "file",
-        type=Path,
-        nargs="+",
-        help="one .glb library, or Mixamo .fbx clips to retarget onto the Quaternius skeleton",
-    )
-    anim.add_argument("--name", required=True)
-    anim.add_argument(
-        "--options",
-        type=Path,
-        help="JSON {clip name: {loop, seat, in_place, variants, trim: [first, last], extract: [...]}} overriding what a Mixamo clip is given by default",
-    )
-    acc = sub.add_parser(
-        "add-accessory", help="install an accessory model for a socket"
-    )
-    acc.add_argument("file", type=Path)
-    acc.add_argument("--socket", required=True, choices=SOCKETS)
-    acc.add_argument("--name", required=True)
-    acc.add_argument("--scale", type=float, default=1.0)
-    acc.add_argument(
-        "--offset",
-        type=float,
-        nargs=3,
-        default=(0.0, 0.0, 0.0),
-        metavar=("X", "Y", "Z"),
-    )
-    acc.add_argument(
-        "--rotation",
-        type=float,
-        nargs=3,
-        default=(0.0, 0.0, 0.0),
-        metavar=("RX", "RY", "RZ"),
-        help="radians",
-    )
-    acc.add_argument(
-        "--requires",
-        nargs="*",
-        choices=CAPABILITIES,
-        help="override what the body must have",
-    )
-    for command in (body, outfit, acc):
-        command.add_argument(
-            "--max-texture",
-            type=int,
-            default=DEFAULT_MAX_TEXTURE,
-            help="shrink a .gltf's textures to this many px",
-        )
-    args = parser.parse_args(argv)
-
-    deploy_dir = get_settings().deploy_dir
-    if args.command == "list":
-        _print_matrix(deploy_dir)
-        return 0
-    if args.command == "export":
-        return _export(
-            deploy_dir,
-            args.out,
-            derived=not args.no_derived,
-            include_look=args.include_look,
-            look_version=args.look_version,
-        )
-    if args.command == "import":
-        return _import(deploy_dir, args)
-    if args.command in ("hold", "release"):
-        set_hold(deploy_dir, args.body, args.reason if args.command == "hold" else None)
-        print(
-            f"{args.body}: {'held (' + args.reason + ')' if args.command == 'hold' else 'released'}"
-        )
-        return 0
-    if args.command == "inspect-body":
-        report = inspect_body(deploy_dir, args.body)
-        caps = ", ".join(k for k, v in report["capabilities"].items() if v) or "none"
-        print(
-            f"{args.body}\n    capabilities: {caps}\n    sockets: {', '.join(report['supported_sockets']) or 'none'}"
-        )
-        for warning in report.get("warnings", []):
-            print(f"    warning: {warning}")
-        return 0
-    if args.command == "face-sidecar":
-        model = _model_file(deploy_dir, args.body)
-        if model is None:
-            raise SystemExit(f"{args.body} has no installed model")
-        print(f"{args.body}: {generate_face_sidecar(model, force=args.force)}")
-        return 0
-    if args.command == "add-animations":
-        if args.file[0].suffix == ".fbx":
-            options = json.loads(args.options.read_text()) if args.options else None
-            dest, clips = convert_mixamo_clips(
-                deploy_dir, args.file, args.name, options
-            )
-        else:
-            if len(args.file) != 1:
-                raise SystemExit("give one .glb library, or any number of .fbx clips")
-            dest, clips = add_animation_library(deploy_dir, args.file[0], args.name)
-        print(
-            f"installed {dest.name}: {len(clips)} clips ({', '.join(clips[:8])}{'...' if len(clips) > 8 else ''})"
-        )
-        for stem in converted_bodies(
-            deploy_dir
-        ):  # a body converted from another rig gets it retargeted
-            done = retarget_library_onto(deploy_dir, stem, dest)
-            if done:
-                print(f"    retargeted {dest.stem}: {len(done)} clips onto {stem}")
-        return 0
-    with tempfile.TemporaryDirectory(prefix="deskmate-convert-") as scratch:
-        from_fbx = (
-            args.command == "add-body" and args.file.suffix == ".fbx"
-        )  # its textures are not yet shrunk
-        sketch = None
-        if (
-            args.command in ("add-body", "add-outfit", "add-accessory")
-            and args.file.suffix == ".glb"
-        ):
-            gltf = _glb_json(args.file)
-            if sketchfab.is_sketchfab(gltf):
-                sketch = sketchfab.credits(gltf)
-                print(f"{args.file.name}: a Sketchfab model, {credit_line(sketch)}")
-                for note in sketch["notes"]:
-                    print(f"    note: {note}")
-                if args.command == "add-body":
-                    args.file = convert_sketchfab_body(
-                        args.file, Path(scratch) / "sketchfab", args.max_texture
-                    )
-        rig = None
-        if (
-            args.command == "add-body"
-            and args.file.suffix == ".glb"
-            and not args.no_rig
-            and args.name.startswith("custom:")
-        ):
-            family = rigs.rig_family(library_contents(args.file)[0])
-            if family is not None:
-                args.file, done = convert_rig_body(args.file, Path(scratch) / "rig")
-                rig = {"family": family, "retargeted": True}
-                print(f"    {family} rig converted to the Quaternius skeleton: {done}")
-        if from_fbx:
-            print(
-                f"{args.file.name}: converting a Mixamo character to the Quaternius skeleton"
-            )
-            args.file = convert_mixamo_body(
-                args.file, Path(scratch) / "mixamo", deploy_dir
-            )
-        if (
-            args.command == "add-outfit"
-        ):  # always re-encoded: the budgets apply to a .glb outfit too
-            args.file = convert_to_glb(
-                args.file,
-                Path(scratch),
-                args.max_texture,
-                args.max_triangles,
-                always=True,
-            )
-        else:
-            heavy = (
-                args.command == "add-body"
-                and args.file.suffix == ".glb"
-                and (glb_triangles(args.file) > BODY_MAX_TRIANGLES or from_fbx)
-            )
-            if heavy:
-                print(
-                    f"{args.file.name} has {glb_triangles(args.file):,} triangles; decimating to about {BODY_MAX_TRIANGLES:,}"
-                )
-            args.file = convert_to_glb(
-                args.file,
-                Path(scratch),
-                args.max_texture,
-                BODY_MAX_TRIANGLES if args.command == "add-body" else 0,
-                always=heavy,
-            )
-        if args.command == "add-body":
-            report = add_body(deploy_dir, args.file, args.name)
-            if sketch is not None:
-                installed = _model_file(deploy_dir, args.name)
-                if installed is not None:
-                    credits_path(installed).write_text(
-                        json.dumps(sketch, indent=2) + "\n"
-                    )
-            if rig is not None:
-                installed = _model_file(deploy_dir, args.name)
-                if installed is not None:
-                    rig_sidecar(installed).write_text(json.dumps(rig, indent=2) + "\n")
-                    retarget_all_libraries(deploy_dir, installed.stem)
-            caps = (
-                ", ".join(k for k, v in report["capabilities"].items() if v) or "none"
-            )
-            print(
-                f"installed {args.name}\n    capabilities: {caps}\n    sockets: {', '.join(report['supported_sockets']) or 'none'}"
-            )
-            for warning in report.get("warnings", []):
-                print(f"    warning: {warning}")
-            if not report.get(
-                "viseme_shape_keys"
-            ):  # no lip-sync of its own: try to give it a face overlay
-                installed = _model_file(deploy_dir, args.name)
-                if installed is not None:
-                    print(f"    face sidecar: {generate_face_sidecar(installed)}")
-        elif args.command == "add-outfit":
-            dest = add_outfit(deploy_dir, args.file, args.body, args.name)
-            if sketch is not None:
-                credits_path(dest).write_text(json.dumps(sketch, indent=2) + "\n")
-            print(f"installed {dest}")
-        else:
-            dest = add_accessory(
-                deploy_dir,
-                args.file,
-                args.socket,
-                args.name,
-                scale=args.scale,
-                offset=tuple(args.offset),
-                rotation=tuple(args.rotation),
-                requires=args.requires,
-            )
-            if sketch is not None:
-                credits_path(dest).write_text(json.dumps(sketch, indent=2) + "\n")
-            print(f"installed {dest}")
-            for warning in accessory_warnings(args.file):
-                print(f"    warning: {warning}")
-    return 0
+    return cli_main(argv)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # `python -m brain.appearance.models`: run the package's own copy of this module, which loads
+    # the parts below in the usual order, instead of this `__main__` copy (a second one).
+    from brain.appearance.models import main as _package_main
+
+    sys.exit(_package_main())
+
+
+from brain.appearance.model_animations import (  # noqa: F401 -- re-exported
+    add_animation_library,
+    add_profile,
+    convert_mixamo_clips,
+    converted_bodies,
+    profiles_in_use,
+    retarget_all_libraries,
+    retarget_library_onto,
+)
+
+from brain.appearance.model_matrix import (  # noqa: F401 -- re-exported
+    _describe_animations,
+    animation_gaps,
+    animation_matrix,
+    animation_support,
+)
+
+from brain.appearance.model_conversion import (  # noqa: F401 -- re-exported
+    body_meshes,
+    rebind_mesh,
+    convert_mixamo_body,
+    convert_rig_body,
+    convert_sketchfab_body,
+    rig_body,
+)

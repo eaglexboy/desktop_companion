@@ -7,7 +7,15 @@ from typing import Any
 
 from brain.skills.registry import Param, Skill, SkillRegistry
 
-GESTURES = ("greet", "agree", "disagree", "celebrate", "shrug", "angry", "hip_thrust")
+GESTURES = (
+    "greet",
+    "agree",
+    "disagree",
+    "celebrate",
+    "shrug",
+    "angry",
+    "hip_thrust",
+)
 
 
 def gesture_intensity(state: Any) -> float:
@@ -16,8 +24,14 @@ def gesture_intensity(state: Any) -> float:
     the matching variant of a clip (a smaller or a bigger greeting wave)."""
     try:
         mood = state.store.get_mood()
-        lift = 0.6 * (mood.get("valence", 50.0) - 50.0) + 0.4 * (mood.get("energy", 50.0) - 50.0) - 0.3 * (mood.get("stress", 50.0) - 50.0)
-    except Exception:  # noqa: BLE001 -- a gesture must never fail for want of a mood
+        lift = (
+            0.6 * (mood.get("valence", 50.0) - 50.0)
+            + 0.4 * (mood.get("energy", 50.0) - 50.0)
+            - 0.3 * (mood.get("stress", 50.0) - 50.0)
+        )
+    except (
+        Exception
+    ):  # noqa: BLE001 -- a gesture must never fail for want of a mood
         return 0.5
     return max(0.0, min(1.0, 0.5 + lift / 100.0))
 
@@ -25,7 +39,15 @@ def gesture_intensity(state: Any) -> float:
 async def _gesture(args: dict[str, Any], state: Any) -> str:
     name = args["name"]
     # `name` is what the overlay reads; `clip` is the documented protocol field.
-    await state.hub.broadcast("play_gesture", {"name": name, "clip": name, "loop": False, "intensity": gesture_intensity(state)})
+    await state.hub.broadcast(
+        "play_gesture",
+        {
+            "name": name,
+            "clip": name,
+            "loop": False,
+            "intensity": gesture_intensity(state),
+        },
+    )
     return f"played {name}"
 
 
@@ -40,7 +62,9 @@ async def _change_look(args: dict[str, Any], state: Any) -> str:
 
 async def _revert_look(args: dict[str, Any], state: Any) -> str:
     version = str(args.get("version", "")).strip()
-    return await state.evolution.revert_appearance(f"version {version}" if version.isdigit() else "")
+    return await state.evolution.revert_appearance(
+        f"version {version}" if version.isdigit() else ""
+    )
 
 
 async def _unlock_look(_args: dict[str, Any], state: Any) -> str:
@@ -78,7 +102,13 @@ def register_builtin(registry: SkillRegistry) -> None:
             "revert_look",
             "go back to your previous appearance, or to a numbered look from the status page's Looks tab",
             _revert_look,
-            (Param("version", "the look number to go back to; leave out for the previous look", required=False),),
+            (
+                Param(
+                    "version",
+                    "the look number to go back to; leave out for the previous look",
+                    required=False,
+                ),
+            ),
         )
     )
     registry.register(

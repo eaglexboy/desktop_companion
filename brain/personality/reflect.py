@@ -86,7 +86,9 @@ def _clamp(value: float, limit: float) -> float:
     return max(-limit, min(limit, value))
 
 
-async def run_reflection(store: PersonalityStore, local_pool: LLMPool) -> ReflectionResult:
+async def run_reflection(
+    store: PersonalityStore, local_pool: LLMPool
+) -> ReflectionResult:
     """Run one reflection pass over pending interactions."""
     pending = store.pending_interactions()
     if not pending:
@@ -103,9 +105,13 @@ async def run_reflection(store: PersonalityStore, local_pool: LLMPool) -> Reflec
 
     try:
         with llm_purpose("reflect"):
-            _, raw = await local_pool.chat([{"role": "user", "content": prompt}], max_tokens=512)
+            _, raw = await local_pool.chat(
+                [{"role": "user", "content": prompt}], max_tokens=512
+            )
         verdict = json.loads(raw.strip())
-    except Exception as exc:  # noqa: BLE001 - a bad reflection pass shouldn't crash the daemon
+    except (
+        Exception
+    ) as exc:  # noqa: BLE001 - a bad reflection pass shouldn't crash the daemon
         logger.warning("reflection call failed: %s", exc)
         return _NO_OP_RESULT
 
@@ -119,7 +125,9 @@ async def run_reflection(store: PersonalityStore, local_pool: LLMPool) -> Reflec
         for name, delta in verdict.get("mood_deltas", {}).items()
         if name in MOOD_NAMES
     }
-    memory_notes = [str(n) for n in verdict.get("memory_notes", [])][:_MAX_MEMORY_NOTES_PER_PASS]
+    memory_notes = [str(n) for n in verdict.get("memory_notes", [])][
+        :_MAX_MEMORY_NOTES_PER_PASS
+    ]
 
     if trait_deltas:
         store.adjust_traits(trait_deltas, cause="reflection")
@@ -127,8 +135,12 @@ async def run_reflection(store: PersonalityStore, local_pool: LLMPool) -> Reflec
         store.nudge_mood(mood_deltas, cause="reflection")
     emit(
         "reflection.result",
-        {"trait_deltas": trait_deltas, "mood_deltas": mood_deltas, "memory_notes": memory_notes,
-         "interactions_reviewed": len(pending)},
+        {
+            "trait_deltas": trait_deltas,
+            "mood_deltas": mood_deltas,
+            "memory_notes": memory_notes,
+            "interactions_reviewed": len(pending),
+        },
     )
     for note in memory_notes:
         store.add_memory_note(note)
@@ -143,7 +155,10 @@ async def run_reflection(store: PersonalityStore, local_pool: LLMPool) -> Reflec
         len(memory_notes),
     )
     return ReflectionResult(
-        changed=True, trait_deltas=trait_deltas, mood_deltas=mood_deltas, notes_created=len(memory_notes)
+        changed=True,
+        trait_deltas=trait_deltas,
+        mood_deltas=mood_deltas,
+        notes_created=len(memory_notes),
     )
 
 
@@ -166,6 +181,7 @@ async def maybe_trigger_autonomous_redesign(
     *biasing* of what changes belongs in the delta-synthesis prompt, not
     here -- this function only gates *whether* a cycle fires.
     """
+
     def _verdict(outcome: str, **detail: float) -> None:
         # Every gate is silent by nature; without this a "decided not to"
         # can't be told apart from "never checked".
@@ -188,14 +204,24 @@ async def maybe_trigger_autonomous_redesign(
     last_redesign_raw = store.get_agent_state("last_redesign_timestamp")
     if last_redesign_raw is not None:
         elapsed_hours = (time.time() - float(last_redesign_raw)) / 3600.0
-        threshold_hours = random.uniform(redesign_cooldown_hours_min, redesign_cooldown_hours_max)
+        threshold_hours = random.uniform(
+            redesign_cooldown_hours_min, redesign_cooldown_hours_max
+        )
         if elapsed_hours < threshold_hours:
-            _verdict("cooldown", elapsed_h=round(elapsed_hours, 2), threshold_h=round(threshold_hours, 2))
+            _verdict(
+                "cooldown",
+                elapsed_h=round(elapsed_hours, 2),
+                threshold_h=round(threshold_hours, 2),
+            )
             return False
 
     roll = random.random()
     if roll >= autonomous_redesign_probability:
-        _verdict("roll_failed", roll=round(roll, 3), needed_below=autonomous_redesign_probability)
+        _verdict(
+            "roll_failed",
+            roll=round(roll, 3),
+            needed_below=autonomous_redesign_probability,
+        )
         return False
 
     _verdict("triggered", roll=round(roll, 3))

@@ -1,0 +1,50 @@
+{
+  "format": 1,
+  "name": "quaternius_mech_3leg",
+  "signature": [
+    "Torso",
+    "Chest",
+    "Shoulder.L",
+    "UpperLeg.L",
+    "MidLeg.L"
+  ],
+  "absent": [],
+  "bones": {
+    "Torso": "pelvis",
+    "Chest": "spine_03",
+    "Neck": "neck_01",
+    "Head": "Head",
+    "Shoulder.L": "clavicle_l",
+    "Shoulder.R": "clavicle_r",
+    "UpperArm.L": "upperarm_l",
+    "UpperArm.R": "upperarm_r",
+    "LowerArm.L": "lowerarm_l",
+    "LowerArm.R": "lowerarm_r",
+    "UpperLeg.L": "thigh_l",
+    "UpperLeg.R": "thigh_r",
+    "MidLeg.L": "calf_l",
+    "MidLeg.R": "calf_r",
+    "FootBack.L": "foot_l",
+    "FootBack.R": "foot_r",
+    "Thumb1.L": "thumb_01_l",
+    "Thumb1.R": "thumb_01_r",
+    "Thumb2.L": "thumb_02_l",
+    "Thumb2.R": "thumb_02_r",
+    "Index1.L": "index_01_l",
+    "Index1.R": "index_01_r",
+    "Index2.L": "index_02_l",
+    "Index2.R": "index_02_r",
+    "Ring1.L": "ring_01_l",
+    "Ring1.R": "ring_01_r",
+    "Ring2.L": "ring_02_l",
+    "Ring2.R": "ring_02_r",
+    "Pinky1.L": "pinky_01_l",
+    "Pinky1.R": "pinky_01_r",
+    "Pinky2.L": "pinky_02_l",
+    "Pinky2.R": "pinky_02_r"
+  },
+  "fold": {
+    "Foot.L": "foot_l",
+    "Foot.R": "foot_r"
+  }
+}

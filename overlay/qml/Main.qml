@@ -17,14 +17,17 @@ Window {
     flags: Qt.FramelessWindowHint
     visible: true
 
+    // Backend objects, handed in from main.cpp as initial properties (typed, so qmllint can check them).
+    required property IpcClient ipc
+    required property AudioCapture audioCapture
+    required property ShortcutManager shortcutManager
+
     LayerShellQt.Window.layer: LayerShellQt.Window.LayerOverlay
     LayerShellQt.Window.anchors: LayerShellQt.Window.AnchorTop | LayerShellQt.Window.AnchorLeft
     // A negative exclusion zone tells the compositor this surface floats
     // above other windows without reserving any screen space for itself.
     LayerShellQt.Window.exclusionZone: -1
-    LayerShellQt.Window.keyboardInteractivity: interactive
-        ? LayerShellQt.Window.KeyboardInteractivityOnDemand
-        : LayerShellQt.Window.KeyboardInteractivityNone
+    LayerShellQt.Window.keyboardInteractivity: interactive ? LayerShellQt.Window.KeyboardInteractivityOnDemand : LayerShellQt.Window.KeyboardInteractivityNone
     // Output-local position of the surface. The margins follow these, so
     // animating them is what makes the companion run to a new spot instead
     // of jumping there.
@@ -44,45 +47,57 @@ Window {
     ParallelAnimation {
         id: slideAnim
         property int durationMs: 400
-        NumberAnimation { id: slideXAnim; target: root; property: "slideX"; duration: slideAnim.durationMs; easing.type: Easing.InOutQuad }
-        NumberAnimation { id: slideYAnim; target: root; property: "slideY"; duration: slideAnim.durationMs; easing.type: Easing.InOutQuad }
+        NumberAnimation {
+            id: slideXAnim
+            target: root
+            property: "slideX"
+            duration: slideAnim.durationMs
+            easing.type: Easing.InOutQuad
+        }
+        NumberAnimation {
+            id: slideYAnim
+            target: root
+            property: "slideY"
+            duration: slideAnim.durationMs
+            easing.type: Easing.InOutQuad
+        }
     }
 
     // Moves the surface within its current output: a run when it is already
     // on screen, a jump for the very first placement or a zero duration.
     function slideTo(localX, localY, durationMs, animate, easing) {
-        slideAnim.stop()
-        slideStartTimer.stop()
-        standMoveTimer.stop()
+        slideAnim.stop();
+        slideStartTimer.stop();
+        standMoveTimer.stop();
         if (!animate || durationMs <= 0 || (localX === slideX && localY === slideY)) {
-            slideX = localX
-            slideY = localY
+            slideX = localX;
+            slideY = localY;
             // The re-home between monitors happens mid-trip: stay side-on.
             if (!root.crossEntering)
-                idleBehaviors.turnBack()
-            return 0
+                idleBehaviors.turnBack();
+            return 0;
         }
         // A body sitting on its chair stands up first, the chair goes, and only then does it
         // turn and run: the move is held back for that long and then made as normal.
-        const standMs = idleBehaviors.requestStand()
+        const standMs = idleBehaviors.requestStand();
         if (standMs > 0) {
-            standMoveTimer.args = [localX, localY, durationMs, animate, easing]
-            standMoveTimer.interval = standMs
-            standMoveTimer.start()
-            return standMs + idleBehaviors.turnMs
+            standMoveTimer.args = [localX, localY, durationMs, animate, easing];
+            standMoveTimer.interval = standMs;
+            standMoveTimer.start();
+            return standMs + idleBehaviors.turnMs;
         }
-        const dx = localX - slideX
-        idleBehaviors.travelDir = dx >= 0 ? 1 : -1
+        const dx = localX - slideX;
+        idleBehaviors.travelDir = dx >= 0 ? 1 : -1;
         // Turn to face the heading first (the slide starts once the turn is
         // done); a mostly vertical trip keeps facing the user.
-        const turns = Math.abs(dx) >= 8 && idleBehaviors.turnToward(idleBehaviors.travelDir)
-        slideStartTimer.interval = turns ? idleBehaviors.turnMs : 1
-        slideAnim.durationMs = durationMs
-        slideXAnim.easing.type = slideYAnim.easing.type = easing !== undefined ? easing : Easing.InOutQuad
-        slideXAnim.to = localX
-        slideYAnim.to = localY
-        slideStartTimer.start()
-        return slideStartTimer.interval
+        const turns = Math.abs(dx) >= 8 && idleBehaviors.turnToward(idleBehaviors.travelDir);
+        slideStartTimer.interval = turns ? idleBehaviors.turnMs : 1;
+        slideAnim.durationMs = durationMs;
+        slideXAnim.easing.type = slideYAnim.easing.type = easing !== undefined ? easing : Easing.InOutQuad;
+        slideXAnim.to = localX;
+        slideYAnim.to = localY;
+        slideStartTimer.start();
+        return slideStartTimer.interval;
     }
 
     Timer {
@@ -129,22 +144,22 @@ Window {
     // of range leaves/clamps rather than silencing the companion by accident.
     function applyVoiceConfig(config) {
         if (config && config.voice && typeof config.voice.volume === "number")
-            speechOutput.volume = Math.max(0.0, Math.min(1.0, config.voice.volume))
+            speechOutput.volume = Math.max(0.0, Math.min(1.0, config.voice.volume));
     }
     // Sentences of the current reply spoken so far (shown in the bubble).
     property var bubbleSentences: []
     // The bubble shows the most recent sentences that fit ~240 chars, so a
     // missed sentence can still be read while the reply continues.
     readonly property string bubbleText: {
-        const out = []
-        let total = 0
+        const out = [];
+        let total = 0;
         for (let i = bubbleSentences.length - 1; i >= 0; --i) {
-            total += bubbleSentences[i].length + 1
+            total += bubbleSentences[i].length + 1;
             if (out.length > 0 && total > 240)
-                break
-            out.unshift(bubbleSentences[i])
+                break;
+            out.unshift(bubbleSentences[i]);
         }
-        return out.join(" ")
+        return out.join(" ");
     }
     // Speech arrives as per-sentence chunks (chunk_seq / final) that the
     // daemon sends as each one finishes synthesizing. Chunks queue here and
@@ -154,12 +169,19 @@ Window {
     property var shortcutsConfig: ({})
     // Set by main.cpp as a context property from the `welcome` handshake's
     // asset_dir field.
+    // dataDir is a context property from main.cpp that may not exist yet.
+    // qmllint disable unqualified
     property string deskmateDataDir: typeof dataDir !== "undefined" ? dataDir : ""
+    // qmllint enable unqualified
 
-    WindowMaskHelper { id: maskHelper }
-    LayerShellScreenHelper { id: layerShellScreen }
+    WindowMaskHelper {
+        id: maskHelper
+    }
+    LayerShellScreenHelper {
+        id: layerShellScreen
+    }
     function applyMask() {
-        maskHelper.applyMask(root, root.avatarWidth, root.avatarHeight, root.avatarOffsetY)
+        maskHelper.applyMask(root, root.avatarWidth, root.avatarHeight, root.avatarOffsetY);
     }
 
     // The daemon broadcasts window position in global virtual-desktop
@@ -171,10 +193,14 @@ Window {
     // visible monitor -- a bug that looks identical to a 3D rendering
     // failure since the window still exists, just off-screen.
     function applyPosition(x, y, screenName, hiddenFlag, durationMs) {
-        const sameOutput = root.lastPlacement !== null && root.anchoredScreenName === screenName
-        root.currentScreenName = screenName
-        root.lastPlacement = { x: x, y: y, screen: screenName }
-        const screens = Qt.application.screens
+        const sameOutput = root.lastPlacement !== null && root.anchoredScreenName === screenName;
+        root.currentScreenName = screenName;
+        root.lastPlacement = {
+            x: x,
+            y: y,
+            screen: screenName
+        };
+        const screens = Application.screens;
         for (let i = 0; i < screens.length; ++i) {
             if (screens[i].name === screenName) {
                 // QML's QScreen exposes `virtualX`/`virtualY` -- its offset
@@ -191,45 +217,45 @@ Window {
                     // created, so switching outputs means destroying the
                     // surface (hide), pointing it at the new screen, and
                     // recreating it (show). Same-screen moves skip this.
-                    root.visible = false
-                    layerShellScreen.moveToScreen(root, screens[i].name)
-                    root.anchoredScreenName = screens[i].name
-                    root.slideTo(x - screens[i].virtualX, y - screens[i].virtualY, 0, false)
-                    root.visible = true
+                    root.visible = false;
+                    layerShellScreen.moveToScreen(root, screens[i].name);
+                    root.anchoredScreenName = screens[i].name;
+                    root.slideTo(x - screens[i].virtualX, y - screens[i].virtualY, 0, false);
+                    root.visible = true;
                 } else {
                     // Same output: run there. (Changing output can't be
                     // animated -- a surface can't straddle two outputs.)
-                    root.slideTo(x - screens[i].virtualX, y - screens[i].virtualY, durationMs || 0, sameOutput)
+                    root.slideTo(x - screens[i].virtualX, y - screens[i].virtualY, durationMs || 0, sameOutput);
                 }
-                speechBubble.place(screens[i].name, root.slideX, root.slideY, screens[i].width, screens[i].height)
-                root.hidden = hiddenFlag
-                return
+                speechBubble.place(screens[i].name, root.slideX, root.slideY, screens[i].width, screens[i].height);
+                root.hidden = hiddenFlag;
+                return;
             }
         }
         // Unknown screen name (race with a monitor hot-unplug, or a
         // screen name KWin reports that this client hasn't seen yet) --
         // better to hide than to render at a stale/wrong position.
-        root.hidden = true
+        root.hidden = true;
     }
 
     onInteractiveChanged: {
-        applyMask()
+        applyMask();
         if (interactive)
-            interactionBar.focusInput()
-        ipc.sendInteractionState(interactive ? "active" : "idle")
+            interactionBar.focusInput();
+        root.ipc.sendInteractionState(interactive ? "active" : "idle");
     }
 
     // Bring the companion back no matter why it is not visible: faded out by a
     // fullscreen/hidden placement, or its surface destroyed by the compositor.
     function showCompanion() {
-        root.hidden = false
-        const p = root.lastPlacement
-        root.anchoredScreenName = ""          // force a re-home to the output
-        speechBubble.anchoredScreenName = ""  // the bubble's surface is lost with the displays too
+        root.hidden = false;
+        const p = root.lastPlacement;
+        root.anchoredScreenName = "";          // force a re-home to the output
+        speechBubble.anchoredScreenName = "";  // the bubble's surface is lost with the displays too
         if (p)
-            root.applyPosition(p.x, p.y, p.screen, false, 0)
+            root.applyPosition(p.x, p.y, p.screen, false, 0);
         if (!root.visible)
-            root.visible = true
+            root.visible = true;
     }
 
     // Called from main.cpp when an output (re)appears. The compositor
@@ -237,62 +263,62 @@ Window {
     // bubble must be recreated and re-placed -- otherwise the companion stays
     // invisible after unlocking the screen.
     function recoverDisplay() {
-        showCompanion()
+        showCompanion();
     }
 
     function playNextChunk() {
-        const chunk = root.speechQueue.shift()
+        const chunk = root.speechQueue.shift();
         if (!chunk)
-            return
-        root.activeUtteranceId = chunk.utterance_id || ""
-        root.activeChunkFinal = chunk.final !== false
-        bubbleHideTimer.stop()
+            return;
+        root.activeUtteranceId = chunk.utterance_id || "";
+        root.activeChunkFinal = chunk.final !== false;
+        bubbleHideTimer.stop();
         if ((chunk.chunk_seq || 0) === 0)
-            root.bubbleSentences = []
+            root.bubbleSentences = [];
         if (chunk.text) {
-            const spoken = root.bubbleSentences.slice()
-            spoken.push(chunk.text)
-            root.bubbleSentences = spoken
+            const spoken = root.bubbleSentences.slice();
+            spoken.push(chunk.text);
+            root.bubbleSentences = spoken;
         }
-        avatar3d.controller.setVisemeTimeline(chunk.visemes || [])
-        speechPlayer.source = "file://" + chunk.wav_path
-        speechPlayer.play()
+        avatar3d.controller.setVisemeTimeline(chunk.visemes || []);
+        speechPlayer.source = "file://" + chunk.wav_path;
+        speechPlayer.play();
     }
 
     function startCapture() {
         if (root.capturingActive)
-            return
-        root.activeStreamId = "stream_" + Date.now()
-        root.capturingActive = true
+            return;
+        root.activeStreamId = "stream_" + Date.now();
+        root.capturingActive = true;
         // Barge-in: engaging the mic while the companion is speaking cuts
         // audio immediately rather than waiting for it to finish.
         if (speechPlayer.playbackState === MediaPlayer.PlayingState) {
-            speechPlayer.stop()
-            avatar3d.controller.clearVisemeWeights()
-            idleBehaviors.pulsing = false
-            root.speechQueue = []
-            root.bubbleSentences = []
+            speechPlayer.stop();
+            avatar3d.controller.clearVisemeWeights();
+            idleBehaviors.soundWaves = false;
+            root.speechQueue = [];
+            root.bubbleSentences = [];
             if (root.activeUtteranceId !== "") {
-                ipc.sendSpeechFinished(root.activeUtteranceId)
-                root.activeUtteranceId = ""
+                root.ipc.sendSpeechFinished(root.activeUtteranceId);
+                root.activeUtteranceId = "";
             }
         }
-        audioCapture.start(root.activeStreamId)
-        ipc.sendAudioStreamStart(root.activeStreamId)
+        root.audioCapture.start(root.activeStreamId);
+        root.ipc.sendAudioStreamStart(root.activeStreamId);
     }
 
     function stopCapture() {
         if (!root.capturingActive)
-            return
-        root.capturingActive = false
-        audioCapture.stop()
-        ipc.sendAudioStreamEnd(root.activeStreamId)
-        root.activeStreamId = ""
+            return;
+        root.capturingActive = false;
+        root.audioCapture.stop();
+        root.ipc.sendAudioStreamEnd(root.activeStreamId);
+        root.activeStreamId = "";
     }
 
     Component.onCompleted: {
-        applyMask()
-        ipc.sendInteractionState("idle")
+        applyMask();
+        root.ipc.sendInteractionState("idle");
     }
 
     // Hidden/visible fade lives here, on an ordinary Quick Item, rather
@@ -306,7 +332,12 @@ Window {
         anchors.fill: parent
         opacity: root.hidden ? 0 : 1
         // No fade while crossing monitors: the run itself is the transition.
-        Behavior on opacity { enabled: !root.crossing && !root.crossEntering; NumberAnimation { duration: 200 } }
+        Behavior on opacity {
+            enabled: !root.crossing && !root.crossEntering
+            NumberAnimation {
+                duration: 200
+            }
+        }
 
         Avatar3D {
             id: avatar3d
@@ -318,8 +349,20 @@ Window {
             lookSource: root.currentLookPath
 
             onAssetLoadResult: function (ok, error) {
-                ipc.sendAssetSwapResult(ok, root.pendingManifestVersion, ok ? "" : error)
+                if (ok)
+                    idleBehaviors.modelLoaded();
+                root.ipc.sendAssetSwapResult(ok, root.pendingManifestVersion, ok ? "" : error);
             }
+        }
+
+        // A model with no mouth talks with sound waves beside it instead.
+        SoundWaves {
+            id: soundWaves
+            z: 5
+            unit: root.avatarWidth / 240
+            x: root.avatarWidth - width - 4 * unit
+            y: root.headroom + root.avatarHeight * 0.1
+            active: idleBehaviors.soundWaves
         }
 
         AppearanceStatus {
@@ -334,6 +377,7 @@ Window {
             holdTurn: root.crossing || root.crossEntering
             pivotHeight: avatar3d.pivotHeight
             controller: avatar3d.controller
+            onRevealRequested: avatar3d.concealed = false
         }
 
         InteractionBar {
@@ -352,7 +396,9 @@ Window {
             visible: root.interactive
             pushToTalkMode: root.shortcutsConfig.push_to_talk_mode || "hold"
 
-            onTextSubmitted: function (text) { ipc.sendUserTextInput(text) }
+            onTextSubmitted: function (text) {
+                root.ipc.sendUserTextInput(text);
+            }
             onMicPressed: root.startCapture()
             onMicReleased: root.stopCapture()
             onMicToggled: root.capturingActive ? root.stopCapture() : root.startCapture()
@@ -361,22 +407,24 @@ Window {
 
     MediaPlayer {
         id: speechPlayer
-        audioOutput: AudioOutput { id: speechOutput }
+        audioOutput: AudioOutput {
+            id: speechOutput
+        }
         onPositionChanged: {
             if (root.hasFace)
-                avatar3d.controller.applyVisemeWeightsAt(position / 1000.0)
+                avatar3d.controller.applyVisemeWeightsAt(position / 1000.0);
         }
         onPlaybackStateChanged: {
-            idleBehaviors.pulsing = !root.hasFace && playbackState === MediaPlayer.PlayingState
-            idleBehaviors.speaking = playbackState === MediaPlayer.PlayingState
+            idleBehaviors.soundWaves = !root.hasFace && playbackState === MediaPlayer.PlayingState;
+            idleBehaviors.speaking = playbackState === MediaPlayer.PlayingState;
             if (playbackState === MediaPlayer.StoppedState && root.activeUtteranceId !== "") {
-                avatar3d.controller.clearVisemeWeights()
+                avatar3d.controller.clearVisemeWeights();
                 if (root.speechQueue.length > 0) {
-                    root.playNextChunk()
+                    root.playNextChunk();
                 } else if (root.activeChunkFinal) {
-                    ipc.sendSpeechFinished(root.activeUtteranceId)
-                    root.activeUtteranceId = ""
-                    bubbleHideTimer.restart()  // linger so the last sentence can be read
+                    root.ipc.sendSpeechFinished(root.activeUtteranceId);
+                    root.activeUtteranceId = "";
+                    bubbleHideTimer.restart();  // linger so the last sentence can be read
                 }
                 // else: a non-final chunk finished before the next one was
                 // synthesized -- stay armed; onSpeechReceived resumes playback.
@@ -395,40 +443,46 @@ Window {
     property var crossTarget: null   // { x, y, screen, entryX, entryY } -- output-local entry edge
 
     function screenByName(name) {
-        const screens = Qt.application.screens
+        const screens = Application.screens;
         for (let i = 0; i < screens.length; ++i)
             if (screens[i].name === name)
-                return screens[i]
-        return null
+                return screens[i];
+        return null;
     }
 
     // Returns false when the run can't be staged (first placement, hidden,
     // unknown screen), so the caller falls back to the plain fade.
     function crossTo(x, y, screenName, hiddenFlag) {
-        const from = screenByName(root.anchoredScreenName)
-        const to = screenByName(screenName)
+        const from = screenByName(root.anchoredScreenName);
+        const to = screenByName(screenName);
         if (!from || !to || hiddenFlag || root.hidden || root.lastPlacement === null)
-            return false
-        const dx = (to.virtualX + to.width / 2) - (from.virtualX + from.width / 2)
-        const dy = (to.virtualY + to.height / 2) - (from.virtualY + from.height / 2)
-        const horizontal = Math.abs(dx) >= Math.abs(dy)
-        const localY = Math.max(0, Math.min(y - to.virtualY, to.height - root.avatarHeight))
-        const localX = Math.max(0, Math.min(x - to.virtualX, to.width - root.avatarWidth))
-        let exitX = root.slideX, exitY = root.slideY, entryX = localX, entryY = localY
+            return false;
+        const dx = (to.virtualX + to.width / 2) - (from.virtualX + from.width / 2);
+        const dy = (to.virtualY + to.height / 2) - (from.virtualY + from.height / 2);
+        const horizontal = Math.abs(dx) >= Math.abs(dy);
+        const localY = Math.max(0, Math.min(y - to.virtualY, to.height - root.avatarHeight));
+        const localX = Math.max(0, Math.min(x - to.virtualX, to.width - root.avatarWidth));
+        let exitX = root.slideX, exitY = root.slideY, entryX = localX, entryY = localY;
         if (horizontal) {
-            exitX = dx > 0 ? from.width - root.avatarWidth : 0
-            entryX = dx > 0 ? 0 : to.width - root.avatarWidth
+            exitX = dx > 0 ? from.width - root.avatarWidth : 0;
+            entryX = dx > 0 ? 0 : to.width - root.avatarWidth;
         } else {
-            exitY = dy > 0 ? from.height - root.avatarHeight : 0
-            entryY = dy > 0 ? 0 : to.height - root.avatarHeight
+            exitY = dy > 0 ? from.height - root.avatarHeight : 0;
+            entryY = dy > 0 ? 0 : to.height - root.avatarHeight;
         }
-        root.crossTarget = { x: x, y: y, screen: screenName, entryX: entryX + to.virtualX, entryY: entryY + to.virtualY }
-        root.crossing = true
+        root.crossTarget = {
+            x: x,
+            y: y,
+            screen: screenName,
+            entryX: entryX + to.virtualX,
+            entryY: entryY + to.virtualY
+        };
+        root.crossing = true;
         // The run starts after the turn; the swap waits for both.
-        const lead = root.slideTo(exitX, exitY, root.crossRunMs, true, Easing.InQuad)
-        crossTimer.interval = lead + root.crossRunMs
-        crossTimer.restart()
-        return true
+        const lead = root.slideTo(exitX, exitY, root.crossRunMs, true, Easing.InQuad);
+        crossTimer.interval = lead + root.crossRunMs;
+        crossTimer.restart();
+        return true;
     }
 
     Timer {
@@ -437,24 +491,28 @@ Window {
         // (ease-in), so the re-home reads as leaving the screen, not a stop.
         interval: root.crossRunMs
         onTriggered: {
-            const t = root.crossTarget
-            root.crossTarget = null
+            const t = root.crossTarget;
+            root.crossTarget = null;
             if (!t) {
-                root.crossing = false
-                return
+                root.crossing = false;
+                return;
             }
             // Re-home at the entry edge (a jump while invisible). The surface
             // is destroyed and recreated for the new output, which takes a
             // moment to appear: the run in waits for its first frame, or the
             // whole run would play before anything is on screen.
-            root.crossEntering = true
-            root.hidden = true
-            root.applyPosition(t.entryX, t.entryY, t.screen, false, 0)
-            root.lastPlacement = { x: t.x, y: t.y, screen: t.screen }
-            root.entryRun = t
-            root.awaitFrame = true
-            entryFallbackTimer.restart()
-            root.crossing = false
+            root.crossEntering = true;
+            root.hidden = true;
+            root.applyPosition(t.entryX, t.entryY, t.screen, false, 0);
+            root.lastPlacement = {
+                x: t.x,
+                y: t.y,
+                screen: t.screen
+            };
+            root.entryRun = t;
+            root.awaitFrame = true;
+            entryFallbackTimer.restart();
+            root.crossing = false;
         }
     }
 
@@ -462,31 +520,39 @@ Window {
     property var entryRun: null
     property bool awaitFrame: false
     function startEntryRun() {
-        const t = root.entryRun
-        root.entryRun = null
-        root.awaitFrame = false
-        entryFallbackTimer.stop()
-        entrySettleTimer.stop()
-        idleBehaviors.applyProp()   // the recreated surface brought the scene back with the chair showing
+        const t = root.entryRun;
+        root.entryRun = null;
+        root.awaitFrame = false;
+        entryFallbackTimer.stop();
+        entrySettleTimer.stop();
+        idleBehaviors.applyProp();   // the recreated surface brought the scene back with the chair showing
         if (!t)
-            return
-        const to = root.screenByName(t.screen)
-        let ran = 0
+            return;
+        const to = root.screenByName(t.screen);
+        let ran = 0;
         if (to)
-            ran = root.slideTo(t.x - to.virtualX, t.y - to.virtualY, root.crossRunMs, true, Easing.OutQuad)
-        root.crossEntering = false
+            ran = root.slideTo(t.x - to.virtualX, t.y - to.virtualY, root.crossRunMs, true, Easing.OutQuad);
+        root.crossEntering = false;
         // Already at the spot, so no run in to end the trip: face the user now.
         if (ran === 0)
-            idleBehaviors.turnBack()
+            idleBehaviors.turnBack();
     }
-    Timer { id: entrySettleTimer; interval: 90; onTriggered: root.startEntryRun() }
-    Timer { id: entryFallbackTimer; interval: 800; onTriggered: root.startEntryRun() }
+    Timer {
+        id: entrySettleTimer
+        interval: 90
+        onTriggered: root.startEntryRun()
+    }
+    Timer {
+        id: entryFallbackTimer
+        interval: 800
+        onTriggered: root.startEntryRun()
+    }
     Connections {
         target: root
         function onFrameSwapped() {
             if (root.awaitFrame) {
-                root.awaitFrame = false
-                entrySettleTimer.restart()
+                root.awaitFrame = false;
+                entrySettleTimer.restart();
             }
         }
     }
@@ -502,58 +568,68 @@ Window {
     }
 
     Connections {
-        target: audioCapture
+        target: root.audioCapture
         function onChunkReady(streamId, seq, pcm16le) {
-            ipc.sendAudioStreamChunk(streamId, seq, pcm16le)
+            root.ipc.sendAudioStreamChunk(streamId, seq, pcm16le);
         }
     }
 
     Connections {
-        target: shortcutManager
-        function onToggleInteractionTriggered() { root.interactive = !root.interactive }
-        function onPushToTalkPressed() { root.startCapture() }
-        function onPushToTalkReleased() { root.stopCapture() }
-        function onPushToTalkToggled() { root.capturingActive ? root.stopCapture() : root.startCapture() }
+        target: root.shortcutManager
+        function onToggleInteractionTriggered() {
+            root.interactive = !root.interactive;
+        }
+        function onPushToTalkPressed() {
+            root.startCapture();
+        }
+        function onPushToTalkReleased() {
+            root.stopCapture();
+        }
+        function onPushToTalkToggled() {
+            root.capturingActive ? root.stopCapture() : root.startCapture();
+        }
     }
 
     Connections {
-        target: ipc
+        target: root.ipc
 
         function onWelcomeReceived(manifest, config, assetDir) {
-            root.deskmateDataDir = assetDir
-            root.applyVoiceConfig(config)
-            root.shortcutsConfig = config.shortcuts || {}
+            root.deskmateDataDir = assetDir;
+            root.applyVoiceConfig(config);
+            root.shortcutsConfig = config.shortcuts || {};
             if (config.presence && config.presence.avatar_width_px > 0 && config.presence.avatar_height_px > 0) {
-                root.avatarWidth = config.presence.avatar_width_px
-                root.avatarHeight = config.presence.avatar_height_px
-                applyMask()
+                root.avatarWidth = config.presence.avatar_width_px;
+                root.avatarHeight = config.presence.avatar_height_px;
+                root.applyMask();
             }
-            root.showSpeechBubble = !config.presence || config.presence.show_speech_bubble !== false
-            const versions = manifest.versions || []
-            const current = versions.find(function (v) { return v.version === manifest.current_version })
+            root.showSpeechBubble = !config.presence || config.presence.show_speech_bubble !== false;
+            const versions = manifest.versions || [];
+            const current = versions.find(function (v) {
+                return v.version === manifest.current_version;
+            });
             if (current) {
-                root.pendingManifestVersion = current.version
-                root.hasFace = current.has_face
-                avatar3d.controller.shapeKeyNames = current.viseme_shape_keys || []
-                avatar3d.controller.blinkKeyNames = current.blink_shape_keys || []
-                avatar3d.controller.runKeyNames = current.run_shape_keys || []
-                avatar3d.controller.gestureKeyNames = current.gesture_shape_keys || []
+                root.pendingManifestVersion = current.version;
+                root.hasFace = current.has_face;
+                avatar3d.controller.shapeKeyNames = current.viseme_shape_keys || [];
+                avatar3d.controller.blinkKeyNames = current.blink_shape_keys || [];
+                avatar3d.controller.runKeyNames = current.run_shape_keys || [];
+                avatar3d.controller.gestureKeyNames = current.gesture_shape_keys || [];
                 // A model whose own bones carry the idle clips plays them; the rest keep the transform idles.
-                idleBehaviors.preferBakedClips = current.skeletal_clips === true
+                idleBehaviors.preferBakedClips = current.skeletal_clips === true;
                 // A body wearing an animation library plays its clips by role (idle, talk, run...).
-                idleBehaviors.libraryClips = current.library_clips || ({})
-                avatar3d.pivotHeight = ((current.bounds && current.bounds.height_m) || 0) * 0.45
-                root.currentLookPath = "file://" + assetDir + "/" + current.glb_filename
+                idleBehaviors.libraryClips = current.library_clips || ({});
+                avatar3d.pivotHeight = ((current.bounds && current.bounds.height_m) || 0) * 0.45;
+                root.currentLookPath = "file://" + assetDir + "/" + current.glb_filename;
             }
             if (config.shortcuts) {
-                shortcutManager.registerToggleInteraction(config.shortcuts.toggle_interaction)
-                shortcutManager.registerPushToTalk(config.shortcuts.push_to_talk, config.shortcuts.push_to_talk_mode)
+                root.shortcutManager.registerToggleInteraction(config.shortcuts.toggle_interaction);
+                root.shortcutManager.registerPushToTalk(config.shortcuts.push_to_talk, config.shortcuts.push_to_talk_mode);
             }
         }
 
         // Pushed when config.toml changes ([voice.tts] volume, live).
         function onConfigUpdateReceived(config) {
-            root.applyVoiceConfig(config)
+            root.applyVoiceConfig(config);
         }
 
         function onPositionChanged(x, y, screenName, durationMs, hiddenFlag) {
@@ -563,88 +639,96 @@ Window {
             if (root.entryRun !== null) {
                 // Waiting for the new surface: only the spot can change.
                 if (screenName === root.entryRun.screen)
-                    root.entryRun = { x: x, y: y, screen: screenName }
-                return
+                    root.entryRun = {
+                        x: x,
+                        y: y,
+                        screen: screenName
+                    };
+                return;
             }
             if (root.crossing) {
                 // Mid-run: retarget. Same destination keeps its entry edge;
                 // a different one just appears at its target.
-                const t = root.crossTarget
-                const to = root.screenByName(screenName)
+                const t = root.crossTarget;
+                const to = root.screenByName(screenName);
                 if (t && to) {
-                    const sameDest = screenName === t.screen
+                    const sameDest = screenName === t.screen;
                     root.crossTarget = {
-                        x: x, y: y, screen: screenName,
+                        x: x,
+                        y: y,
+                        screen: screenName,
                         entryX: sameDest ? t.entryX : x,
                         entryY: sameDest ? t.entryY : y
-                    }
+                    };
                 }
-                return
+                return;
             }
             if (root.currentScreenName !== "" && screenName !== root.currentScreenName) {
                 if (root.crossTo(x, y, screenName, hiddenFlag))
-                    return
-                root.hidden = true
-                migrateTimer.targetX = x
-                migrateTimer.targetY = y
-                migrateTimer.targetScreen = screenName
-                migrateTimer.targetHidden = hiddenFlag
-                migrateTimer.start()
+                    return;
+                root.hidden = true;
+                migrateTimer.targetX = x;
+                migrateTimer.targetY = y;
+                migrateTimer.targetScreen = screenName;
+                migrateTimer.targetHidden = hiddenFlag;
+                migrateTimer.start();
             } else {
-                root.applyPosition(x, y, screenName, hiddenFlag, durationMs)
+                root.applyPosition(x, y, screenName, hiddenFlag, durationMs);
             }
         }
 
         function onSpeechReceived(payload) {
-            idleBehaviors.thinking = false
-            const startsNewUtterance = (payload.chunk_seq || 0) === 0
+            idleBehaviors.thinking = false;
+            const startsNewUtterance = (payload.chunk_seq || 0) === 0;
             if (startsNewUtterance)
-                root.speechQueue = []  // a new reply preempts whatever was queued
-            root.speechQueue.push(payload)
+                root.speechQueue = [];  // a new reply preempts whatever was queued
+            root.speechQueue.push(payload);
             if (speechPlayer.playbackState === MediaPlayer.PlayingState) {
                 // Mid-sentence: a continuation just waits its turn; a new
                 // utterance cuts in (the Stopped handler starts the queue head).
                 if (startsNewUtterance)
-                    speechPlayer.stop()
+                    speechPlayer.stop();
             } else {
-                root.playNextChunk()
+                root.playNextChunk();
             }
         }
 
         function onHotReloadAsset(manifest, glbUrl) {
-            const versions = manifest.versions || []
-            const current = versions.find(function (v) { return v.version === manifest.current_version })
+            const versions = manifest.versions || [];
+            const current = versions.find(function (v) {
+                return v.version === manifest.current_version;
+            });
             if (current) {
-                root.pendingManifestVersion = current.version
-                root.hasFace = current.has_face
-                avatar3d.controller.shapeKeyNames = current.viseme_shape_keys || []
-                avatar3d.controller.blinkKeyNames = current.blink_shape_keys || []
-                avatar3d.controller.runKeyNames = current.run_shape_keys || []
-                avatar3d.controller.gestureKeyNames = current.gesture_shape_keys || []
+                root.pendingManifestVersion = current.version;
+                root.hasFace = current.has_face;
+                avatar3d.controller.shapeKeyNames = current.viseme_shape_keys || [];
+                avatar3d.controller.blinkKeyNames = current.blink_shape_keys || [];
+                avatar3d.controller.runKeyNames = current.run_shape_keys || [];
+                avatar3d.controller.gestureKeyNames = current.gesture_shape_keys || [];
                 // A model whose own bones carry the idle clips plays them; the rest keep the transform idles.
-                idleBehaviors.preferBakedClips = current.skeletal_clips === true
+                idleBehaviors.preferBakedClips = current.skeletal_clips === true;
                 // A body wearing an animation library plays its clips by role (idle, talk, run...).
-                idleBehaviors.libraryClips = current.library_clips || ({})
-                avatar3d.pivotHeight = ((current.bounds && current.bounds.height_m) || 0) * 0.45
-                root.currentLookPath = "file://" + root.deskmateDataDir + "/" + current.glb_filename
+                idleBehaviors.libraryClips = current.library_clips || ({});
+                avatar3d.pivotHeight = ((current.bounds && current.bounds.height_m) || 0) * 0.45;
+                root.currentLookPath = "file://" + root.deskmateDataDir + "/" + current.glb_filename;
             }
         }
 
         function onStatusUpdateReceived(payload) {
-            idleBehaviors.thinking = payload.status === "thinking"
+            idleBehaviors.thinking = payload.status === "thinking";
         }
 
         function onAppearanceProgressReceived(payload) {
-            appearanceStatus.update(payload)
+            appearanceStatus.update(payload);
         }
 
         function onMoodUpdateReceived(payload) {
             if (payload.mood)
-                idleBehaviors.mood = payload.mood
+                idleBehaviors.mood = payload.mood;
         }
 
         function onGestureReceived(payload) {
-            idleBehaviors.playGesture(payload.name || "", payload.intensity)
+            idleBehaviors.playGesture(payload.name || "", payload.intensity);
         }
     }
 
@@ -667,7 +751,7 @@ Window {
         tooltip: "Deskmate companion"
         onActivated: function (reason) {
             if (reason === Platform.SystemTrayIcon.Trigger)
-                root.showCompanion()
+                root.showCompanion();
         }
         menu: Platform.Menu {
             Platform.MenuItem {
@@ -677,8 +761,8 @@ Window {
             Platform.MenuItem {
                 text: root.interactive ? "Close input" : "Talk to companion…"
                 onTriggered: {
-                    root.showCompanion()
-                    root.interactive = !root.interactive
+                    root.showCompanion();
+                    root.interactive = !root.interactive;
                 }
             }
             Platform.MenuSeparator {}
@@ -711,13 +795,13 @@ Window {
         interval: 250
         onTriggered: {
             if (root.interactive && !root.active)
-                root.interactive = false
+                root.interactive = false;
         }
     }
     onActiveChanged: {
         if (root.interactive && !root.active)
-            focusLossTimer.restart()
+            focusLossTimer.restart();
         else
-            focusLossTimer.stop()
+            focusLossTimer.stop();
     }
 }

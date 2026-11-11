@@ -30,11 +30,16 @@ for obj in bpy.data.objects:
     if obj.animation_data:
         if idle is not None and obj.type == "ARMATURE":
             obj.animation_data.action = idle
-            if getattr(obj.animation_data, "action_slot", None) is None and idle.slots:
+            if (
+                getattr(obj.animation_data, "action_slot", None) is None
+                and idle.slots
+            ):
                 obj.animation_data.action_slot = idle.slots[0]
         else:
             obj.animation_data_clear()
-    if obj.name.startswith("Icosphere") or obj.name == "SitProp":  # a bone shape; a chair shown only while sitting
+    if (
+        obj.name.startswith("Icosphere") or obj.name == "SitProp"
+    ):  # a bone shape; a chair shown only while sitting
         obj.hide_render = True
     # Blink and mouth shapes come in at their file defaults; the overlay zeroes
     # them on load, so a resting face is the representative picture.
@@ -51,7 +56,11 @@ for obj in bpy.data.objects:
     # The glTF importer adds an "Icosphere" bone-display helper that is not in
     # the file. Bounds come from the evaluated (deformed) mesh: a skinned
     # mesh's own vertices and bound_box are its undeformed shape.
-    if obj.type != "MESH" or obj.name.startswith("Icosphere") or obj.name == "SitProp":
+    if (
+        obj.type != "MESH"
+        or obj.name.startswith("Icosphere")
+        or obj.name == "SitProp"
+    ):
         continue
     evaluated = obj.evaluated_get(depsgraph)
     mesh = evaluated.to_mesh()
@@ -66,7 +75,9 @@ width = max(high.x - low.x, high.y - low.y, 0.01)
 
 scene.render.engine = "BLENDER_WORKBENCH"
 scene.display.shading.light = "STUDIO"
-scene.display.shading.color_type = "TEXTURE"  # shows image textures, and falls back to the material colour
+scene.display.shading.color_type = (
+    "TEXTURE"  # shows image textures, and falls back to the material colour
+)
 scene.render.resolution_x = scene.render.resolution_y = size
 scene.render.film_transparent = True
 

@@ -240,7 +240,7 @@ User / Reflection Loop          Brain Daemon                Blender Subprocess  
      ```bash
      blender --background --factory-startup --python blender/generator.py -- --spec <spec_path> --out <out_path>
      ```
-   * `blender_gen.py` executes the subprocess with a **120-second timeout**, scrubbing virtual environment variables (`VIRTUAL_ENV`, `PYTHONPATH`, `PYTHONHOME`) and purging active venv paths from `PATH`.
+   * `blender_gen.py` executes the subprocess with a **160-second timeout**, scrubbing virtual environment variables (`VIRTUAL_ENV`, `PYTHONPATH`, `PYTHONHOME`) and purging active venv paths from `PATH`.
    * Emits `status_update: {"state": "rebuilding"}` (suppressed if `User_Away`).
 
 3. **Ground-Truth Verification (`<out>.build.json`):**

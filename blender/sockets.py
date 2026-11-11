@@ -113,7 +113,9 @@ def find_socket_bones(bone_names: list[str]) -> dict[str, str]:
     head = _pick(bone_names, "head", exclude=_FINGER)
     neck = _pick(bone_names, "neck")
     spine = [n for n in bone_names if _has(n, "spine") or _has(n, "chest")]
-    chest = _pick(bone_names, "upperchest", "chest") or (spine[-1] if spine else None)
+    chest = _pick(bone_names, "upperchest", "chest") or (
+        spine[-1] if spine else None
+    )
     waist = _pick(bone_names, "hips", "pelvis", "waist") or (
         spine[0] if spine else None
     )
@@ -130,7 +132,9 @@ def find_socket_bones(bone_names: list[str]) -> dict[str, str]:
         "hand_L": _hand(bone_names, "L"),
     }
     return {
-        socket: name for socket, role in SOCKET_ROLES.items() if (name := roles[role])
+        socket: name
+        for socket, role in SOCKET_ROLES.items()
+        if (name := roles[role])
     }
 
 

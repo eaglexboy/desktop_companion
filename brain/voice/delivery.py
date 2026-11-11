@@ -16,7 +16,9 @@ _ENERGY_ANIMATED_THRESHOLD = 70.0
 _ENERGY_SUBDUED_THRESHOLD = 30.0
 
 
-def pick_delivery(traits: dict[str, float], mood: dict[str, float], is_long_or_code: bool) -> DeliveryStyle:
+def pick_delivery(
+    traits: dict[str, float], mood: dict[str, float], is_long_or_code: bool
+) -> DeliveryStyle:
     """The rule table (`deadpan` if sarcasm >= 70, `animated` if energy >=
     70, `subdued` if energy <= 30, `explanatory` for code/lengthy
     explanations) names no priority order for when more than one condition

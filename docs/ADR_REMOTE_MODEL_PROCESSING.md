@@ -15,7 +15,7 @@ A user may split the stack across machines: the companion's overlay on the deskt
 
 | Job | Today | Input | Output |
 |---|---|---|---|
-| **build** a look | `blender_gen._run_blender`, `blender/generator.py --spec`, 120 s timeout, one at a time (the build lock) | the `LookSpec`, and from the deploy directory the body, the outfit and accessory models, the catalogs and the animation libraries | `look-vN.glb`, `build.json` |
+| **build** a look | `blender_gen._run_blender`, `blender/generator.py --spec`, 160 s timeout, one at a time (the build lock) | the `LookSpec`, and from the deploy directory the body, the outfit and accessory models, the catalogs and the animation libraries | `look-vN.glb`, `build.json` |
 | **thumbnail** a look | `blender/thumbnail.py`, Workbench engine, about 2 s, no GPU | a `.glb` | a PNG |
 | **convert** a model on install | `generator.py --convert`, `blender/sketchfab_convert.py`, `blender/mixamo_convert.py body` | a download, up to hundreds of MB | a clean `.glb` |
 | **inspect** a body | `generator.py --inspect` | a `.glb` | sockets, bones, capabilities (`.caps.json`) |
@@ -23,7 +23,7 @@ A user may split the stack across machines: the companion's overlay on the deskt
 
 Four things make this worth splitting, in order of weight:
 
-1. **Memory and time.** A look build with the animation libraries measured 106 s against its 120 s timeout. Cleaning up one Sketchfab download meant reading a 254 MB file (Blender holds a model decoded, many times its size; not measured here). The companion machine is also the user's desktop, which these jobs compete with.
+1. **Memory and time.** A look build with the animation libraries measured 110 s, and 106 s before the last clips were added, against what was then a 120 s timeout (now 160 s). Cleaning up one Sketchfab download meant reading a 254 MB file (Blender holds a model decoded, many times its size; not measured here). The companion machine is also the user's desktop, which these jobs compete with.
 2. **Untrusted input.** Downloaded models are parsed by Blender. On a worker, a hostile file meets a machine that holds nothing of the user's; today it meets their desktop and their database.
 3. **The companion machine may not have Blender at all** (a thin laptop, a mini PC), and should not have to.
 4. **The pieces are meant to speak HTTP.** The brain announces a look to the overlay with both a local path and a URL (`asset_dir` in `welcome`, `glb_url` = `/assets/<file>` in `hot_reload_asset`: the network ADR's "no shared filesystem" rule), so a remote overlay is designed for. Today `/assets/` serves the loopback; its authenticated, non-loopback form is that ADR's Phase 2, which the worker's file transfer below builds on.
@@ -73,7 +73,7 @@ transfer_allowance_s = 60                # added to the job's own timeout
 **Good**
 
 * Blender, its memory and its parsing of untrusted files can leave the user's desktop; a companion machine without Blender works.
-* Builds stop competing with the desktop and can take the time they need; the 120 s timeout is no longer a ceiling set by the weakest machine.
+* Builds stop competing with the desktop and can take the time they need; the 160 s timeout is no longer a ceiling set by the weakest machine.
 * The split is the one the user already has for LLM and speech: configured endpoints, priority, failover, a status view.
 * Nothing about the avatar's behaviour, the manifest or the publish path changes; a worker is a different place to run the same subprocess.
 * Single-machine users change nothing: the default is `LocalRunner`.

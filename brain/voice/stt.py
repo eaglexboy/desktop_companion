@@ -38,7 +38,9 @@ _STREAM_SAMPLE_WIDTH_BYTES = 2  # PCM16LE, per the Microphone Wire Format
 
 class STTBackend(ABC):
     @abstractmethod
-    async def transcribe(self, wav_path: Path, *, language: str | None = None) -> str:
+    async def transcribe(
+        self, wav_path: Path, *, language: str | None = None
+    ) -> str:
         """Transcribe the audio at `wav_path` to text. Raises on failure."""
 
     async def health_check(self) -> bool:
@@ -53,19 +55,31 @@ class STTCoordinator:
     local fallback (never the reverse: a configured "local" backend never
     makes a network call at all)."""
 
-    def __init__(self, active_backend: str, local: STTBackend, remote: STTBackend | None) -> None:
+    def __init__(
+        self, active_backend: str, local: STTBackend, remote: STTBackend | None
+    ) -> None:
         self._active_backend = active_backend
         self._local = local
         self._remote = remote
 
-    async def transcribe(self, wav_path: Path, *, language: str | None = None) -> tuple[str, str]:
+    async def transcribe(
+        self, wav_path: Path, *, language: str | None = None
+    ) -> tuple[str, str]:
         """Returns (backend_name, text)."""
         if self._active_backend == "remote" and self._remote is not None:
             try:
-                return "remote", await self._remote.transcribe(wav_path, language=language)
-            except Exception as exc:  # noqa: BLE001 -- fall back to local, same policy as TTS
-                logger.warning("remote STT failed (%s); falling back to local", exc)
-        return "local", await self._local.transcribe(wav_path, language=language)
+                return "remote", await self._remote.transcribe(
+                    wav_path, language=language
+                )
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 -- fall back to local, same policy as TTS
+                logger.warning(
+                    "remote STT failed (%s); falling back to local", exc
+                )
+        return "local", await self._local.transcribe(
+            wav_path, language=language
+        )
 
     async def aclose(self) -> None:
         await self._local.aclose()
@@ -115,7 +129,11 @@ class StreamingSTT:
     of its own."""
 
     def __init__(
-        self, coordinator: STTCoordinator, *, silence_threshold_ms: int, clock: Callable[[], float] = time.monotonic
+        self,
+        coordinator: STTCoordinator,
+        *,
+        silence_threshold_ms: int,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._coordinator = coordinator
         self._silence_threshold_s = silence_threshold_ms / 1000.0
@@ -123,12 +141,16 @@ class StreamingSTT:
         self._streams: dict[str, _StreamState] = {}
 
     def start_stream(self, stream_id: str, *, sample_rate: int = 16000) -> None:
-        self._streams[stream_id] = _StreamState(sample_rate=sample_rate, last_voice_activity=self._clock())
+        self._streams[stream_id] = _StreamState(
+            sample_rate=sample_rate, last_voice_activity=self._clock()
+        )
 
     def feed_chunk(self, stream_id: str, data: bytes) -> None:
         state = self._streams.get(stream_id)
         if state is None:
-            raise UnknownStreamError(f"no active stream {stream_id!r} (missing audio_stream_start?)")
+            raise UnknownStreamError(
+                f"no active stream {stream_id!r} (missing audio_stream_start?)"
+            )
         state.chunks.append(data)
         if _pcm16le_rms(data) >= _VOICE_ACTIVITY_RMS_THRESHOLD:
             state.last_voice_activity = self._clock()
@@ -139,12 +161,16 @@ class StreamingSTT:
         state = self._streams.get(stream_id)
         if state is None:
             return False
-        return (self._clock() - state.last_voice_activity) >= self._silence_threshold_s
+        return (
+            self._clock() - state.last_voice_activity
+        ) >= self._silence_threshold_s
 
     def discard_stream(self, stream_id: str) -> None:
         self._streams.pop(stream_id, None)
 
-    async def end_stream(self, stream_id: str, *, language: str | None = None) -> tuple[str, str]:
+    async def end_stream(
+        self, stream_id: str, *, language: str | None = None
+    ) -> tuple[str, str]:
         """Finalizes and transcribes the buffered audio, then discards the
         stream's state either way (a stream is finalized at most once)."""
         state = self._streams.pop(stream_id, None)
@@ -155,7 +181,9 @@ class StreamingSTT:
         with tempfile.TemporaryDirectory() as tmp:
             wav_path = Path(tmp) / "utterance.wav"
             _write_pcm16_wav(wav_path, raw_pcm, sample_rate=state.sample_rate)
-            return await self._coordinator.transcribe(wav_path, language=language)
+            return await self._coordinator.transcribe(
+                wav_path, language=language
+            )
 
 
 def build_stt_coordinator(settings: Settings) -> STTCoordinator:
@@ -168,5 +196,9 @@ def build_stt_coordinator(settings: Settings) -> STTCoordinator:
 
     stt_config = settings.voice.stt
     local = FasterWhisperSTTBackend(stt_config.local)
-    remote = RemoteSTTBackend(stt_config.remote) if stt_config.remote.base_url else None
+    remote = (
+        RemoteSTTBackend(stt_config.remote)
+        if stt_config.remote.base_url
+        else None
+    )
     return STTCoordinator(stt_config.active_backend, local, remote)

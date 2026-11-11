@@ -29,8 +29,13 @@ import mathutils  # pyright: ignore[reportMissingImports]
 sys.path.insert(
     0, str(Path(__file__).resolve().parent.parent)
 )  # repo root, for blender.rigs
-from blender.animation_library import q_angle_deg, reduce_keys  # noqa: E402
-from blender.rigs import quaternius_names, rig_family  # noqa: E402
+from blender.animation_library import q_angle_deg, reduce_keys
+from blender.rigs import (
+    folded_bones,
+    prunes_extra_bones,
+    quaternius_names,
+    rig_family,
+)
 
 T_POSE_TOLERANCE_DEG = (
     12.0  # arms within this of straight out to the sides are left as they are
@@ -50,7 +55,10 @@ def _armature():
 def _assign(armature, action) -> None:
     armature.animation_data_create()
     armature.animation_data.action = action
-    if getattr(armature.animation_data, "action_slot", None) is None and action.slots:
+    if (
+        getattr(armature.animation_data, "action_slot", None) is None
+        and action.slots
+    ):
         armature.animation_data.action_slot = action.slots[0]
 
 
@@ -124,6 +132,83 @@ def _make_pose_the_rest_pose(arm) -> None:
         mesh.modifiers.new("Armature", "ARMATURE").object = arm
 
 
+# Bones that hang from the pelvis on the Quaternius skeleton. A skeleton that hangs them from somewhere else
+# (the root, say) has legs that stay put while the animation moves the pelvis, so the body slides off its legs.
+HANGS_FROM_PELVIS = ("thigh_l", "thigh_r")
+
+
+def _hang_legs_from_pelvis(arm) -> list[str]:
+    """Makes the thighs children of the pelvis where they are not (below it, as a descendant, they are
+    already). Edit bones keep their place, so nothing moves at rest. Returns the bones changed.
+    """
+    changed = []
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="EDIT")
+    edit = arm.data.edit_bones
+    if "pelvis" in edit:
+        pelvis = edit["pelvis"]
+        for name in HANGS_FROM_PELVIS:
+            if name not in edit:
+                continue
+            bone, ancestor = edit[name], edit[name].parent
+            while ancestor is not None and ancestor is not pelvis:
+                ancestor = ancestor.parent
+            if ancestor is None:
+                bone.parent = pelvis
+                changed.append(name)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    return changed
+
+
+def _fold_bones(arm, nearest: dict[str, str | None]) -> int:
+    """Folds the bones named in `nearest` into the bone each maps to: their vertex weights are added to its,
+    their children go to their parent, and they go. A bone that maps to none (or to a bone that is not
+    there) is only removed. Returns how many went.
+    """
+    for mesh in (o for o in bpy.data.objects if o.type == "MESH"):
+        index = {g.index: g.name for g in mesh.vertex_groups}
+        moves: dict[str, list[tuple[int, float]]] = {}
+        for vertex in mesh.data.vertices:
+            for g in vertex.groups:
+                target = nearest.get(index.get(g.group, ""))
+                if target:
+                    moves.setdefault(target, []).append(
+                        (vertex.index, g.weight)
+                    )
+        for target, weights in moves.items():
+            group = mesh.vertex_groups.get(target) or mesh.vertex_groups.new(
+                name=target
+            )
+            for vertex_index, weight in weights:
+                group.add([vertex_index], weight, "ADD")
+        for name in nearest:
+            if name in mesh.vertex_groups:
+                mesh.vertex_groups.remove(mesh.vertex_groups[name])
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="EDIT")
+    edit = arm.data.edit_bones
+    for name in nearest:
+        bone = edit[name]
+        for child in list(bone.children):
+            child.parent = bone.parent
+        edit.remove(bone)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    return len(nearest)
+
+
+def _prune_extra_bones(arm, keep: set[str]) -> int:
+    """Folds the bones that are not in `keep` into the nearest kept ancestor (see `_fold_bones`)."""
+    nearest: dict[str, str | None] = {}
+    for bone in arm.data.bones:
+        if bone.name in keep:
+            continue
+        ancestor = bone.parent
+        while ancestor is not None and ancestor.name not in keep:
+            ancestor = ancestor.parent
+        nearest[bone.name] = ancestor.name if ancestor else None
+    return _fold_bones(arm, nearest)
+
+
 def convert_body(source: str, out: str) -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.gltf(filepath=source)
@@ -137,7 +222,9 @@ def convert_body(source: str, out: str) -> None:
     mapping = quaternius_names(family, names)
     spare = {n for n in names if n not in mapping}
     mapping = {
-        old: new for old, new in mapping.items() if new == old or new not in spare
+        old: new
+        for old, new in mapping.items()
+        if new == old or new not in spare
     }  # not onto a name another bone has
     renamed = {old: new for old, new in mapping.items() if old != new}
 
@@ -158,6 +245,21 @@ def convert_body(source: str, out: str) -> None:
         for group in mesh.vertex_groups:
             group.name = renamed.get(group.name, group.name)
 
+    # control bones a mesh is weighted to, that no library drives: into the bone the map says
+    folds = {
+        old: new
+        for old, new in folded_bones(family).items()
+        if old in arm.data.bones and new in arm.data.bones
+    }
+    if folds:
+        _fold_bones(arm, folds)
+
+    pruned = 0
+    if prunes_extra_bones(family):
+        pruned = _prune_extra_bones(arm, set(mapping.values()) | {"root"})
+
+    rehung = _hang_legs_from_pelvis(arm)
+
     missing = [
         n
         for n in ("pelvis", "thigh_l", "thigh_r", "upperarm_l", "upperarm_r")
@@ -176,7 +278,9 @@ def convert_body(source: str, out: str) -> None:
         for obj in (arm, *meshes):
             obj.select_set(True)
         bpy.context.view_layer.objects.active = arm
-        bpy.ops.object.transform_apply(location=True, rotation=True, scale=False)
+        bpy.ops.object.transform_apply(
+            location=True, rotation=True, scale=False
+        )
 
     tposed = _pose_arms_out(arm)
     if tposed:
@@ -192,7 +296,7 @@ def convert_body(source: str, out: str) -> None:
         export_draco_mesh_compression_enable=False,
     )
     print(
-        f"RIG_BODY_OK {out} family={family} mapped={len(mapping)} turned={math.degrees(turn):.0f} tposed={int(tposed)}"
+        f"RIG_BODY_OK {out} family={family} mapped={len(mapping)} turned={math.degrees(turn):.0f} tposed={int(tposed)} pruned={pruned} rehung={len(rehung)}"
     )
 
 
@@ -201,7 +305,10 @@ def convert_body(source: str, out: str) -> None:
 
 def _rest_world(arm) -> dict:
     w = arm.matrix_world.to_3x3()
-    return {b.name: (w @ b.matrix_local.to_3x3()).normalized() for b in arm.data.bones}
+    return {
+        b.name: (w @ b.matrix_local.to_3x3()).normalized()
+        for b in arm.data.bones
+    }
 
 
 def _in_order(arm) -> list:
@@ -227,7 +334,10 @@ def retarget_library(spec_path: str) -> None:
     for obj in [o for o in bpy.data.objects if o.type == "MESH"]:
         bpy.data.objects.remove(obj, do_unlink=True)
 
-    before_objects, before_actions = set(bpy.data.objects), set(bpy.data.actions)
+    before_objects, before_actions = (
+        set(bpy.data.objects),
+        set(bpy.data.actions),
+    )
     bpy.ops.import_scene.gltf(filepath=spec["library"])
     new_objects = [o for o in bpy.data.objects if o not in before_objects]
     source = next(o for o in new_objects if o.type == "ARMATURE")
@@ -235,7 +345,9 @@ def retarget_library(spec_path: str) -> None:
 
     rest_s, rest_t = _rest_world(source), _rest_world(target)
     common = [
-        n for n in source.data.bones.keys() if n in target.data.bones and n != "root"
+        n
+        for n in source.data.bones.keys()  # noqa: SIM118 -- iterating a bpy collection gives the bones, not their names
+        if n in target.data.bones and n != "root"
     ]
     order = _in_order(target)
     wanted = [c for c in spec["clips"] if c in actions]
@@ -254,8 +366,8 @@ def retarget_library(spec_path: str) -> None:
         _assign(source, action)
         first, last = int(action.frame_range[0]), int(action.frame_range[1])
         frames: list[float] = []
-        quats = {n: [] for n in common}
-        travel = []
+        quats: dict[str, list] = {n: [] for n in common}
+        travel: list = []
         for frame in range(first, last + 1):
             bpy.context.scene.frame_set(frame)
             bpy.context.view_layer.update()
@@ -294,7 +406,9 @@ def retarget_library(spec_path: str) -> None:
                     basis = rest.inverted() @ desired[bone.name]
                 q = basis.to_quaternion()
                 quats[bone.name].append((q.w, q.x, q.y, q.z))
-            moved = (source.matrix_world @ source.pose.bones["pelvis"].head) - pelvis_s
+            moved = (
+                source.matrix_world @ source.pose.bones["pelvis"].head
+            ) - pelvis_s
             travel.append(spin @ moved * ratio)
             frames.append(float(frame - first))
         made.append((name, frames, quats, travel))
@@ -310,9 +424,13 @@ def retarget_library(spec_path: str) -> None:
         for bone_name, samples in quats.items():
             pose_bone = target.pose.bones[bone_name]
             pose_bone.rotation_mode = "QUATERNION"
-            for i in reduce_keys(frames, samples, q_angle_deg, ROTATION_TOLERANCE_DEG):
+            for i in reduce_keys(
+                frames, samples, q_angle_deg, ROTATION_TOLERANCE_DEG
+            ):
                 pose_bone.rotation_quaternion = mathutils.Quaternion(samples[i])
-                pose_bone.keyframe_insert("rotation_quaternion", frame=frames[i])
+                pose_bone.keyframe_insert(
+                    "rotation_quaternion", frame=frames[i]
+                )
         pelvis = target.pose.bones["pelvis"]
         basis_travel = [
             pelvis_rest_t.inverted() @ t3.inverted() @ mathutils.Vector(t)

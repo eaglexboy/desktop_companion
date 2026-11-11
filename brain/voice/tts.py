@@ -29,7 +29,12 @@ class TTSBackend(ABC):
 
     @abstractmethod
     async def synthesize(
-        self, text: str, out_wav_path: Path, *, voice_id: str | None = None, params: dict[str, Any] | None = None
+        self,
+        text: str,
+        out_wav_path: Path,
+        *,
+        voice_id: str | None = None,
+        params: dict[str, Any] | None = None,
     ) -> None:
         """Write synthesized speech for `text` to `out_wav_path`. Raises on failure."""
 
@@ -63,7 +68,9 @@ class TTSPool:
         *,
         cooldown_s: float = _FAILURE_COOLDOWN_S,
     ) -> None:
-        self._remote = [_PoolEntry(name, backend) for name, backend in remote_entries]
+        self._remote = [
+            _PoolEntry(name, backend) for name, backend in remote_entries
+        ]
         self._local = local_backend
         self._cooldown_s = cooldown_s
 
@@ -118,10 +125,17 @@ class TTSPool:
             )
         for entry in available:
             try:
-                entry_params = {**(params or {}), **(remote_params or {}).get(entry.name, {})} or None
-                await entry.backend.synthesize(text, out_wav_path, voice_id=voice_id, params=entry_params)
+                entry_params = {
+                    **(params or {}),
+                    **(remote_params or {}).get(entry.name, {}),
+                } or None
+                await entry.backend.synthesize(
+                    text, out_wav_path, voice_id=voice_id, params=entry_params
+                )
                 return entry.name
-            except Exception as exc:  # noqa: BLE001 -- want to try the next backend, then local
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 -- want to try the next backend, then local
                 last_error = exc
                 entry.cooldown_until = time.monotonic() + self._cooldown_s
                 # An httpx timeout stringifies to "", so always include the type.
@@ -135,12 +149,18 @@ class TTSPool:
 
         if self._local is not None:
             try:
-                await self._local.synthesize(text, out_wav_path, voice_id=voice_id, params=params)
+                await self._local.synthesize(
+                    text, out_wav_path, voice_id=voice_id, params=params
+                )
                 return "local"
-            except Exception as exc:  # noqa: BLE001 -- all options exhausted; raise below
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 -- all options exhausted; raise below
                 last_error = exc
 
-        raise RuntimeError(f"All TTS backends failed: {last_error}") from last_error
+        raise RuntimeError(
+            f"All TTS backends failed: {last_error}"
+        ) from last_error
 
     async def warm_up(self, scratch_wav_path: Path) -> None:
         """Sends each remote a throwaway one-word request so an engine that went
@@ -151,11 +171,18 @@ class TTSPool:
             started = time.monotonic()
             try:
                 await entry.backend.synthesize("Hi.", scratch_wav_path)
-                logger.info("TTS remote %r warmed up in %.1fs", entry.name, time.monotonic() - started)
+                logger.info(
+                    "TTS remote %r warmed up in %.1fs",
+                    entry.name,
+                    time.monotonic() - started,
+                )
             except Exception as exc:  # noqa: BLE001 -- warm-up must never raise
                 logger.info(
                     "TTS remote %r warm-up failed after %.1fs (%s: %s)",
-                    entry.name, time.monotonic() - started, type(exc).__name__, exc,
+                    entry.name,
+                    time.monotonic() - started,
+                    type(exc).__name__,
+                    exc,
                 )
 
     async def aclose(self) -> None:
@@ -186,13 +213,19 @@ def build_tts_pool(settings: Settings) -> TTSPool:
         # name (the dict key), which TTSPool needs for logging/failover
         # attribution, so look it up by identity rather than re-deriving
         # the same filter here.
-        entries_by_id = {id(entry): name for name, entry in tts_config.remote.items()}
+        entries_by_id = {
+            id(entry): name for name, entry in tts_config.remote.items()
+        }
         remote_entries = [
             (entries_by_id[id(entry)], build_remote_tts_backend(entry))
             for entry in tts_config.enabled_remote_instances()
         ]
     local_backend = (
-        PiperTTSBackend(tts_config.local, Path(tts_config.voices_dir), piper_bin=tts_config.local.piper_bin)
+        PiperTTSBackend(
+            tts_config.local,
+            Path(tts_config.voices_dir),
+            piper_bin=tts_config.local.piper_bin,
+        )
         if tts_config.voices_dir
         else None
     )

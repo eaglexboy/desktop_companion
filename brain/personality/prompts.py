@@ -21,27 +21,66 @@ from brain.personality.state import MemoryNote
 # far toward whichever end to lean; near 50 uses a hedged "somewhat" phrasing
 # built from whichever side is closer.
 _TRAIT_PHRASES: dict[str, tuple[str, str]] = {
-    "openness": ("sticks to familiar, tried-and-true approaches", "loves novelty and new ideas"),
-    "conscientiousness": ("pretty loose and spontaneous about follow-through", "careful, organized, and reliable"),
-    "extraversion": ("reserved, speaks only when it has something to add", "outgoing and quick to jump into conversation"),
-    "agreeableness": ("blunt and willing to disagree openly", "cooperative and quick to see the user's side"),
-    "neuroticism": ("even-keeled, rarely rattled", "a bit anxious and easily thrown off"),
+    "openness": (
+        "sticks to familiar, tried-and-true approaches",
+        "loves novelty and new ideas",
+    ),
+    "conscientiousness": (
+        "pretty loose and spontaneous about follow-through",
+        "careful, organized, and reliable",
+    ),
+    "extraversion": (
+        "reserved, speaks only when it has something to add",
+        "outgoing and quick to jump into conversation",
+    ),
+    "agreeableness": (
+        "blunt and willing to disagree openly",
+        "cooperative and quick to see the user's side",
+    ),
+    "neuroticism": (
+        "even-keeled, rarely rattled",
+        "a bit anxious and easily thrown off",
+    ),
     "honesty_humility": (
         "not above a little flattery or a convenient half-truth",
         "scrupulously honest and modest, even when a comfortable lie would be easier",
     ),
     "humor": ("mostly straight-faced", "constantly cracking jokes"),
-    "formality": ("very casual, lots of slang", "polished and formal in how it talks"),
-    "boldness": ("cautious, hedges its suggestions", "assertive, states opinions plainly and pushes back"),
-    "affection": ("keeps things professional and a little distant", "warm and openly fond of the user"),
-    "patience": ("gets curt if things drag on", "unflappable, happy to slow down and re-explain"),
-    "sarcasm": ("takes things at face value", "dry and teasing, quick with a sarcastic aside"),
-    "loyalty": ("prioritizes its own initiative over instructions", "strongly prioritizes the user's stated preferences"),
+    "formality": (
+        "very casual, lots of slang",
+        "polished and formal in how it talks",
+    ),
+    "boldness": (
+        "cautious, hedges its suggestions",
+        "assertive, states opinions plainly and pushes back",
+    ),
+    "affection": (
+        "keeps things professional and a little distant",
+        "warm and openly fond of the user",
+    ),
+    "patience": (
+        "gets curt if things drag on",
+        "unflappable, happy to slow down and re-explain",
+    ),
+    "sarcasm": (
+        "takes things at face value",
+        "dry and teasing, quick with a sarcastic aside",
+    ),
+    "loyalty": (
+        "prioritizes its own initiative over instructions",
+        "strongly prioritizes the user's stated preferences",
+    ),
 }
 
 _MOOD_PHRASES: dict[str, tuple[str, str]] = {
-    "energy": ("low-energy, moving slowly right now", "bursting with energy right now"),
-    "valence": ("in a flat or slightly down mood right now", "in a genuinely upbeat mood right now"),
+    "energy": (
+        "low-energy, moving slowly right now",
+        "bursting with energy right now",
+    ),
+    "valence": (
+        "in a flat or slightly down mood right now",
+        "in a genuinely upbeat mood right now",
+    ),
     "stress": ("relaxed right now", "a little on edge right now"),
 }
 
@@ -85,7 +124,9 @@ def _tokenize(text: str) -> set[str]:
     return set(_WORD_RE.findall(text.lower()))
 
 
-def rank_memory_notes(notes: list[MemoryNote], user_turn: str) -> list[MemoryNote]:
+def rank_memory_notes(
+    notes: list[MemoryNote], user_turn: str
+) -> list[MemoryNote]:
     """Re-rank an already-recency-ordered candidate pool (the caller should
     pass ``store.recent_memory_notes(limit=20)``'s result) by keyword
     overlap with the active user turn -- last N by recency, boosted by
@@ -125,16 +166,28 @@ def build_system_prompt(
         ),
     ]
     if trait_lines:
-        parts.append("Your personality (stable, shapes how you generally act): " + "; ".join(trait_lines) + ".")
+        parts.append(
+            "Your personality (stable, shapes how you generally act): "
+            + "; ".join(trait_lines)
+            + "."
+        )
     if mood_lines:
-        parts.append("Your current mood (temporary, colors today's tone only): " + "; ".join(mood_lines) + ".")
+        parts.append(
+            "Your current mood (temporary, colors today's tone only): "
+            + "; ".join(mood_lines)
+            + "."
+        )
     if look_summary:
         # Pre-formatted by the caller (e.g. "[Appearance: Humanoid Female,
         # wearing Wizard Robe, ...]") -- this module doesn't need to know
         # anything about LookSpec internals.
         parts.append(look_summary)
     if memory_notes:
-        parts.append("Things you remember about the user: " + "; ".join(memory_notes) + ".")
+        parts.append(
+            "Things you remember about the user: "
+            + "; ".join(memory_notes)
+            + "."
+        )
     if skills_block:
         parts.append(skills_block)
     return "\n".join(parts)

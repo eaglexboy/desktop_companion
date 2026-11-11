@@ -54,6 +54,7 @@ MODEL_DIRS = (
     "outfit_models",
     "wardrobe",
     "animation_library",
+    "animation_profiles",  # the user's animation profiles (blender/pack_profiles.py)
 )
 # What is made from them (a library retargeted onto a body converted from another rig): in the bundle by
 # default, so that a machine without Blender can use it, and made again on request.
@@ -173,6 +174,7 @@ def _kind(rel: str) -> str:
         "outfit_models": "outfits",
         "wardrobe": "accessories",
         "animation_library": "animation libraries",
+        "animation_profiles": "animation profiles",
         "animation_library_body": "retargeted libraries",
     }.get(folder, folder)
 
@@ -187,7 +189,7 @@ def _tool_version(command: list[str]) -> str:
         return ""
 
 
-def _credits_text(assets: Path, files: list[tuple[str, Path]]) -> str:
+def _credits_text(files: list[tuple[str, Path]]) -> str:
     lines = ["Credits and licences of the models in this bundle", "=" * 49, ""]
     credited = 0
     for rel, path in files:
@@ -327,15 +329,15 @@ def export_bundle(
             look_info = None
             if look is not None:
                 entry, glb, picture = look
-                parts = {
+                look_files = {
                     "look/look.glb": glb.read_bytes(),
                     "look/entry.json": (
                         entry.model_dump_json(indent=2) + "\n"
                     ).encode(),
                 }
                 if picture is not None:
-                    parts["look/look.png"] = picture.read_bytes()
-                for name, data in parts.items():
+                    look_files["look/look.png"] = picture.read_bytes()
+                for name, data in look_files.items():
                     bundle.writestr(name, data)
                     manifest_files[name] = {
                         "sha256": hashlib.sha256(data).hexdigest(),
@@ -366,7 +368,7 @@ def export_bundle(
                 "files": manifest_files,
             }
             bundle.writestr(MANIFEST, json.dumps(manifest, indent=2) + "\n")
-            bundle.writestr(CREDITS, _credits_text(assets, files))
+            bundle.writestr(CREDITS, _credits_text(files))
         if partial.stat().st_size > FAT32_LIMIT:
             report.warnings.append(
                 "the bundle is over 4 GB: a FAT32 thumb drive cannot hold it (exFAT and NTFS can)"

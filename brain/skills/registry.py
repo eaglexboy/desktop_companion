@@ -53,7 +53,9 @@ class Skill:
         parts = []
         for p in self.params:
             kind = "|".join(p.enum) if p.enum else "text"
-            parts.append(f"{p.name}: {kind}" + ("" if p.required else " (optional)"))
+            parts.append(
+                f"{p.name}: {kind}" + ("" if p.required else " (optional)")
+            )
         return f"{self.name}({', '.join(parts)})"
 
 
@@ -64,7 +66,9 @@ class SkillCall:
 
 
 class SkillRegistry:
-    def __init__(self, *, disabled: set[str] | None = None, max_actions: int = 3) -> None:
+    def __init__(
+        self, *, disabled: set[str] | None = None, max_actions: int = 3
+    ) -> None:
         self._skills: dict[str, Skill] = {}
         self._disabled = disabled or set()
         self.max_actions = max_actions
@@ -84,7 +88,14 @@ class SkillRegistry:
 
     def _stat(self, name: str) -> dict[str, Any]:
         return self._stats.setdefault(
-            name, {"calls": 0, "failures": 0, "refused": 0, "last_used": None, "last_error": None}
+            name,
+            {
+                "calls": 0,
+                "failures": 0,
+                "refused": 0,
+                "last_used": None,
+                "last_error": None,
+            },
         )
 
     def describe(self) -> list[dict[str, Any]]:
@@ -99,8 +110,12 @@ class SkillRegistry:
                     "signature": skill.signature(),
                     "description": skill.description,
                     "params": [
-                        {"name": p.name, "description": p.description, "enum": list(p.enum) if p.enum else None,
-                         "required": p.required}
+                        {
+                            "name": p.name,
+                            "description": p.description,
+                            "enum": list(p.enum) if p.enum else None,
+                            "required": p.required,
+                        }
                         for p in skill.params
                     ],
                     **self._stat(name),
@@ -117,12 +132,13 @@ class SkillRegistry:
             return ""
         lines = "\n".join(f"- {s.signature()}: {s.description}" for s in skills)
         return (
-            'Your whole reply is ALWAYS one JSON object, never plain text, even for a single word or a vocal '
+            "Your whole reply is ALWAYS one JSON object, never plain text, even for a single word or a vocal "
             'cue: {"say": "<what you say out loud>", "do": [{"skill": "<name>", "args": {...}}]}. "say" is spoken '
             'aloud, so write it as plain talk; any vocal cue like *sigh* goes inside the "say" string, e.g. '
             '{"say": "*sigh* I hear you.", "do": []}. "do" is optional and lists '
             "skills to run; use it only when the user asks for something a skill covers, or it clearly fits. "
-            'Never say you did something unless it is in "do", and never invent skills. Skills you have:\n' + lines
+            'Never say you did something unless it is in "do", and never invent skills. Skills you have:\n'
+            + lines
         )
 
     def validate(self, call: SkillCall) -> dict[str, Any]:
@@ -146,20 +162,30 @@ class SkillRegistry:
                 raise SkillError(f"argument {p.name!r} must be text")
             value = value.strip()
             if p.enum is not None and value not in p.enum:
-                raise SkillError(f"argument {p.name!r} must be one of {list(p.enum)}")
+                raise SkillError(
+                    f"argument {p.name!r} must be one of {list(p.enum)}"
+                )
             if len(value) > MAX_STRING_ARG:
                 raise SkillError(f"argument {p.name!r} is too long")
             clean[p.name] = value
         return clean
 
-    async def run_all(self, calls: list[SkillCall], state: Any) -> list[dict[str, Any]]:
+    async def run_all(
+        self, calls: list[SkillCall], state: Any
+    ) -> list[dict[str, Any]]:
         """Runs the proposed calls in order, at most `max_actions` of them.
         One failing skill never stops the others or the reply."""
         results = []
         for call in calls[: self.max_actions]:
             results.append(await self._run_one(call, state))
         for call in calls[self.max_actions :]:
-            emit("skill.rejected", {"skill": call.skill, "reason": f"over the limit of {self.max_actions} per reply"})
+            emit(
+                "skill.rejected",
+                {
+                    "skill": call.skill,
+                    "reason": f"over the limit of {self.max_actions} per reply",
+                },
+            )
         return results
 
     async def _run_one(self, call: SkillCall, state: Any) -> dict[str, Any]:
@@ -170,12 +196,21 @@ class SkillRegistry:
                 stat = self._stat(call.skill)
                 stat["refused"] += 1
                 stat["last_error"] = str(exc)
-            emit("skill.rejected", {"skill": call.skill, "args": call.args if isinstance(call.args, dict) else {}, "reason": str(exc)})
+            emit(
+                "skill.rejected",
+                {
+                    "skill": call.skill,
+                    "args": call.args if isinstance(call.args, dict) else {},
+                    "reason": str(exc),
+                },
+            )
             return {"skill": call.skill, "ok": False, "error": str(exc)}
         skill = self._skills[call.skill]
         started = time.monotonic()
         try:
-            result = await asyncio.wait_for(skill.handler(args, state), SKILL_TIMEOUT_S)
+            result = await asyncio.wait_for(
+                skill.handler(args, state), SKILL_TIMEOUT_S
+            )
             ok, error = True, None
         except Exception as exc:
             logger.exception("skill %s failed", call.skill)
@@ -187,5 +222,15 @@ class SkillRegistry:
         if not ok:
             stat["failures"] += 1
             stat["last_error"] = error
-        emit("skill.call", {"skill": call.skill, "args": args, "ok": ok, "ms": ms, "result": result, "error": error})
+        emit(
+            "skill.call",
+            {
+                "skill": call.skill,
+                "args": args,
+                "ok": ok,
+                "ms": ms,
+                "result": result,
+                "error": error,
+            },
+        )
         return {"skill": call.skill, "ok": ok, "result": result, "error": error}

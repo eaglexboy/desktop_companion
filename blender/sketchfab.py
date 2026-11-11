@@ -24,7 +24,9 @@ _UNIQUE_SUFFIX = re.compile(r"_\d{2,3}$")
 
 def is_sketchfab(gltf: dict) -> bool:
     """True for a glTF (its parsed JSON) that Sketchfab exported."""
-    return str(gltf.get("asset", {}).get("generator", "")).startswith(GENERATOR_PREFIX)
+    return str(gltf.get("asset", {}).get("generator", "")).startswith(
+        GENERATOR_PREFIX
+    )
 
 
 def is_helper_bone(name: str) -> bool:
@@ -66,9 +68,7 @@ class Licence:
     id: str  # `CC-BY-4.0`
     attribution: bool  # the author must be credited
     non_commercial: bool  # not for commercial use
-    no_derivatives: (
-        bool  # modified versions may not be shared (we always modify: shrink, rebind)
-    )
+    no_derivatives: bool  # modified versions may not be shared (we always modify: shrink, rebind)
     share_alike: bool  # modified versions must carry the same licence
     free: bool  # a licence we know; anything else is the author's own terms
 
@@ -81,7 +81,9 @@ class Licence:
             )
             return notes
         if self.attribution:
-            notes.append("credit the author wherever the model is shown or shared")
+            notes.append(
+                "credit the author wherever the model is shown or shared"
+            )
         if self.non_commercial:
             notes.append("non-commercial use only")
         if self.no_derivatives:
@@ -93,7 +95,9 @@ class Licence:
         return notes
 
 
-_KNOWN = re.compile(r"^(CC0|CC-BY(-NC)?(-SA|-ND)?)(-\d(\.\d)?)?$", re.IGNORECASE)
+_KNOWN = re.compile(
+    r"^(CC0|CC-BY(-NC)?(-SA|-ND)?)(-\d(\.\d)?)?$", re.IGNORECASE
+)
 
 
 def parse_licence(text: str) -> Licence:

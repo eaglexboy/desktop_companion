@@ -46,7 +46,11 @@ class VoiceSelection:
 
 
 def parse_voice_id(voice_id: str | None) -> VoiceSelection | None:
-    if not voice_id or not voice_id.startswith(_ID_PREFIX) or _ID_MARK not in voice_id:
+    if (
+        not voice_id
+        or not voice_id.startswith(_ID_PREFIX)
+        or _ID_MARK not in voice_id
+    ):
         return None
     instance, _, seed = voice_id[len(_ID_PREFIX) :].partition(_ID_MARK)
     try:
@@ -82,7 +86,14 @@ def _candidates(pools: SeedVoices, groups: list[str]) -> list[int]:
 
 
 class SeedVoiceSelector:
-    def __init__(self, settings: Settings, store: PersonalityStore, get_look_spec, *, rng: random.Random | None = None):
+    def __init__(
+        self,
+        settings: Settings,
+        store: PersonalityStore,
+        get_look_spec,
+        *,
+        rng: random.Random | None = None,
+    ):
         self._settings = settings
         self._store = store
         self._get_look_spec = get_look_spec
@@ -98,7 +109,11 @@ class SeedVoiceSelector:
         names = {id(entry): name for name, entry in tts_config.remote.items()}
         for entry in tts_config.enabled_remote_instances():
             # A voice_sample outranks a seed, so such an entry never gets one.
-            if entry.provider_type == "tts_serve" and not entry.voice_sample and not entry.seed_voices.is_empty():
+            if (
+                entry.provider_type == "tts_serve"
+                and not entry.voice_sample
+                and not entry.seed_voices.is_empty()
+            ):
                 return names[id(entry)], entry
         return None
 
@@ -112,19 +127,26 @@ class SeedVoiceSelector:
         if found is None:
             return None
         name, entry = found
-        candidates = _candidates(entry.seed_voices, voice_groups_for(self._get_look_spec()))
+        candidates = _candidates(
+            entry.seed_voices, voice_groups_for(self._get_look_spec())
+        )
         if not candidates:
             return None
 
         current_id = self._store.get_agent_state("current_voice_id")
         current = parse_voice_id(current_id)
-        if current is not None and current.instance == name and current.seed in candidates:
+        if (
+            current is not None
+            and current.instance == name
+            and current.seed in candidates
+        ):
             return current
 
         default_seed = entry.seed_voices.default_seed
         if (
             default_seed in candidates
-            and self._get_look_spec().proportions.femininity == ProportionsSpec.model_fields["femininity"].default
+            and self._get_look_spec().proportions.femininity
+            == ProportionsSpec.model_fields["femininity"].default
         ):
             # Look is still uncustomized: start on the configured known-good voice.
             chosen = VoiceSelection(name, default_seed)
@@ -133,5 +155,7 @@ class SeedVoiceSelector:
         if current_id:
             self._store.set_agent_state("previous_voice_id", current_id)
         self._store.set_agent_state("current_voice_id", chosen.voice_id)
-        logger.info("selected voice %s (pool of %d)", chosen.voice_id, len(candidates))
+        logger.info(
+            "selected voice %s (pool of %d)", chosen.voice_id, len(candidates)
+        )
         return chosen

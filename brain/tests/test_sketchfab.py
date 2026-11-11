@@ -271,6 +271,96 @@ def test_a_sketchfab_download_is_cleaned_up_for_use_as_a_body(tmp_path):
     assert sketchfab.credits(before)["attribution_required"]
 
 
+_LYING = """
+import bpy, sys, math
+for o in list(bpy.data.objects):
+    bpy.data.objects.remove(o)
+bpy.ops.object.armature_add(location=(0, 0, 0))
+arm = bpy.context.active_object
+arm.name = "Rig"
+bpy.ops.object.mode_set(mode="EDIT")
+eb = arm.data.edit_bones
+eb.remove(eb[0])
+chain = (("root", 0.0, 0.2, None), ("upper", 0.2, 0.6, "root"), ("head", 0.6, 0.8, "upper"))
+for name, y0, y1, parent in chain:
+    b = eb.new(name)
+    b.head, b.tail = (0, y0, 0), (0, y1, 0)
+    if parent:
+        b.parent = eb[parent]
+bpy.ops.object.mode_set(mode="OBJECT")
+bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0.4, 0))
+body = bpy.context.active_object
+body.scale = (0.2, 0.8, 0.1)
+bpy.ops.object.transform_apply(scale=True)
+bpy.ops.object.mode_set(mode="EDIT")
+bpy.ops.mesh.subdivide(number_cuts=6)
+bpy.ops.object.mode_set(mode="OBJECT")
+for name, y0, y1, _ in chain:
+    group = body.vertex_groups.new(name=name)
+    group.add([v.index for v in body.data.vertices if y0 - 1e-6 <= v.co.y < y1 + (1e-6 if name == "head" else 0)], 1.0, "REPLACE")
+body.parent = arm
+body.modifiers.new("Armature", "ARMATURE").object = arm
+# the figure is bound lying along Y; the first frame of its animation stands it up along Z
+bpy.context.view_layer.objects.active = arm
+bpy.ops.object.mode_set(mode="POSE")
+root = arm.pose.bones["root"]
+root.rotation_mode = "XYZ"
+for frame in (1, 2):
+    root.rotation_euler = (math.radians(90), 0, 0)
+    root.keyframe_insert("rotation_euler", frame=frame)
+bpy.ops.object.mode_set(mode="OBJECT")
+bpy.ops.export_scene.gltf(filepath=sys.argv[-1], export_format="GLB", export_animations=True)
+"""
+
+
+@pytest.mark.skipif(BLENDER is None, reason="blender binary not found on PATH")
+def test_a_figure_bound_lying_down_and_stood_up_by_its_animation_is_stood_up(tmp_path):
+    script = tmp_path / "lying.py"
+    script.write_text(_LYING)
+    source = tmp_path / "lying.glb"
+    subprocess.run(
+        [
+            BLENDER,
+            "--background",
+            "--factory-startup",
+            "--python",
+            str(script),
+            "--",
+            str(source),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert source.is_file()
+    done = tmp_path / "clean.glb"
+    proc = subprocess.run(
+        [
+            BLENDER,
+            "--background",
+            "--factory-startup",
+            "--python",
+            str(REPO_ROOT / "blender" / "sketchfab_convert.py"),
+            "--",
+            str(source),
+            str(done),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert "SKETCHFAB_FIX the figure is bound lying down" in proc.stdout, (
+        proc.stdout[-600:] + proc.stderr[-600:]
+    )
+    gltf = _gltf(done)
+    position = gltf["meshes"][0]["primitives"][0]["attributes"]["POSITION"]
+    low, high = gltf["accessors"][position]["min"], gltf["accessors"][position]["max"]
+    size = [h - l for h, l in zip(high, low)]  # glTF is Y-up
+    assert size[1] > 2 * size[2], size
+
+
 def test_an_installed_models_credit_is_read_from_its_sidecar_for_the_listing(tmp_path):
     model = tmp_path / "hero.glb"
     model.write_bytes(b"glTF")

@@ -9,7 +9,10 @@ import pytest
 
 from brain.config import MOOD_NAMES, TRAIT_NAMES
 from brain.llm_pool import LLMClient, LLMPool, Message
-from brain.personality.reflect import maybe_trigger_autonomous_redesign, run_reflection
+from brain.personality.reflect import (
+    maybe_trigger_autonomous_redesign,
+    run_reflection,
+)
 from brain.personality.state import PersonalityStore
 
 
@@ -17,7 +20,9 @@ class _ScriptedClient(LLMClient):
     def __init__(self, reply: str) -> None:
         self._reply = reply
 
-    async def chat(self, messages: list[Message], *, max_tokens: int = 1024, **kwargs) -> str:
+    async def chat(
+        self, messages: list[Message], *, max_tokens: int = 1024, **kwargs
+    ) -> str:
         return self._reply
 
 
@@ -36,7 +41,9 @@ def _store(tmp_path):
 async def test_reflection_applies_capped_deltas_and_notes(tmp_path):
     store = _store(tmp_path)
     store.log_interaction("user", "let's try something new today")
-    store.log_interaction("assistant", "sure, how about X", provider="local-1", escalated=False)
+    store.log_interaction(
+        "assistant", "sure, how about X", provider="local-1", escalated=False
+    )
 
     # deltas here exceed the caps on purpose, to prove they get clamped
     reply = json.dumps(
@@ -65,7 +72,12 @@ async def test_reflection_applies_capped_deltas_and_notes(tmp_path):
 async def test_reflection_ignores_unknown_trait_and_mood_names(tmp_path):
     store = _store(tmp_path)
     store.log_interaction("user", "hi")
-    reply = json.dumps({"trait_deltas": {"not_a_real_trait": 5}, "mood_deltas": {"not_a_real_mood": 10}})
+    reply = json.dumps(
+        {
+            "trait_deltas": {"not_a_real_trait": 5},
+            "mood_deltas": {"not_a_real_mood": 10},
+        }
+    )
     result = await run_reflection(store, _pool(reply))
     assert result.changed is True
     assert result.trait_deltas == {}
@@ -89,7 +101,9 @@ async def test_reflection_noop_when_local_pool_empty(tmp_path):
     store.log_interaction("user", "hi")
     result = await run_reflection(store, LLMPool([]))
     assert result.changed is False
-    assert len(store.pending_interactions()) == 1  # left pending for a later retry
+    assert (
+        len(store.pending_interactions()) == 1
+    )  # left pending for a later retry
 
 
 @pytest.mark.asyncio
@@ -118,14 +132,18 @@ def _gate_kwargs(**overrides):
 
 
 @pytest.mark.asyncio
-async def test_trigger_b_fires_when_never_redesigned_before_and_roll_succeeds(tmp_path):
+async def test_trigger_b_fires_when_never_redesigned_before_and_roll_succeeds(
+    tmp_path,
+):
     store = _store(tmp_path)
     called = []
 
     async def on_eligible():
         called.append(True)
 
-    fired = await maybe_trigger_autonomous_redesign(store, on_eligible=on_eligible, **_gate_kwargs())
+    fired = await maybe_trigger_autonomous_redesign(
+        store, on_eligible=on_eligible, **_gate_kwargs()
+    )
 
     assert fired is True
     assert called == [True]
@@ -140,7 +158,9 @@ async def test_trigger_b_skipped_when_build_running(tmp_path):
         called.append(True)
 
     fired = await maybe_trigger_autonomous_redesign(
-        store, on_eligible=on_eligible, **_gate_kwargs(is_build_running=lambda: True)
+        store,
+        on_eligible=on_eligible,
+        **_gate_kwargs(is_build_running=lambda: True),
     )
 
     assert fired is False
@@ -156,7 +176,9 @@ async def test_trigger_b_skipped_when_user_interacting(tmp_path):
         called.append(True)
 
     fired = await maybe_trigger_autonomous_redesign(
-        store, on_eligible=on_eligible, **_gate_kwargs(is_user_interacting=lambda: True)
+        store,
+        on_eligible=on_eligible,
+        **_gate_kwargs(is_user_interacting=lambda: True),
     )
 
     assert fired is False
@@ -164,16 +186,24 @@ async def test_trigger_b_skipped_when_user_interacting(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_trigger_b_skipped_when_cooldown_not_elapsed(tmp_path, monkeypatch):
+async def test_trigger_b_skipped_when_cooldown_not_elapsed(
+    tmp_path, monkeypatch
+):
     store = _store(tmp_path)
-    store.set_agent_state("last_redesign_timestamp", str(__import__("time").time()))  # just now
-    monkeypatch.setattr("brain.personality.reflect.random.uniform", lambda a, b: a)  # shortest possible cooldown
+    store.set_agent_state(
+        "last_redesign_timestamp", str(__import__("time").time())
+    )  # just now
+    monkeypatch.setattr(
+        "brain.personality.reflect.random.uniform", lambda a, b: a
+    )  # shortest possible cooldown
     called = []
 
     async def on_eligible():
         called.append(True)
 
-    fired = await maybe_trigger_autonomous_redesign(store, on_eligible=on_eligible, **_gate_kwargs())
+    fired = await maybe_trigger_autonomous_redesign(
+        store, on_eligible=on_eligible, **_gate_kwargs()
+    )
 
     assert fired is False  # 0 hours elapsed < even the shortest 12h threshold
     assert called == []
@@ -184,21 +214,29 @@ async def test_trigger_b_fires_once_cooldown_has_elapsed(tmp_path, monkeypatch):
     import time as time_module
 
     store = _store(tmp_path)
-    store.set_agent_state("last_redesign_timestamp", str(time_module.time() - 100 * 3600))  # 100h ago
-    monkeypatch.setattr("brain.personality.reflect.random.uniform", lambda a, b: a)
+    store.set_agent_state(
+        "last_redesign_timestamp", str(time_module.time() - 100 * 3600)
+    )  # 100h ago
+    monkeypatch.setattr(
+        "brain.personality.reflect.random.uniform", lambda a, b: a
+    )
     called = []
 
     async def on_eligible():
         called.append(True)
 
-    fired = await maybe_trigger_autonomous_redesign(store, on_eligible=on_eligible, **_gate_kwargs())
+    fired = await maybe_trigger_autonomous_redesign(
+        store, on_eligible=on_eligible, **_gate_kwargs()
+    )
 
     assert fired is True
     assert called == [True]
 
 
 @pytest.mark.asyncio
-async def test_trigger_b_skipped_when_probability_roll_fails(tmp_path, monkeypatch):
+async def test_trigger_b_skipped_when_probability_roll_fails(
+    tmp_path, monkeypatch
+):
     store = _store(tmp_path)
     monkeypatch.setattr("brain.personality.reflect.random.random", lambda: 0.99)
     called = []
@@ -207,7 +245,9 @@ async def test_trigger_b_skipped_when_probability_roll_fails(tmp_path, monkeypat
         called.append(True)
 
     fired = await maybe_trigger_autonomous_redesign(
-        store, on_eligible=on_eligible, **_gate_kwargs(autonomous_redesign_probability=0.5)
+        store,
+        on_eligible=on_eligible,
+        **_gate_kwargs(autonomous_redesign_probability=0.5),
     )
 
     assert fired is False
@@ -215,25 +255,41 @@ async def test_trigger_b_skipped_when_probability_roll_fails(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_trigger_b_reports_why_it_did_or_did_not_fire(tmp_path, monkeypatch):
+async def test_trigger_b_reports_why_it_did_or_did_not_fire(
+    tmp_path, monkeypatch
+):
     from brain.events import bus
 
     async def on_eligible():
         return None
 
     def outcomes() -> list[str]:
-        return [e["data"]["outcome"] for e in bus.since(0) if e["type"] == "autonomous.check"]
+        return [
+            e["data"]["outcome"]
+            for e in bus.since(0)
+            if e["type"] == "autonomous.check"
+        ]
 
     store = _store(tmp_path)
     before = len(outcomes())
     await maybe_trigger_autonomous_redesign(
-        store, on_eligible=on_eligible, **_gate_kwargs(is_user_interacting=lambda: True)
+        store,
+        on_eligible=on_eligible,
+        **_gate_kwargs(is_user_interacting=lambda: True),
     )
     await maybe_trigger_autonomous_redesign(
-        store, on_eligible=on_eligible, **_gate_kwargs(autonomous_redesign_probability=0.0)
+        store,
+        on_eligible=on_eligible,
+        **_gate_kwargs(autonomous_redesign_probability=0.0),
     )
-    await maybe_trigger_autonomous_redesign(store, on_eligible=on_eligible, **_gate_kwargs())
-    assert outcomes()[before:] == ["user_interacting", "roll_failed", "triggered"]
+    await maybe_trigger_autonomous_redesign(
+        store, on_eligible=on_eligible, **_gate_kwargs()
+    )
+    assert outcomes()[before:] == [
+        "user_interacting",
+        "roll_failed",
+        "triggered",
+    ]
 
 
 @pytest.mark.asyncio
@@ -245,7 +301,9 @@ async def test_trigger_b_skipped_while_a_staged_look_is_waiting(tmp_path):
     async def on_eligible():
         called.append(True)
 
-    fired = await maybe_trigger_autonomous_redesign(store, on_eligible=on_eligible, **_gate_kwargs())
+    fired = await maybe_trigger_autonomous_redesign(
+        store, on_eligible=on_eligible, **_gate_kwargs()
+    )
 
     assert fired is False
     assert called == []

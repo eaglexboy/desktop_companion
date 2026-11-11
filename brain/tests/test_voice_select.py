@@ -23,7 +23,11 @@ SEEDS = {
 
 
 def _settings(
-    tmp_path: Path, *, seeds=SEEDS, active_backend="remote", provider_type="tts_serve"
+    tmp_path: Path,
+    *,
+    seeds=SEEDS,
+    active_backend="remote",
+    provider_type="tts_serve",
 ) -> Settings:
     return Settings.model_validate(
         {
@@ -80,7 +84,11 @@ def _selector(tmp_path, look, **settings_kwargs):
 @pytest.mark.parametrize(
     ("template", "femininity", "expected"),
     [
-        ("standard_humanoid_male", 0.9, ["male"]),  # explicit base wins over femininity
+        (
+            "standard_humanoid_male",
+            0.9,
+            ["male"],
+        ),  # explicit base wins over femininity
         ("standard_humanoid_female", 0.1, ["female"]),
         ("primitive_blob", 0.5, ["female"]),  # >= 0.5 reads female
         ("primitive_blob", 0.2, ["male"]),
@@ -117,7 +125,9 @@ def test_picks_from_matching_group_and_persists(tmp_path):
 
 
 def test_reselects_when_redesign_moves_to_another_group(tmp_path):
-    selector, store, holder = _selector(tmp_path, _look("standard_humanoid_male"))
+    selector, store, holder = _selector(
+        tmp_path, _look("standard_humanoid_male")
+    )
     male = _pick(selector)
     holder["look"] = _look("standard_humanoid_female")
     female = _pick(selector)
@@ -126,7 +136,9 @@ def test_reselects_when_redesign_moves_to_another_group(tmp_path):
 
 
 def test_robot_uses_robot_pool_and_falls_back_to_gendered_pool(tmp_path):
-    selector, _store, holder = _selector(tmp_path, _look("primitive_mechanical", 0.1))
+    selector, _store, holder = _selector(
+        tmp_path, _look("primitive_mechanical", 0.1)
+    )
     assert _pick(selector).seed == 500
     holder["look"] = _look(
         "primitive_mechanical", 0.9
@@ -134,13 +146,17 @@ def test_robot_uses_robot_pool_and_falls_back_to_gendered_pool(tmp_path):
     assert _pick(selector).seed in SEEDS["female"]
 
 
-def test_no_selection_when_local_backend_or_no_pools_or_wrong_provider(tmp_path):
+def test_no_selection_when_local_backend_or_no_pools_or_wrong_provider(
+    tmp_path,
+):
     for kwargs in (
         {"active_backend": "local"},
         {"seeds": {}},
         {"provider_type": "generic_openai"},
     ):
-        selector, store, _ = _selector(tmp_path / str(len(kwargs)), _look(), **kwargs)
+        selector, store, _ = _selector(
+            tmp_path / str(len(kwargs)), _look(), **kwargs
+        )
         assert selector.select() is None
         assert store.get_agent_state("current_voice_id") is None
 
@@ -150,7 +166,9 @@ class _Recorder(TTSBackend):
         self.calls: list[dict | None] = []
         self.fail = fail
 
-    async def synthesize(self, text, out_wav_path, *, voice_id=None, params=None):
+    async def synthesize(
+        self, text, out_wav_path, *, voice_id=None, params=None
+    ):
         self.calls.append(params)
         if self.fail:
             raise RuntimeError("down")
@@ -159,9 +177,13 @@ class _Recorder(TTSBackend):
 async def test_pool_sends_remote_params_only_to_their_instance(tmp_path):
     first, second, local = _Recorder(fail=True), _Recorder(), _Recorder()
     pool = TTSPool([("a", first), ("b", second)], local)
-    await pool.synthesize("hi", tmp_path / "x.wav", remote_params={"a": {"seed": 7}})
+    await pool.synthesize(
+        "hi", tmp_path / "x.wav", remote_params={"a": {"seed": 7}}
+    )
     assert first.calls == [{"seed": 7}]
-    assert second.calls == [None]  # a's seed did not leak to the failover instance
+    assert second.calls == [
+        None
+    ]  # a's seed did not leak to the failover instance
 
 
 def test_seed_voices_defaults_empty_and_rejects_unknown_group():
@@ -170,7 +192,7 @@ def test_seed_voices_defaults_empty_and_rejects_unknown_group():
         TTSRemoteEntry(
             base_url="http://x",
             seed_voices={"alien": [1]},  # pyright: ignore[reportArgumentType]
-        )  
+        )
 
 
 def test_default_seed_used_for_default_femininity_only(tmp_path):
@@ -194,6 +216,8 @@ def test_default_seed_used_for_default_femininity_only(tmp_path):
 
 def test_default_seed_survives_as_stable_voice(tmp_path):
     selector, _store, _ = _selector(
-        tmp_path, _look("primitive_blob", 0.5), seeds={**SEEDS, "default_seed": 5}
+        tmp_path,
+        _look("primitive_blob", 0.5),
+        seeds={**SEEDS, "default_seed": 5},
     )
     assert [_pick(selector).seed for _ in range(5)] == [5] * 5

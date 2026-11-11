@@ -24,14 +24,18 @@ import itertools
 import threading
 import time
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Generator
 from typing import Any
 
 BACKLOG = 2000
 SUBSCRIBER_QUEUE = 500
 
-_current_turn: contextvars.ContextVar[str | None] = contextvars.ContextVar("deskmate_turn", default=None)
-_purpose: contextvars.ContextVar[str | None] = contextvars.ContextVar("deskmate_llm_purpose", default=None)
+_current_turn: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "deskmate_turn", default=None
+)
+_purpose: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "deskmate_llm_purpose", default=None
+)
 
 
 class EventBus:
@@ -41,7 +45,13 @@ class EventBus:
         self._lock = threading.Lock()
         self._subscribers: list[tuple[asyncio.AbstractEventLoop, asyncio.Queue]] = []
 
-    def emit(self, type_: str, payload: dict[str, Any] | None = None, *, turn: str | None = None) -> None:
+    def emit(
+        self,
+        type_: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        turn: str | None = None,
+    ) -> None:
         try:
             event = {
                 "seq": next(self._seq),
@@ -73,9 +83,12 @@ class EventBus:
             return [e for e in self._buffer if e["seq"] > seq]
 
     @contextlib.contextmanager
-    def subscribe(self) -> Iterator[asyncio.Queue]:
+    def subscribe(self) -> Generator[asyncio.Queue, None, None]:
         """Must be called from the event loop that will consume the queue."""
-        entry = (asyncio.get_running_loop(), asyncio.Queue(maxsize=SUBSCRIBER_QUEUE))
+        entry: tuple[asyncio.AbstractEventLoop, asyncio.Queue] = (
+            asyncio.get_running_loop(),
+            asyncio.Queue(maxsize=SUBSCRIBER_QUEUE),
+        )
         with self._lock:
             self._subscribers.append(entry)
         try:
@@ -88,7 +101,9 @@ class EventBus:
 bus = EventBus()
 
 
-def emit(type_: str, payload: dict[str, Any] | None = None, *, turn: str | None = None) -> None:
+def emit(
+    type_: str, payload: dict[str, Any] | None = None, *, turn: str | None = None
+) -> None:
     bus.emit(type_, payload, turn=turn)
 
 
@@ -99,12 +114,8 @@ def begin_turn() -> str:
     return turn
 
 
-def current_turn() -> str | None:
-    return _current_turn.get()
-
-
 @contextlib.contextmanager
-def llm_purpose(purpose: str) -> Iterator[None]:
+def llm_purpose(purpose: str) -> Generator[None, None, None]:
     """Label the LLM calls made inside the block ("classify", "reply", ...)."""
     token = _purpose.set(purpose)
     try:

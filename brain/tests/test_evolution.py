@@ -89,7 +89,10 @@ def _minimal_look(**overrides) -> LookSpec:
         "base_template": "primitive_blob",
         "has_face": True,
         "palette": PaletteSpec(
-            primary="#4A90D9", secondary="#FFFFFF", accent="#F5A623", emissive="#7FD1FF"
+            primary="#4A90D9",
+            secondary="#FFFFFF",
+            accent="#F5A623",
+            emissive="#7FD1FF",
         ),
         "wardrobe": WardrobeSpec(),
     }
@@ -157,14 +160,18 @@ def _install_fake_compile_and_publish(monkeypatch) -> None:
         settings.ensure_dirs()
         existing_manifest = load_manifest(settings.deploy_dir)
         next_version = (
-            existing_manifest.latest_version_number() if existing_manifest else 0
+            existing_manifest.latest_version_number()
+            if existing_manifest
+            else 0
         ) + 1
         filename = f"look-v{next_version}.glb"
         build_json = _build_json(glb_filename=filename)
         look_spec_dict = look_spec.model_dump(mode="json")
 
         if is_user_present():
-            manifest = append_version(existing_manifest, build_json, look_spec_dict)
+            manifest = append_version(
+                existing_manifest, build_json, look_spec_dict
+            )
             assert manifest.current_version == next_version
             (settings.assets_dir / filename).write_bytes(b"glTF-fake")
             (settings.current_dir / filename).write_bytes(b"glTF-fake")
@@ -220,7 +227,9 @@ def test_cap_delta_budget_leaves_small_delta_untouched():
     assert cap_delta_budget(delta, 3) == delta
 
 
-def test_base_template_change_allowed_requires_high_openness_and_elapsed_days(tmp_path):
+def test_base_template_change_allowed_requires_high_openness_and_elapsed_days(
+    tmp_path,
+):
     import time
 
     store = _store(tmp_path)
@@ -229,23 +238,31 @@ def test_base_template_change_allowed_requires_high_openness_and_elapsed_days(tm
     )  # base_template_since never set
 
     store.set_agent_state("base_template_since", str(time.time()))
-    assert base_template_change_allowed(store, openness=90) is False  # not 7 days yet
+    assert (
+        base_template_change_allowed(store, openness=90) is False
+    )  # not 7 days yet
 
     store.set_agent_state("base_template_since", str(time.time() - 8 * 86400))
     assert base_template_change_allowed(store, openness=90) is True
-    assert base_template_change_allowed(store, openness=50) is False  # openness too low
+    assert (
+        base_template_change_allowed(store, openness=50) is False
+    )  # openness too low
 
 
 def test_trigger_b_bias_lines_only_covers_documented_extremes():
     lines = trigger_b_bias_lines(
-        {"openness": 50, "boldness": 50, "formality": 50}, {"energy": 50, "stress": 50}
+        {"openness": 50, "boldness": 50, "formality": 50},
+        {"energy": 50, "stress": 50},
     )
     assert lines == []
 
     lines = trigger_b_bias_lines(
-        {"openness": 80, "boldness": 80, "formality": 50}, {"energy": 80, "stress": 50}
+        {"openness": 80, "boldness": 80, "formality": 50},
+        {"energy": 80, "stress": 50},
     )
-    assert len(lines) == 3  # openness, boldness, energy -- not formality or stress
+    assert (
+        len(lines) == 3
+    )  # openness, boldness, energy -- not formality or stress
 
 
 # --- Trigger A: synthetic end-to-end -------------------------------------------
@@ -267,13 +284,18 @@ async def test_trigger_a_full_cycle_publishes_and_updates_agent_state(
     assert result.outcome == "published"
     manifest = _manifest(settings)
     assert manifest.current_version == 1
-    assert _current_entry(manifest).look_spec["wardrobe"]["outfit"] == "wizard_robe"
+    assert (
+        _current_entry(manifest).look_spec["wardrobe"]["outfit"]
+        == "wizard_robe"
+    )
     assert store.get_agent_state("last_redesign_timestamp") is not None
     assert store.get_agent_state("staged_version") is None
 
 
 @pytest.mark.asyncio
-async def test_trigger_a_reports_progress_stages_in_order(tmp_path, monkeypatch):
+async def test_trigger_a_reports_progress_stages_in_order(
+    tmp_path, monkeypatch
+):
     _install_fake_compile_and_publish(monkeypatch)
     stages: list[dict] = []
 
@@ -282,7 +304,10 @@ async def test_trigger_a_reports_progress_stages_in_order(tmp_path, monkeypatch)
 
     delta_reply = json.dumps({"wardrobe": {"outfit": "wizard_robe"}})
     evolution = AvatarEvolution(
-        _settings(tmp_path), _store(tmp_path), _pool(delta_reply), on_progress=hook
+        _settings(tmp_path),
+        _store(tmp_path),
+        _pool(delta_reply),
+        on_progress=hook,
     )
 
     await evolution._run_trigger_a("put on a wizard robe")
@@ -293,7 +318,9 @@ async def test_trigger_a_reports_progress_stages_in_order(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_trigger_a_reports_failure_when_no_valid_delta(tmp_path, monkeypatch):
+async def test_trigger_a_reports_failure_when_no_valid_delta(
+    tmp_path, monkeypatch
+):
     _install_fake_compile_and_publish(monkeypatch)
     stages: list[dict] = []
 
@@ -301,7 +328,10 @@ async def test_trigger_a_reports_failure_when_no_valid_delta(tmp_path, monkeypat
         stages.append(payload)
 
     evolution = AvatarEvolution(
-        _settings(tmp_path), _store(tmp_path), _pool("not json"), on_progress=hook
+        _settings(tmp_path),
+        _store(tmp_path),
+        _pool("not json"),
+        on_progress=hook,
     )
 
     assert await evolution._run_trigger_a("become a humanoid") is None
@@ -309,7 +339,9 @@ async def test_trigger_a_reports_failure_when_no_valid_delta(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_trigger_a_does_not_rebuild_an_identical_look(tmp_path, monkeypatch):
+async def test_trigger_a_does_not_rebuild_an_identical_look(
+    tmp_path, monkeypatch
+):
     _install_fake_compile_and_publish(monkeypatch)
     stages: list[dict] = []
 
@@ -334,7 +366,9 @@ async def test_trigger_a_does_not_rebuild_an_identical_look(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_a_raising_progress_hook_never_breaks_the_redesign(tmp_path, monkeypatch):
+async def test_a_raising_progress_hook_never_breaks_the_redesign(
+    tmp_path, monkeypatch
+):
     _install_fake_compile_and_publish(monkeypatch)
 
     async def hook(_payload: dict) -> None:
@@ -342,7 +376,10 @@ async def test_a_raising_progress_hook_never_breaks_the_redesign(tmp_path, monke
 
     delta_reply = json.dumps({"wardrobe": {"outfit": "hoodie"}})
     evolution = AvatarEvolution(
-        _settings(tmp_path), _store(tmp_path), _pool(delta_reply), on_progress=hook
+        _settings(tmp_path),
+        _store(tmp_path),
+        _pool(delta_reply),
+        on_progress=hook,
     )
 
     result = await evolution._run_trigger_a("put on a hoodie")
@@ -361,7 +398,9 @@ async def test_trigger_a_tool_handler_replies_immediately_and_schedules_backgrou
 
     reply = await evolution.change_appearance("put on a hoodie")
     assert "let me put something together" in reply.lower()
-    assert load_manifest(settings.deploy_dir) is None  # background work hasn't run yet
+    assert (
+        load_manifest(settings.deploy_dir) is None
+    )  # background work hasn't run yet
 
     assert len(evolution._background_tasks) == 1
     await next(iter(evolution._background_tasks))
@@ -378,7 +417,9 @@ async def test_trigger_a_retries_once_on_invalid_delta_then_succeeds(
     bad_reply = json.dumps({"wardrobe": {"outfit": "not_a_real_outfit"}})
     good_reply = json.dumps({"wardrobe": {"outfit": "hoodie"}})
     client = _ScriptedClient(bad_reply, good_reply)
-    evolution = AvatarEvolution(settings, store, LLMPool([("local-1", client, [])]))
+    evolution = AvatarEvolution(
+        settings, store, LLMPool([("local-1", client, [])])
+    )
 
     result = await evolution._run_trigger_a("put on a hoodie")
     assert result is not None and result.outcome == "published"
@@ -386,7 +427,9 @@ async def test_trigger_a_retries_once_on_invalid_delta_then_succeeds(
 
 
 @pytest.mark.asyncio
-async def test_trigger_a_gives_up_silently_after_two_bad_deltas(tmp_path, monkeypatch):
+async def test_trigger_a_gives_up_silently_after_two_bad_deltas(
+    tmp_path, monkeypatch
+):
     _install_fake_compile_and_publish(monkeypatch)
     settings = _settings(tmp_path)
     store = _store(tmp_path)
@@ -412,7 +455,9 @@ async def test_revert_appearance_with_no_history_is_friendly(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_revert_appearance_rewrites_manifest_pointer_only(tmp_path, monkeypatch):
+async def test_revert_appearance_rewrites_manifest_pointer_only(
+    tmp_path, monkeypatch
+):
     _install_fake_compile_and_publish(monkeypatch)
     settings = _settings(tmp_path)
     store = _store(tmp_path)
@@ -502,7 +547,8 @@ async def test_revert_to_pruned_version_rebuilds_it_as_a_new_version(
     manifest = _manifest(settings)
     assert manifest.current_version == 3  # numbers never go backwards
     assert (
-        _version_entry(manifest, 3).look_spec == _version_entry(manifest, 1).look_spec
+        _version_entry(manifest, 3).look_spec
+        == _version_entry(manifest, 1).look_spec
     )
 
 
@@ -516,7 +562,10 @@ def _evolution_on_custom_look(tmp_path, monkeypatch, *replies: str):
     settings = _settings(tmp_path)
     custom_dir = settings.deploy_dir / "assets" / "custom_templates"
     custom_dir.mkdir(parents=True)
-    for name in ("miss", "other"):  # the catalog check wants the model files to exist
+    for name in (
+        "miss",
+        "other",
+    ):  # the catalog check wants the model files to exist
         (custom_dir / f"{name}.glb").write_bytes(b"glTF")
     evolution = AvatarEvolution(settings, _store(tmp_path), _pool(*replies))
     return settings, evolution
@@ -556,7 +605,9 @@ async def test_saying_it_may_change_its_look_unlocks_it_and_the_next_request_goe
     await _publish(evolution, base_template="custom:miss")
     assert evolution.look_locked() is True
 
-    reply = await evolution.change_appearance("You can change your look if you want")
+    reply = await evolution.change_appearance(
+        "You can change your look if you want"
+    )
     assert "free to change" in reply
     assert evolution.look_locked() is False
 
@@ -569,12 +620,16 @@ async def test_saying_it_may_change_its_look_unlocks_it_and_the_next_request_goe
 
 
 @pytest.mark.asyncio
-async def test_an_unlock_covers_only_the_model_it_was_given_for(tmp_path, monkeypatch):
+async def test_an_unlock_covers_only_the_model_it_was_given_for(
+    tmp_path, monkeypatch
+):
     _, evolution = _evolution_on_custom_look(tmp_path, monkeypatch, "{}")
     await _publish(evolution, base_template="custom:miss")
     await evolution.unlock_appearance()
     await _publish(evolution, base_template="custom:other")
-    assert evolution.look_locked() is True  # a different imported model is locked again
+    assert (
+        evolution.look_locked() is True
+    )  # a different imported model is locked again
     await _publish(evolution)  # a generated look
     await _publish(evolution, base_template="custom:miss")
     assert (
@@ -590,7 +645,10 @@ async def test_asking_for_a_generated_look_goes_back_to_the_last_one(
     await _publish(
         evolution,
         palette=PaletteSpec(
-            primary="#111111", secondary="#FFFFFF", accent="#F5A623", emissive="#7FD1FF"
+            primary="#111111",
+            secondary="#FFFFFF",
+            accent="#F5A623",
+            emissive="#7FD1FF",
         ),
     )
     await _publish(evolution, base_template="custom:miss")
@@ -599,12 +657,16 @@ async def test_asking_for_a_generated_look_goes_back_to_the_last_one(
     await asyncio.gather(*evolution._background_tasks)
     assert "version 1" in reply
     manifest = _manifest(settings)
-    assert _current_entry(manifest).look_spec["base_template"] == "primitive_blob"
+    assert (
+        _current_entry(manifest).look_spec["base_template"] == "primitive_blob"
+    )
     assert evolution.look_locked() is False
 
 
 @pytest.mark.asyncio
-async def test_no_generated_look_to_go_back_to_is_said_plainly(tmp_path, monkeypatch):
+async def test_no_generated_look_to_go_back_to_is_said_plainly(
+    tmp_path, monkeypatch
+):
     _, evolution = _evolution_on_custom_look(tmp_path, monkeypatch, "{}")
     await _publish(evolution, base_template="custom:miss")
     reply = await evolution.change_appearance("switch to a procedural body")
@@ -672,7 +734,10 @@ async def test_trigger_b_stages_when_user_away_then_reveals_on_return(
 
     presence_state = PresenceState.AWAY
     evolution = AvatarEvolution(
-        settings, store, _pool(delta_reply), get_presence_state=lambda: presence_state
+        settings,
+        store,
+        _pool(delta_reply),
+        get_presence_state=lambda: presence_state,
     )
 
     await evolution.trigger_b_on_eligible()
@@ -685,12 +750,16 @@ async def test_trigger_b_stages_when_user_away_then_reveals_on_return(
     )  # not stamped yet -- only on reveal
 
     # user returns -> Away/Idle -> Active transition
-    await evolution.on_presence_transition(PresenceState.AWAY, PresenceState.ACTIVE)
+    await evolution.on_presence_transition(
+        PresenceState.AWAY, PresenceState.ACTIVE
+    )
 
     manifest = _manifest(settings)
     assert manifest is not None
     assert manifest.current_version == 1
-    assert _current_entry(manifest).look_spec["wardrobe"]["outfit"] == "lab_coat"
+    assert (
+        _current_entry(manifest).look_spec["wardrobe"]["outfit"] == "lab_coat"
+    )
     assert store.get_agent_state("staged_version") is None
     assert store.get_agent_state("last_redesign_timestamp") is not None
 
@@ -719,25 +788,38 @@ async def test_trigger_b_publishes_immediately_when_user_already_active(
 
 
 @pytest.mark.asyncio
-async def test_on_presence_transition_ignores_non_reveal_edges(tmp_path, monkeypatch):
+async def test_on_presence_transition_ignores_non_reveal_edges(
+    tmp_path, monkeypatch
+):
     _install_fake_compile_and_publish(monkeypatch)
     settings = _settings(tmp_path)
     store = _store(tmp_path)
     evolution = AvatarEvolution(
-        settings, store, _pool("{}"), get_presence_state=lambda: PresenceState.AWAY
+        settings,
+        store,
+        _pool("{}"),
+        get_presence_state=lambda: PresenceState.AWAY,
     )
     store.set_agent_state("staged_version", "1")  # pretend something is staged
 
-    await evolution.on_presence_transition(PresenceState.ACTIVE, PresenceState.AWAY)
-    await evolution.on_presence_transition(PresenceState.ACTIVE, PresenceState.IDLE)
-    await evolution.on_presence_transition(PresenceState.ACTIVE, PresenceState.ACTIVE)
+    await evolution.on_presence_transition(
+        PresenceState.ACTIVE, PresenceState.AWAY
+    )
+    await evolution.on_presence_transition(
+        PresenceState.ACTIVE, PresenceState.IDLE
+    )
+    await evolution.on_presence_transition(
+        PresenceState.ACTIVE, PresenceState.ACTIVE
+    )
 
     # none of these are an Away|Idle -> Active edge; staged_version must survive untouched
     assert store.get_agent_state("staged_version") == "1"
 
 
 @pytest.mark.asyncio
-async def test_boot_reconciliation_clears_staged_version_when_file_missing(tmp_path):
+async def test_boot_reconciliation_clears_staged_version_when_file_missing(
+    tmp_path,
+):
     settings = _settings(tmp_path)
     settings.ensure_dirs()
     store = _store(tmp_path)
@@ -749,7 +831,9 @@ async def test_boot_reconciliation_clears_staged_version_when_file_missing(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_boot_reconciliation_leaves_staged_version_when_file_present(tmp_path):
+async def test_boot_reconciliation_leaves_staged_version_when_file_present(
+    tmp_path,
+):
     settings = _settings(tmp_path)
     settings.ensure_dirs()
     (settings.staged_dir / "look-v3.glb").write_bytes(b"glTF-fake")
@@ -797,7 +881,9 @@ def test_handle_asset_swap_failure_on_fresh_install_does_not_crash(
     settings = _settings(tmp_path)
     settings.ensure_dirs()
     store = _store(tmp_path)
-    manifest = append_version(None, _build_json(), {"base_template": "primitive_blob"})
+    manifest = append_version(
+        None, _build_json(), {"base_template": "primitive_blob"}
+    )
     save_manifest(settings.deploy_dir, manifest)
     evolution = AvatarEvolution(settings, store, _pool("{}"))
 
@@ -842,7 +928,8 @@ async def test_full_trigger_b_wired_through_real_reflect_eligibility_gate(
     manifest = _manifest(settings)
     assert (
         manifest is not None
-        and _current_entry(manifest).look_spec["wardrobe"]["outfit"] == "armor_light"
+        and _current_entry(manifest).look_spec["wardrobe"]["outfit"]
+        == "armor_light"
     )
 
 
@@ -850,7 +937,9 @@ async def test_full_trigger_b_wired_through_real_reflect_eligibility_gate(
 
 
 @pytest.mark.asyncio
-async def test_wire_tools_replaces_router_stubs_end_to_end(tmp_path, monkeypatch):
+async def test_wire_tools_replaces_router_stubs_end_to_end(
+    tmp_path, monkeypatch
+):
     """Confirms AvatarEvolution.wire_tools() actually overwrites
     router.py's NotImplementedError stubs, and that a real chat message
     matching the keyword pre-filter reaches the real implementation via
@@ -861,9 +950,7 @@ async def test_wire_tools_replaces_router_stubs_end_to_end(tmp_path, monkeypatch
     delta_reply = json.dumps({"wardrobe": {"outfit": "hoodie"}})
     evolution = AvatarEvolution(settings, store, _pool(delta_reply))
 
-    settings.skills.enabled = (
-        False  # the keyword pre-filter only runs when the model can't call tools itself
-    )
+    settings.skills.enabled = False  # the keyword pre-filter only runs when the model can't call tools itself
     router = build_router(settings)
     evolution.wire_tools(router)
 
@@ -883,7 +970,9 @@ def test_keyword_prefilter_is_off_when_skills_are_enabled(tmp_path):
     settings = _settings(tmp_path)
     settings.skills.enabled = True
     assert (
-        build_router(settings)._match_tool_keyword("please change your look for me")
+        build_router(settings)._match_tool_keyword(
+            "please change your look for me"
+        )
         is None
     )
 
@@ -928,11 +1017,15 @@ async def test_invented_option_fails_clearly_and_is_recorded_as_unmet(
 
     assert stages[-1]["stage"] == "failed"
     assert "don't have the parts" in stages[-1]["error"]
-    assert any("jellyfish" in n.note for n in store.recent_memory_notes(limit=10))
+    assert any(
+        "jellyfish" in n.note for n in store.recent_memory_notes(limit=10)
+    )
 
 
 @pytest.mark.asyncio
-async def test_a_revert_tells_the_overlay_to_reload_the_look(tmp_path, monkeypatch):
+async def test_a_revert_tells_the_overlay_to_reload_the_look(
+    tmp_path, monkeypatch
+):
     """Reverting only rewrites the manifest pointer; the overlay learns of a new look from the
     `done` progress event (main.py hot-reloads on it). Without one it kept showing the look
     that had been reverted away from, until it was restarted."""
@@ -961,5 +1054,104 @@ async def test_a_revert_tells_the_overlay_to_reload_the_look(tmp_path, monkeypat
     await evolution.revert_appearance()  # one step back, to version 2
     assert [(p["stage"], p["version"]) for p in seen] == [("done", 2)]
     seen.clear()
-    await evolution.revert_appearance("go back to version 1")  # a named, kept version
+    await evolution.revert_appearance(
+        "go back to version 1"
+    )  # a named, kept version
     assert [(p["stage"], p["version"]) for p in seen] == [("done", 1)]
+
+
+@pytest.mark.asyncio
+async def test_asking_for_an_installed_model_by_name_switches_to_it_even_while_the_look_is_kept(
+    tmp_path, monkeypatch
+):
+    settings, evolution = _evolution_on_custom_look(tmp_path, monkeypatch)
+    await _publish(evolution, base_template="custom:miss")
+    assert evolution.look_locked() is True
+
+    reply = await evolution.change_appearance(
+        "Change your look to the Other model"
+    )
+    assert "Switching to other" in reply
+    await asyncio.gather(*evolution._background_tasks)
+    assert _manifest(settings).current_version == 2
+    assert evolution.current_look_spec().base_template == "custom:other"
+
+    again = await evolution.change_appearance("change to the other model")
+    assert (
+        "already wearing" in again and "building it again" in again
+    )  # the same model: built again
+    await asyncio.gather(*evolution._background_tasks)
+    assert _manifest(settings).current_version == 3
+
+
+@pytest.mark.asyncio
+async def test_a_request_that_only_mentions_a_model_name_is_not_a_switch(
+    tmp_path, monkeypatch
+):
+    settings, evolution = _evolution_on_custom_look(tmp_path, monkeypatch)
+    await _publish(evolution, base_template="custom:miss")
+
+    reply = await evolution.change_appearance("give me other ears and a hat")
+    assert "keeping this look" in reply
+    await asyncio.gather(*evolution._background_tasks)
+    assert _manifest(settings).current_version == 1
+
+
+def test_a_request_to_become_an_installed_model_is_read_through_typos_and_needs_a_switching_word():
+    from brain.evolution import _named_model
+
+    templates = ["custom:avocado", "custom:bmo", "custom:titan_tvman"]
+    assert (
+        _named_model("Change to the Avacado model", templates)
+        == "custom:avocado"
+    )
+    assert (
+        _named_model("turn into titan tvman", templates) == "custom:titan_tvman"
+    )
+    assert _named_model("avocado?", templates) is None  # a mention
+    assert _named_model("do you like avocado", templates) is None
+    assert _named_model("give me bmo ears", templates) is None
+
+
+def test_part_of_a_models_name_is_enough_when_only_one_model_has_it():
+    from brain.evolution import _named_model
+
+    templates = [
+        "custom:milo_robot_rigged",
+        "custom:mech_mike_animated",
+        "custom:mech_stan_animated",
+        "custom:robot_polygonal_rigged",
+    ]
+    assert (
+        _named_model("Change to Milo model", templates)
+        == "custom:milo_robot_rigged"
+    )
+    assert (
+        _named_model("change to stan", templates) == "custom:mech_stan_animated"
+    )
+    # a misspelling two names are close to ("mile": mike, milo) is settled by the other word
+    assert (
+        _named_model("Change to Mile robot model", templates)
+        == "custom:milo_robot_rigged"
+    )
+    assert _named_model("change to mile", templates) is None  # mike or milo
+    assert (
+        _named_model("change to the robot model", templates) is None
+    )  # two have it
+    assert _named_model("change to the mech model", templates) is None
+
+
+@pytest.mark.asyncio
+async def test_asking_it_to_rebuild_builds_the_current_imported_look_again(
+    tmp_path, monkeypatch
+):
+    settings, evolution = _evolution_on_custom_look(tmp_path, monkeypatch)
+    await _publish(evolution, base_template="custom:miss")
+    assert evolution.is_direct_look_request("rebuild your look")
+    assert not evolution.is_direct_look_request("tell me about your look")
+
+    reply = await evolution.change_appearance("Please rebuild it")
+    assert "Rebuilding" in reply
+    await asyncio.gather(*evolution._background_tasks)
+    assert _manifest(settings).current_version == 2
+    assert evolution.current_look_spec().base_template == "custom:miss"

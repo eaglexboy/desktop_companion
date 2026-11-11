@@ -25,7 +25,7 @@ add_test(NAME test_window_mask_helper COMMAND test_window_mask_helper)
 set_tests_properties(test_window_mask_helper PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 qt_add_executable(test_ipc_client test_ipc_client.cpp ../src/ipc_client.cpp)
-target_link_libraries(test_ipc_client PRIVATE Qt6::Core Qt6::Network Qt6::WebSockets Qt6::Test)
+target_link_libraries(test_ipc_client PRIVATE Qt6::Core Qt6::Qml Qt6::Network Qt6::WebSockets Qt6::Test)
 add_test(NAME test_ipc_client COMMAND test_ipc_client)
 
 # test_glb_sanitizer: GlbSanitizer's pure GLB rewrite (animations removed,

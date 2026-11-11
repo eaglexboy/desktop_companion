@@ -14,18 +14,16 @@ index finger of a four-fingered mech) are left out of the clips: a body does not
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterable
+from pathlib import Path
+
+RIG_MAPS_DIR = Path(__file__).resolve().parent / "rig_maps"
+RIG_MAP_FORMAT = 1
+MAX_ARM_SPREAD = 60
 
 CHARACTER_CREATOR = "character_creator"
 AUTO_RIG_PRO = "auto_rig_pro"
-
-_FINGERS = {
-    "thumb": "thumb",
-    "index": "index",
-    "middle": "middle",
-    "ring": "ring",
-    "pinky": "pinky",
-}
 
 
 def _finger(prefix: str, joint: int, side: str) -> str:
@@ -71,7 +69,11 @@ def character_creator_to_quaternius(name: str) -> str | None:
             if part in _CC_LIMB:
                 return f"{_CC_LIMB[part]}_{side}"
             for finger, target in _CC_FINGER.items():
-                if part.startswith(finger) and part[len(finger) :] in ("1", "2", "3"):
+                if part.startswith(finger) and part[len(finger) :] in (
+                    "1",
+                    "2",
+                    "3",
+                ):
                     return _finger(target, int(part[len(finger) :]), side)
     return None
 
@@ -115,7 +117,11 @@ def auto_rig_pro_to_quaternius(name: str) -> str | None:
             if part in _ARP_LIMB:
                 return f"{_ARP_LIMB[part]}_{side}"
             for finger, target in _ARP_FINGER.items():
-                if part.startswith(finger) and part[len(finger) :] in ("1", "2", "3"):
+                if part.startswith(finger) and part[len(finger) :] in (
+                    "1",
+                    "2",
+                    "3",
+                ):
                     return _finger(target, int(part[len(finger) :]), side)
     return None
 
@@ -132,13 +138,144 @@ _FAMILIES: dict[str, tuple[Callable[[str], str | None], frozenset[str]]] = {
 }
 
 
+# --- rig maps: families that are data -----------------------------------------------------------------------
+#
+# A rig map (`blender/rig_maps/<name>.json`) says which bones of a skeleton are which Quaternius bones, for
+# a skeleton that has no tool of its own to recognise it by (a mech pack, a toon character, a Rigify-like
+# rig). {"format": 1, "name": ..., "signature": [bones all present], "absent": [bones that must not be],
+# "bones": {source bone: Quaternius bone}, "prune": true to fold the bones that have no Quaternius name
+# into their parents (a skeleton of 180 bones, most of them for parts that break off, makes a look too
+# big and too slow to build), "fold": {source bone: Quaternius bone} to fold named bones into a bone
+# that is kept (a control bone the libraries do not drive, such as an IK foot, that has a mesh weighted
+# to it: it would stay where it was while the leg moved), "arm_spread": degrees (0-60) to hold the upper
+# arms out from the body in every clip (a body whose hips or legs are wider than its shoulders: the
+# hanging arms of the libraries go through them)}. The names are as `blender/sketchfab.py` cleans them.
+
+
+class RigMapError(ValueError):
+    pass
+
+
+def load_rig_map(
+    path: Path,
+) -> tuple[
+    str,
+    Callable[[str], str | None],
+    frozenset[str],
+    frozenset[str],
+    bool,
+    dict[str, str],
+    float,
+]:
+    """(name, map, signature, absent, prune, fold, arm_spread) of a rig map file; RigMapError if it is not valid."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise RigMapError(f"{path.name}: not readable JSON ({exc})") from None
+    if not isinstance(data, dict) or data.get("format") != RIG_MAP_FORMAT:
+        raise RigMapError(f"{path.name}: format must be {RIG_MAP_FORMAT}")
+    name = data.get("name")
+    if not isinstance(name, str) or not name:
+        raise RigMapError(f"{path.name}: needs a name")
+    bones, signature, absent = (
+        data.get("bones"),
+        data.get("signature"),
+        data.get("absent", []),
+    )
+    if (
+        not isinstance(bones, dict)
+        or not bones
+        or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in bones.items()
+        )
+    ):
+        raise RigMapError(
+            f"{path.name}: bones must map source bone names to Quaternius names"
+        )
+    if (
+        not isinstance(signature, list)
+        or not signature
+        or not set(signature) <= set(bones)
+    ):
+        raise RigMapError(f"{path.name}: signature must list bones of the map")
+    if not isinstance(absent, list) or set(absent) & set(signature):
+        raise RigMapError(
+            f"{path.name}: absent must be a list that does not overlap the signature"
+        )
+    if not isinstance(data.get("prune", False), bool):
+        raise RigMapError(f"{path.name}: prune must be true or false")
+    fold = data.get("fold", {})
+    if (
+        not isinstance(fold, dict)
+        or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in fold.items()
+        )
+        or not set(fold.values()) <= set(bones.values())
+        or set(fold) & set(bones)
+    ):
+        raise RigMapError(
+            f"{path.name}: fold must map bones that are not in the map onto Quaternius names the map has"
+        )
+    spread = data.get("arm_spread", 0)
+    if (
+        isinstance(spread, bool)
+        or not isinstance(spread, (int, float))
+        or not 0 <= spread <= MAX_ARM_SPREAD
+    ):
+        raise RigMapError(
+            f"{path.name}: arm_spread must be a number of degrees from 0 to {MAX_ARM_SPREAD}"
+        )
+    return (
+        name,
+        bones.get,
+        frozenset(signature),
+        frozenset(absent),
+        bool(data.get("prune", False)),
+        fold,
+        float(spread),
+    )
+
+
+_ABSENT: dict[str, frozenset[str]] = {}
+_PRUNE: set[str] = set()
+_FOLD: dict[str, dict[str, str]] = {}
+_SPREAD: dict[str, float] = {}
+for _path in sorted(RIG_MAPS_DIR.glob("*.json")):
+    _name, _to, _signature, _absent, _prune, _fold, _spread = load_rig_map(
+        _path
+    )
+    _FAMILIES[_name] = (_to, _signature)
+    _ABSENT[_name] = _absent
+    _FOLD[_name] = _fold
+    _SPREAD[_name] = _spread
+    if _prune:
+        _PRUNE.add(_name)
+
+
+def folded_bones(family: str) -> dict[str, str]:
+    """The bones of `family` that are folded into a kept bone: {source bone: Quaternius bone}."""
+    return _FOLD.get(family, {})
+
+
+def arm_spread(family: str | None) -> float:
+    """Degrees the upper arms of a skeleton of `family` are held out from the body in every clip."""
+    return _SPREAD.get(family or "", 0.0)
+
+
+def prunes_extra_bones(family: str) -> bool:
+    """True if a skeleton of `family` has its bones without a Quaternius name folded into their parents."""
+    return family in _PRUNE
+
+
 def rig_family(bone_names: Iterable[str]) -> str | None:
     """The family of a skeleton (its bone names, as cleaned by `blender/sketchfab.py`), None if it is
     neither known family. A skeleton already named for Quaternius is no family: it needs no conversion.
     """
     names = set(bone_names)
     for family, (_map, signature) in _FAMILIES.items():
-        if signature <= names:
+        if signature <= names and not (
+            _ABSENT.get(family, frozenset()) & names
+        ):
             return family
     return None
 
@@ -156,4 +293,6 @@ def quaternius_names(family: str, bone_names: Iterable[str]) -> dict[str, str]:
     count: dict[str, int] = {}
     for target in found.values():
         count[target] = count.get(target, 0) + 1
-    return {bone: target for bone, target in found.items() if count[target] == 1}
+    return {
+        bone: target for bone, target in found.items() if count[target] == 1
+    }

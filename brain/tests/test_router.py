@@ -14,7 +14,9 @@ class _FakeClient(LLMClient):
         self._behavior = iter(behavior)
         self.calls: list[list[Message]] = []
 
-    async def chat(self, messages: list[Message], *, max_tokens: int = 1024, **kwargs) -> str:
+    async def chat(
+        self, messages: list[Message], *, max_tokens: int = 1024, **kwargs
+    ) -> str:
         self.calls.append(messages)
         outcome = next(self._behavior)
         if isinstance(outcome, Exception):
@@ -23,7 +25,11 @@ class _FakeClient(LLMClient):
 
 
 def _pool(*replies) -> LLMPool:
-    return LLMPool([("fake", _FakeClient(list(replies)), [])]) if replies else LLMPool([])
+    return (
+        LLMPool([("fake", _FakeClient(list(replies)), [])])
+        if replies
+        else LLMPool([])
+    )
 
 
 # --- Router construction -----------------------------------------------------
@@ -44,8 +50,15 @@ def test_router_allows_one_empty_pool() -> None:
 
 @pytest.mark.asyncio
 async def test_always_local_never_touches_classifier_or_cloud() -> None:
-    classifier = _FakeClient([RuntimeError("classifier should never be called")])
-    router = Router(_pool("local reply"), _pool("should not be used"), classifier=classifier, escalation_threshold="always_local")
+    classifier = _FakeClient(
+        [RuntimeError("classifier should never be called")]
+    )
+    router = Router(
+        _pool("local reply"),
+        _pool("should not be used"),
+        classifier=classifier,
+        escalation_threshold="always_local",
+    )
 
     result = await router.handle("anything at all", system_prompt="sys")
 
@@ -55,8 +68,15 @@ async def test_always_local_never_touches_classifier_or_cloud() -> None:
 
 @pytest.mark.asyncio
 async def test_always_cloud_never_touches_classifier() -> None:
-    classifier = _FakeClient([RuntimeError("classifier should never be called")])
-    router = Router(_pool("should not be used"), _pool("cloud reply"), classifier=classifier, escalation_threshold="always_cloud")
+    classifier = _FakeClient(
+        [RuntimeError("classifier should never be called")]
+    )
+    router = Router(
+        _pool("should not be used"),
+        _pool("cloud reply"),
+        classifier=classifier,
+        escalation_threshold="always_cloud",
+    )
 
     result = await router.handle("anything at all", system_prompt="sys")
 
@@ -71,7 +91,9 @@ async def test_always_cloud_never_touches_classifier() -> None:
 @pytest.mark.asyncio
 async def test_classifier_error_defaults_to_local_not_cloud() -> None:
     classifier = _FakeClient([RuntimeError("classifier timed out")])
-    router = Router(_pool("local reply"), _pool("should not be used"), classifier=classifier)
+    router = Router(
+        _pool("local reply"), _pool("should not be used"), classifier=classifier
+    )
 
     result = await router.handle("hello", system_prompt="sys")
 
@@ -81,7 +103,9 @@ async def test_classifier_error_defaults_to_local_not_cloud() -> None:
 
 @pytest.mark.asyncio
 async def test_no_classifier_configured_defaults_to_local() -> None:
-    router = Router(_pool("local reply"), _pool("should not be used"), classifier=None)
+    router = Router(
+        _pool("local reply"), _pool("should not be used"), classifier=None
+    )
 
     result = await router.handle("hello", system_prompt="sys")
 
@@ -92,7 +116,9 @@ async def test_no_classifier_configured_defaults_to_local() -> None:
 @pytest.mark.asyncio
 async def test_classifier_malformed_json_defaults_to_local() -> None:
     classifier = _FakeClient(["this is not json"])
-    router = Router(_pool("local reply"), _pool("should not be used"), classifier=classifier)
+    router = Router(
+        _pool("local reply"), _pool("should not be used"), classifier=classifier
+    )
 
     result = await router.handle("hello", system_prompt="sys")
 
@@ -105,8 +131,12 @@ async def test_classifier_trailing_garbage_after_json_still_parses() -> None:
     """Observed live against a real small local model (phi3.5:3.8b) during
     router-model A/B testing: valid JSON followed by unrelated rambling
     text. A strict whole-string json.loads() would reject this outright."""
-    classifier = _FakeClient(['{"escalate": true, "reason": "complex"}\n\nExplangy, as an AI...'])
-    router = Router(_pool("should not be used"), _pool("cloud reply"), classifier=classifier)
+    classifier = _FakeClient(
+        ['{"escalate": true, "reason": "complex"}\n\nExplangy, as an AI...']
+    )
+    router = Router(
+        _pool("should not be used"), _pool("cloud reply"), classifier=classifier
+    )
 
     result = await router.handle("hello", system_prompt="sys")
 
@@ -115,12 +145,16 @@ async def test_classifier_trailing_garbage_after_json_still_parses() -> None:
 
 
 @pytest.mark.asyncio
-async def test_classifier_malformed_value_inside_json_still_defaults_to_local() -> None:
+async def test_classifier_malformed_value_inside_json_still_defaults_to_local() -> (
+    None
+):
     """A different live-observed quirk (granite4): a stray character INSIDE
     the braces, which no amount of substring extraction can repair -- must
     still fall through to the ordinary Classifier Fallback Rule, not crash."""
     classifier = _FakeClient(['{"escalate": true, "reason": "stray period".}'])
-    router = Router(_pool("local reply"), _pool("should not be used"), classifier=classifier)
+    router = Router(
+        _pool("local reply"), _pool("should not be used"), classifier=classifier
+    )
 
     result = await router.handle("hello", system_prompt="sys")
 
@@ -130,10 +164,16 @@ async def test_classifier_malformed_value_inside_json_still_defaults_to_local() 
 
 @pytest.mark.asyncio
 async def test_classifier_says_escalate_true_routes_to_cloud() -> None:
-    classifier = _FakeClient(['{"escalate": true, "reason": "complex reasoning"}'])
-    router = Router(_pool("should not be used"), _pool("cloud reply"), classifier=classifier)
+    classifier = _FakeClient(
+        ['{"escalate": true, "reason": "complex reasoning"}']
+    )
+    router = Router(
+        _pool("should not be used"), _pool("cloud reply"), classifier=classifier
+    )
 
-    result = await router.handle("write me a red-black tree in rust", system_prompt="sys")
+    result = await router.handle(
+        "write me a red-black tree in rust", system_prompt="sys"
+    )
 
     assert result.text == "cloud reply"
     assert result.escalated is True
@@ -167,9 +207,13 @@ async def test_register_tool_and_keyword_dispatch_change_appearance() -> None:
         seen_requests.append(request)
         return "done: wizard robe"
 
-    router.register_tool("change_appearance", "desc", {"type": "object"}, handler)
+    router.register_tool(
+        "change_appearance", "desc", {"type": "object"}, handler
+    )
 
-    result = await router.handle("can you wear a wizard robe today?", system_prompt="sys")
+    result = await router.handle(
+        "can you wear a wizard robe today?", system_prompt="sys"
+    )
 
     assert result.text == "done: wizard robe"
     assert result.source == "tool:change_appearance"
@@ -184,16 +228,22 @@ async def test_register_tool_and_keyword_dispatch_revert_appearance() -> None:
     async def handler(request: str) -> str:
         return "reverted"
 
-    router.register_tool("revert_appearance", "desc", {"type": "object"}, handler)
+    router.register_tool(
+        "revert_appearance", "desc", {"type": "object"}, handler
+    )
 
-    result = await router.handle("please go back to your old look", system_prompt="sys")
+    result = await router.handle(
+        "please go back to your old look", system_prompt="sys"
+    )
 
     assert result.text == "reverted"
     assert result.source == "tool:revert_appearance"
 
 
 @pytest.mark.asyncio
-async def test_keyword_match_without_registered_tool_falls_through_to_normal_chat() -> None:
+async def test_keyword_match_without_registered_tool_falls_through_to_normal_chat() -> (
+    None
+):
     router = Router(_pool("normal chat reply"), LLMPool([]))
 
     result = await router.handle("wear a hat", system_prompt="sys")
@@ -212,9 +262,13 @@ async def test_unrelated_message_does_not_trigger_tool_dispatch() -> None:
         called = True
         return "x"
 
-    router.register_tool("change_appearance", "desc", {"type": "object"}, handler)
+    router.register_tool(
+        "change_appearance", "desc", {"type": "object"}, handler
+    )
 
-    result = await router.handle("what's the weather like today?", system_prompt="sys")
+    result = await router.handle(
+        "what's the weather like today?", system_prompt="sys"
+    )
 
     assert called is False
     assert result.text == "normal chat reply"
@@ -231,7 +285,10 @@ async def test_history_included_in_message_list() -> None:
     await router.handle(
         "follow-up question",
         system_prompt="sys",
-        history=[{"role": "user", "content": "earlier"}, {"role": "assistant", "content": "earlier reply"}],
+        history=[
+            {"role": "user", "content": "earlier"},
+            {"role": "assistant", "content": "earlier reply"},
+        ],
     )
 
     sent = client.calls[0]
@@ -243,15 +300,21 @@ async def test_history_included_in_message_list() -> None:
 
 # --- reply format enforcement ---------------------------------------------------
 
-_JSON_FORMAT = ReplyFormat("REMIND", "REPAIR", lambda raw: raw.lstrip().startswith("{"))
+_JSON_FORMAT = ReplyFormat(
+    "REMIND", "REPAIR", lambda raw: raw.lstrip().startswith("{")
+)
 
 
 @pytest.mark.asyncio
-async def test_reply_format_reminder_rides_on_user_message_and_valid_reply_is_not_retried() -> None:
+async def test_reply_format_reminder_rides_on_user_message_and_valid_reply_is_not_retried() -> (
+    None
+):
     client = _FakeClient(['{"say": "hi"}'])
     router = Router(LLMPool([("fake", client, [])]), LLMPool([]))
 
-    result = await router.handle("hello", system_prompt="sys", reply_format=_JSON_FORMAT)
+    result = await router.handle(
+        "hello", system_prompt="sys", reply_format=_JSON_FORMAT
+    )
 
     assert result.text == '{"say": "hi"}'
     assert len(client.calls) == 1
@@ -263,7 +326,9 @@ async def test_malformed_reply_gets_one_repair_round_trip() -> None:
     client = _FakeClient(["*sigh* hi", '{"say": "*sigh* hi"}'])
     router = Router(LLMPool([("fake", client, [])]), LLMPool([]))
 
-    result = await router.handle("hello", system_prompt="sys", reply_format=_JSON_FORMAT)
+    result = await router.handle(
+        "hello", system_prompt="sys", reply_format=_JSON_FORMAT
+    )
 
     assert result.text == '{"say": "*sigh* hi"}'
     assert client.calls[1][-2:] == [
@@ -274,11 +339,23 @@ async def test_malformed_reply_gets_one_repair_round_trip() -> None:
 
 @pytest.mark.asyncio
 async def test_failed_or_still_malformed_repair_keeps_original_reply() -> None:
-    still_bad = Router(LLMPool([("fake", _FakeClient(["plain", "still plain"]), [])]), LLMPool([]))
-    assert (await still_bad.handle("x", system_prompt="s", reply_format=_JSON_FORMAT)).text == "plain"
+    still_bad = Router(
+        LLMPool([("fake", _FakeClient(["plain", "still plain"]), [])]),
+        LLMPool([]),
+    )
+    assert (
+        await still_bad.handle(
+            "x", system_prompt="s", reply_format=_JSON_FORMAT
+        )
+    ).text == "plain"
 
-    errors = Router(LLMPool([("fake", _FakeClient(["plain", RuntimeError("down")]), [])]), LLMPool([]))
-    assert (await errors.handle("x", system_prompt="s", reply_format=_JSON_FORMAT)).text == "plain"
+    errors = Router(
+        LLMPool([("fake", _FakeClient(["plain", RuntimeError("down")]), [])]),
+        LLMPool([]),
+    )
+    assert (
+        await errors.handle("x", system_prompt="s", reply_format=_JSON_FORMAT)
+    ).text == "plain"
 
 
 # --- build_router wiring ------------------------------------------------------
@@ -289,7 +366,10 @@ def _settings_with_cloud_providers() -> Settings:
         {
             "storage": {"workspace_dir": "/tmp/ws", "deploy_dir": "/tmp/dep"},
             "llm": {
-                "local": {"base_url": "http://127.0.0.1:11434/v1", "model": "local-model"},
+                "local": {
+                    "base_url": "http://127.0.0.1:11434/v1",
+                    "model": "local-model",
+                },
                 "cloud": {
                     "low_priority": {
                         "provider_type": "generic_openai",
@@ -327,7 +407,10 @@ def test_build_router_wires_local_and_sorted_enabled_cloud_pool() -> None:
 
     assert router._local_pool.is_empty is False
     assert router._cloud_pool.is_empty is False
-    assert [e.name for e in router._cloud_pool._entries] == ["high_priority", "low_priority"]
+    assert [e.name for e in router._cloud_pool._entries] == [
+        "high_priority",
+        "low_priority",
+    ]
 
 
 def test_build_router_registers_builtin_appearance_tools() -> None:
@@ -336,7 +419,9 @@ def test_build_router_registers_builtin_appearance_tools() -> None:
 
 
 @pytest.mark.asyncio
-async def test_build_router_builtin_tools_raise_not_implemented_until_wired() -> None:
+async def test_build_router_builtin_tools_raise_not_implemented_until_wired() -> (
+    None
+):
     router = build_router(_settings_with_cloud_providers())
     with pytest.raises(NotImplementedError, match="stub"):
         await router.tools["change_appearance"].handler("wear a hat")
@@ -348,14 +433,21 @@ def test_build_router_classifier_cascades_from_llm_local_by_default() -> None:
     settings = Settings.model_validate(
         {
             "storage": {"workspace_dir": "/tmp/ws", "deploy_dir": "/tmp/dep"},
-            "llm": {"local": {"base_url": "http://127.0.0.1:11434/v1", "model": "local-model"}},
+            "llm": {
+                "local": {
+                    "base_url": "http://127.0.0.1:11434/v1",
+                    "model": "local-model",
+                }
+            },
         }
     )
     router = build_router(settings)
     assert router._classifier is not None
 
 
-def test_build_router_threads_capabilities_from_config_into_cloud_pool() -> None:
+def test_build_router_threads_capabilities_from_config_into_cloud_pool() -> (
+    None
+):
     settings = _settings_with_cloud_providers()
     router = build_router(settings)
     entries_by_name = {e.name: e for e in router._cloud_pool._entries}
@@ -374,7 +466,10 @@ def _settings_with_capability_tagged_providers() -> Settings:
         {
             "storage": {"workspace_dir": "/tmp/ws", "deploy_dir": "/tmp/dep"},
             "llm": {
-                "local": {"base_url": "http://127.0.0.1:11434/v1", "model": "local-model"},
+                "local": {
+                    "base_url": "http://127.0.0.1:11434/v1",
+                    "model": "local-model",
+                },
                 "cloud": {
                     "general_purpose": {
                         "provider_type": "generic_openai",
@@ -417,7 +512,9 @@ class _FakeClassifier(LLMClient):
     def __init__(self, verdict_json: str) -> None:
         self._verdict_json = verdict_json
 
-    async def chat(self, messages: list[Message], *, max_tokens: int = 1024, **kwargs) -> str:
+    async def chat(
+        self, messages: list[Message], *, max_tokens: int = 1024, **kwargs
+    ) -> str:
         return self._verdict_json
 
 
@@ -433,10 +530,16 @@ def _router_with_capability_engines(verdict_json: str) -> Router:
 
 
 @pytest.mark.asyncio
-async def test_routes_code_question_to_code_specialist_despite_lower_priority() -> None:
-    router = _router_with_capability_engines('{"escalate": true, "capability": "code", "reason": "needs code"}')
+async def test_routes_code_question_to_code_specialist_despite_lower_priority() -> (
+    None
+):
+    router = _router_with_capability_engines(
+        '{"escalate": true, "capability": "code", "reason": "needs code"}'
+    )
 
-    result = await router.handle("write me a quicksort in rust", system_prompt="sys")
+    result = await router.handle(
+        "write me a quicksort in rust", system_prompt="sys"
+    )
 
     assert result.text == "code_specialist reply"
     assert result.capability == "code"
@@ -444,31 +547,41 @@ async def test_routes_code_question_to_code_specialist_despite_lower_priority() 
 
 
 @pytest.mark.asyncio
-async def test_routes_large_context_question_to_large_context_specialist() -> None:
+async def test_routes_large_context_question_to_large_context_specialist() -> (
+    None
+):
     router = _router_with_capability_engines(
         '{"escalate": true, "capability": "large_context", "reason": "needs big context"}'
     )
 
-    result = await router.handle("summarize this 200 page document", system_prompt="sys")
+    result = await router.handle(
+        "summarize this 200 page document", system_prompt="sys"
+    )
 
     assert result.text == "large_context_specialist reply"
     assert result.capability == "large_context"
 
 
 @pytest.mark.asyncio
-async def test_routes_general_question_to_highest_priority_general_provider() -> None:
+async def test_routes_general_question_to_highest_priority_general_provider() -> (
+    None
+):
     router = _router_with_capability_engines(
         '{"escalate": true, "capability": "general", "reason": "general reasoning"}'
     )
 
-    result = await router.handle("explain quantum entanglement simply", system_prompt="sys")
+    result = await router.handle(
+        "explain quantum entanglement simply", system_prompt="sys"
+    )
 
     assert result.text == "general_purpose reply"
     assert result.capability == "general"
 
 
 @pytest.mark.asyncio
-async def test_unrecognized_capability_from_classifier_falls_back_to_general() -> None:
+async def test_unrecognized_capability_from_classifier_falls_back_to_general() -> (
+    None
+):
     """A classifier might hallucinate a capability tag no provider declares --
     must not crash, must fall back to ordinary priority order."""
     router = _router_with_capability_engines(
@@ -477,13 +590,19 @@ async def test_unrecognized_capability_from_classifier_falls_back_to_general() -
 
     result = await router.handle("hello", system_prompt="sys")
 
-    assert result.text == "general_purpose reply"  # highest priority, since nothing is tagged "quantum_computing"
-    assert result.capability == "general"  # normalized, not the hallucinated tag
+    assert (
+        result.text == "general_purpose reply"
+    )  # highest priority, since nothing is tagged "quantum_computing"
+    assert (
+        result.capability == "general"
+    )  # normalized, not the hallucinated tag
 
 
 @pytest.mark.asyncio
 async def test_local_question_never_touches_capability_routing() -> None:
-    router = _router_with_capability_engines('{"escalate": false, "capability": "general", "reason": "simple"}')
+    router = _router_with_capability_engines(
+        '{"escalate": false, "capability": "general", "reason": "simple"}'
+    )
 
     result = await router.handle("hi there", system_prompt="sys")
 
@@ -502,20 +621,32 @@ async def test_local_question_never_touches_capability_routing() -> None:
         "restore version 3",
     ],
 )
-async def test_a_numbered_rollback_goes_to_the_tool_even_when_the_model_picks_tools(text: str) -> None:
-    router = Router(_pool("the model must not answer this"), LLMPool([]), keyword_tools=False)  # skills on
+async def test_a_numbered_rollback_goes_to_the_tool_even_when_the_model_picks_tools(
+    text: str,
+) -> None:
+    router = Router(
+        _pool("the model must not answer this"),
+        LLMPool([]),
+        keyword_tools=False,
+    )  # skills on
     seen: list[str] = []
 
     async def handler(request: str) -> str:
         seen.append(request)
         return "reverted"
 
-    router.register_tool("revert_appearance", "desc", {"type": "object"}, handler)
+    router.register_tool(
+        "revert_appearance", "desc", {"type": "object"}, handler
+    )
 
     result = await router.handle(text, system_prompt="sys")
 
-    assert result.source == "tool:revert_appearance" and result.text == "reverted"
-    assert seen == [text]  # the handler gets the whole request, so it can read the number
+    assert (
+        result.source == "tool:revert_appearance" and result.text == "reverted"
+    )
+    assert seen == [
+        text
+    ]  # the handler gets the whole request, so it can read the number
 
 
 @pytest.mark.asyncio
@@ -532,14 +663,20 @@ async def test_a_numbered_rollback_goes_to_the_tool_even_when_the_model_picks_to
         "wear a wizard hat",  # a look request, not a rollback: still the model's call with skills on
     ],
 )
-async def test_other_requests_still_go_to_the_model_when_it_picks_tools(text: str) -> None:
+async def test_other_requests_still_go_to_the_model_when_it_picks_tools(
+    text: str,
+) -> None:
     router = Router(_pool("model reply"), LLMPool([]), keyword_tools=False)
 
     async def handler(request: str) -> str:
         raise AssertionError("the tool must not be called")
 
-    router.register_tool("revert_appearance", "desc", {"type": "object"}, handler)
-    router.register_tool("change_appearance", "desc", {"type": "object"}, handler)
+    router.register_tool(
+        "revert_appearance", "desc", {"type": "object"}, handler
+    )
+    router.register_tool(
+        "change_appearance", "desc", {"type": "object"}, handler
+    )
 
     result = await router.handle(text, system_prompt="sys")
 

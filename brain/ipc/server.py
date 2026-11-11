@@ -141,7 +141,9 @@ _WIRE_VERSION_FIELDS = (
 )
 
 
-def _project_version_entry(entry: AssetVersionEntry, *, include_look_spec_and_warnings: bool) -> dict[str, Any]:
+def _project_version_entry(
+    entry: AssetVersionEntry, *, include_look_spec_and_warnings: bool
+) -> dict[str, Any]:
     data = entry.model_dump(mode="json", include=set(_WIRE_VERSION_FIELDS))
     if include_look_spec_and_warnings:
         data["look_spec"] = entry.look_spec
@@ -149,13 +151,17 @@ def _project_version_entry(entry: AssetVersionEntry, *, include_look_spec_and_wa
     return data
 
 
-def project_manifest(manifest: AssetManifest, *, include_look_spec_and_warnings: bool) -> dict[str, Any]:
+def project_manifest(
+    manifest: AssetManifest, *, include_look_spec_and_warnings: bool
+) -> dict[str, Any]:
     """The `welcome` vs. `hot_reload_asset` payload-shape difference is
     deliberate, not an oversight."""
     return {
         "current_version": manifest.current_version,
         "versions": [
-            _project_version_entry(v, include_look_spec_and_warnings=include_look_spec_and_warnings)
+            _project_version_entry(
+                v, include_look_spec_and_warnings=include_look_spec_and_warnings
+            )
             for v in manifest.versions
         ],
     }
@@ -196,9 +202,15 @@ class HandshakeError(ValueError):
 
 OnUserText = Callable[[str, str], Awaitable[None]]  # (client_id, text)
 OnInteractionState = Callable[[str, str], Awaitable[None]]  # (client_id, state)
-OnAssetSwapResult = Callable[[bool, int, str | None], Awaitable[None]]  # (ok, version, error)
-OnSpeechFinished = Callable[[str, str], Awaitable[None]]  # (client_id, utterance_id)
-OnClientConnected = Callable[[str], Awaitable[None]]  # (client_id) -- after welcome is sent
+OnAssetSwapResult = Callable[
+    [bool, int, str | None], Awaitable[None]
+]  # (ok, version, error)
+OnSpeechFinished = Callable[
+    [str, str], Awaitable[None]
+]  # (client_id, utterance_id)
+OnClientConnected = Callable[
+    [str], Awaitable[None]
+]  # (client_id) -- after welcome is sent
 
 
 async def _noop_user_text(_client_id: str, _text: str) -> None:
@@ -209,7 +221,9 @@ async def _noop_interaction_state(_client_id: str, _state: str) -> None:
     return None
 
 
-async def _noop_asset_swap_result(_ok: bool, _version: int, _error: str | None) -> None:
+async def _noop_asset_swap_result(
+    _ok: bool, _version: int, _error: str | None
+) -> None:
     return None
 
 
@@ -257,7 +271,10 @@ class OverlayHub:
         """Returns a rejection reason string, or None if the connection
         should proceed. Checked before `accept()`."""
         origin = websocket.headers.get("origin")
-        if origin is not None and origin not in self._settings.server.allowed_origins:
+        if (
+            origin is not None
+            and origin not in self._settings.server.allowed_origins
+        ):
             return f"Origin {origin!r} not in allowed_origins"
 
         host = websocket.headers.get("host")
@@ -288,23 +305,35 @@ class OverlayHub:
 
         existing = self._connections.get(hello.client_id)
         if existing is not None:
-            logger.info("client_id %r reconnected; closing the previous socket", hello.client_id)
+            logger.info(
+                "client_id %r reconnected; closing the previous socket",
+                hello.client_id,
+            )
             await _safe_close(existing.websocket, _CLOSE_CLIENT_ID_REPLACED)
             self._connections.pop(hello.client_id, None)
 
         state = _ConnectionState(
-            websocket=websocket, client_id=hello.client_id, client_type=hello.client_type, capabilities=hello.capabilities
+            websocket=websocket,
+            client_id=hello.client_id,
+            client_type=hello.client_type,
+            capabilities=hello.capabilities,
         )
         self._connections[hello.client_id] = state
         await self._send_welcome(websocket)
-        logger.info("client %r connected (%d total)", hello.client_id, len(self._connections))
+        logger.info(
+            "client %r connected (%d total)",
+            hello.client_id,
+            len(self._connections),
+        )
         # Lets the daemon push state the client can't know yet (e.g. the
         # current avatar placement) -- a failure here must not drop the
         # connection that just completed its handshake.
         try:
             await self._on_client_connected(hello.client_id)
         except Exception:
-            logger.exception("on_client_connected callback failed for %r", hello.client_id)
+            logger.exception(
+                "on_client_connected callback failed for %r", hello.client_id
+            )
 
         try:
             await self._receive_loop(state)
@@ -313,15 +342,25 @@ class OverlayHub:
         finally:
             if self._connections.get(hello.client_id) is state:
                 self._connections.pop(hello.client_id, None)
-            logger.info("client %r disconnected (%d remaining)", hello.client_id, len(self._connections))
+            logger.info(
+                "client %r disconnected (%d remaining)",
+                hello.client_id,
+                len(self._connections),
+            )
 
     async def _complete_handshake(self, websocket: WebSocket) -> HelloPayload:
         try:
-            raw = await asyncio.wait_for(websocket.receive_text(), timeout=_HELLO_TIMEOUT_S)
+            raw = await asyncio.wait_for(
+                websocket.receive_text(), timeout=_HELLO_TIMEOUT_S
+            )
         except TimeoutError as exc:
-            raise HandshakeError("no hello message received within timeout") from exc
+            raise HandshakeError(
+                "no hello message received within timeout"
+            ) from exc
         except WebSocketDisconnect as exc:
-            raise HandshakeError("client disconnected before sending hello") from exc
+            raise HandshakeError(
+                "client disconnected before sending hello"
+            ) from exc
 
         try:
             envelope = Envelope.model_validate(json.loads(raw))
@@ -329,7 +368,9 @@ class OverlayHub:
             raise HandshakeError(f"malformed envelope: {exc}") from exc
 
         if envelope.type != "hello":
-            raise HandshakeError(f"expected 'hello' as the first message, got {envelope.type!r}")
+            raise HandshakeError(
+                f"expected 'hello' as the first message, got {envelope.type!r}"
+            )
 
         try:
             hello = HelloPayload.model_validate(envelope.payload)
@@ -365,7 +406,9 @@ class OverlayHub:
         while True:
             message = await state.websocket.receive()
             if message["type"] == "websocket.disconnect":
-                raise WebSocketDisconnect(message.get("code", 1000), message.get("reason"))
+                raise WebSocketDisconnect(
+                    message.get("code", 1000), message.get("reason")
+                )
             if "bytes" in message and message["bytes"] is not None:
                 self._handle_binary_frame(state, message["bytes"])
                 continue
@@ -375,14 +418,24 @@ class OverlayHub:
             try:
                 envelope = Envelope.model_validate(json.loads(raw))
             except (ValidationError, ValueError) as exc:
-                logger.warning("client %r sent a malformed envelope: %s", state.client_id, exc)
+                logger.warning(
+                    "client %r sent a malformed envelope: %s",
+                    state.client_id,
+                    exc,
+                )
                 continue
             try:
                 await self._dispatch(state, envelope)
             except Exception:
-                logger.exception("error handling %r from client %r", envelope.type, state.client_id)
+                logger.exception(
+                    "error handling %r from client %r",
+                    envelope.type,
+                    state.client_id,
+                )
 
-    def _handle_binary_frame(self, state: _ConnectionState, data: bytes) -> None:
+    def _handle_binary_frame(
+        self, state: _ConnectionState, data: bytes
+    ) -> None:
         """Raw PCM16LE audio frames carry no header of their own -- routed
         by whichever stream_id was most recently announced via
         audio_stream_start on this connection."""
@@ -394,13 +447,23 @@ class OverlayHub:
             return
         self._streaming_stt.feed_chunk(state.active_stream_id, data)
 
-    async def _dispatch(self, state: _ConnectionState, envelope: Envelope) -> None:
+    async def _dispatch(
+        self, state: _ConnectionState, envelope: Envelope
+    ) -> None:
         if envelope.type in _RESERVED_NOOP_TYPES:
-            logger.debug("ignoring reserved event %r from client %r", envelope.type, state.client_id)
+            logger.debug(
+                "ignoring reserved event %r from client %r",
+                envelope.type,
+                state.client_id,
+            )
             return
         model = _CLIENT_EVENT_MODELS.get(envelope.type)
         if model is None:
-            logger.warning("client %r sent an unrecognized event type %r; ignoring", state.client_id, envelope.type)
+            logger.warning(
+                "client %r sent an unrecognized event type %r; ignoring",
+                state.client_id,
+                envelope.type,
+            )
             return
 
         payload = model.model_validate(envelope.payload)
@@ -409,27 +472,41 @@ class OverlayHub:
         elif isinstance(payload, InteractionStatePayload):
             await self._on_interaction_state(state.client_id, payload.state)
         elif isinstance(payload, AssetSwapResultPayload):
-            await self._on_asset_swap_result(payload.ok, payload.version, payload.error)
+            await self._on_asset_swap_result(
+                payload.ok, payload.version, payload.error
+            )
         elif isinstance(payload, SpeechFinishedPayload):
-            await self._on_speech_finished(state.client_id, payload.utterance_id)
+            await self._on_speech_finished(
+                state.client_id, payload.utterance_id
+            )
         elif isinstance(payload, AudioStreamStartPayload):
             state.active_stream_id = payload.stream_id
             if self._streaming_stt is not None:
-                self._streaming_stt.start_stream(payload.stream_id, sample_rate=payload.sample_rate)
+                self._streaming_stt.start_stream(
+                    payload.stream_id, sample_rate=payload.sample_rate
+                )
         elif isinstance(payload, AudioStreamChunkPayload):
             pass  # the JSON header is purely sequencing metadata; the real bytes arrive as the next binary frame
         elif isinstance(payload, AudioStreamEndPayload):
             await self._finalize_audio_stream(state, payload.stream_id)
 
-    async def _finalize_audio_stream(self, state: _ConnectionState, stream_id: str) -> None:
+    async def _finalize_audio_stream(
+        self, state: _ConnectionState, stream_id: str
+    ) -> None:
         if self._streaming_stt is None:
             return
         if state.active_stream_id == stream_id:
             state.active_stream_id = None
         try:
-            _backend_name, text = await self._streaming_stt.end_stream(stream_id)
+            _backend_name, text = await self._streaming_stt.end_stream(
+                stream_id
+            )
         except Exception:
-            logger.exception("failed to finalize audio stream %r for client %r", stream_id, state.client_id)
+            logger.exception(
+                "failed to finalize audio stream %r for client %r",
+                stream_id,
+                state.client_id,
+            )
             return
         if text:
             await self._on_user_text_input(state.client_id, text)
@@ -451,7 +528,9 @@ class OverlayHub:
         for client_id, state in self._connections.items():
             try:
                 await state.websocket.send_json(envelope)
-            except Exception:  # noqa: BLE001 -- one dead socket must never stop the rest of the broadcast
+            except (
+                Exception
+            ):  # noqa: BLE001 -- one dead socket must never stop the rest of the broadcast
                 dead_client_ids.append(client_id)
         for client_id in dead_client_ids:
             self._connections.pop(client_id, None)
@@ -466,4 +545,6 @@ async def _safe_close(websocket: WebSocket, code: int) -> None:
         try:
             await websocket.close(code=code)
         except Exception:
-            logger.debug("ignoring error closing an already-gone socket", exc_info=True)
+            logger.debug(
+                "ignoring error closing an already-gone socket", exc_info=True
+            )

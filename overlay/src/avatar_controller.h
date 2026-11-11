@@ -130,12 +130,16 @@ public:
     // last pose until the next clip is played (a library clip that is
     // followed straight away by another, so the body is never left in
     // the rest pose in between).
+    // How many animations the clip has so far: a model's animations are made one after another
+    // after it loads, so a clip is only complete once this stops growing.
+    Q_INVOKABLE int clipAnimationCount(const QString &name) const;
     Q_INVOKABLE bool playClip(const QString &name, int loops = 1, bool hold = false);
     // Shows the chair a body sits on (the generator's SIT_PROP_NODE) by `amount`: 1 is the
     // whole chair, 0 gone. It is a mesh with exactly three morph targets, the first of which
     // collapses it to nothing. Returns how many such meshes it found.
     Q_INVOKABLE int setSitPropShown(double amount);
-    // Whether clip `name` is playing right now.
+    // Whether clip `name` is playing right now: every one of its animations (a late one, a hand
+    // that came after the others, is left standing in its bind pose until it is started).
     Q_INVOKABLE bool clipRunning(const QString &name) const;
     // Duration in ms of one pass of clip `name`, or 0 if unknown.
     Q_INVOKABLE int clipDurationMs(const QString &name) const;
@@ -162,9 +166,10 @@ private:
     // Models whose morph targets are not visemes (see blink/run key names).
     bool isNonVisemeModel(int targetCount) const
     {
-        return isBlinkModel(targetCount) || isRunModel(targetCount) || isGestureModel(targetCount)
-            || isRunGestureModel(targetCount);
+        return isBlinkModel(targetCount) || isRunModel(targetCount) || isGestureModel(targetCount) || isRunGestureModel(targetCount) || isSitPropModel(targetCount);
     }
+    // The chair of a sitting body (collapse + two pads) is not a mouth: speech must not drive it.
+    bool isSitPropModel(int targetCount) const { return targetCount == 3 && m_shapeKeyNames.size() != 3; }
     void resetStep(int generation, int attempt, int passesAfterFound);
 
     QPointer<QObject> m_root;

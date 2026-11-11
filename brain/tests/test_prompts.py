@@ -14,7 +14,9 @@ from brain.personality.state import MemoryNote
 
 def test_neutral_traits_and_mood_produce_no_lines():
     assert describe_traits({"openness": 50.0, "sarcasm": 45.0}) == []
-    assert describe_mood({"energy": 65.0}) == []  # inside the 30-70 neutral band
+    assert (
+        describe_mood({"energy": 65.0}) == []
+    )  # inside the 30-70 neutral band
 
 
 def test_extreme_traits_map_to_directives():
@@ -48,8 +50,12 @@ def test_rank_memory_notes_boosts_keyword_overlap_above_pure_recency():
         MemoryNote(id=2, ts=200.0, note="mentioned liking rust programming"),
         MemoryNote(id=1, ts=100.0, note="asked about dark mode settings"),
     ]
-    ranked = rank_memory_notes(notes, "can you help me debug this rust borrow checker error?")
-    assert ranked[0].id == 2  # "rust" overlap wins despite not being the most recent
+    ranked = rank_memory_notes(
+        notes, "can you help me debug this rust borrow checker error?"
+    )
+    assert (
+        ranked[0].id == 2
+    )  # "rust" overlap wins despite not being the most recent
 
 
 def test_rank_memory_notes_stable_sort_preserves_recency_when_no_overlap():
@@ -58,7 +64,10 @@ def test_rank_memory_notes_stable_sort_preserves_recency_when_no_overlap():
         MemoryNote(id=1, ts=100.0, note="hates being interrupted"),
     ]
     ranked = rank_memory_notes(notes, "what's the capital of France?")
-    assert [n.id for n in ranked] == [2, 1]  # unchanged -- neither matches, recency order kept
+    assert [n.id for n in ranked] == [
+        2,
+        1,
+    ]  # unchanged -- neither matches, recency order kept
 
 
 def test_rank_memory_notes_case_insensitive():
@@ -71,7 +80,9 @@ def test_rank_memory_notes_case_insensitive():
 
 
 def test_build_system_prompt_minimal():
-    prompt = build_system_prompt(agent_name="Deskmate", traits={}, mood={}, memory_notes=[])
+    prompt = build_system_prompt(
+        agent_name="Deskmate", traits={}, mood={}, memory_notes=[]
+    )
     assert "You are Deskmate" in prompt
     assert "personality" not in prompt.lower().split("\n")[0]
 
@@ -84,17 +95,25 @@ def test_build_system_prompt_includes_look_summary_when_given():
         memory_notes=[],
         look_summary="[Appearance: Humanoid Female, wearing Wizard Robe, palette blue/amber]",
     )
-    assert "[Appearance: Humanoid Female, wearing Wizard Robe, palette blue/amber]" in prompt
+    assert (
+        "[Appearance: Humanoid Female, wearing Wizard Robe, palette blue/amber]"
+        in prompt
+    )
 
 
 def test_build_system_prompt_omits_look_summary_when_none():
-    prompt = build_system_prompt(agent_name="Deskmate", traits={}, mood={}, memory_notes=[])
+    prompt = build_system_prompt(
+        agent_name="Deskmate", traits={}, mood={}, memory_notes=[]
+    )
     assert "Appearance" not in prompt
 
 
 def test_build_system_prompt_includes_memory_notes():
     prompt = build_system_prompt(
-        agent_name="Deskmate", traits={}, mood={}, memory_notes=["likes dark mode", "uses Rust"]
+        agent_name="Deskmate",
+        traits={},
+        mood={},
+        memory_notes=["likes dark mode", "uses Rust"],
     )
     assert "likes dark mode" in prompt
     assert "uses Rust" in prompt

@@ -1,0 +1,172 @@
+{
+  "format": 1,
+  "name": "mesh2motion",
+  "description": "Single-clip files on the Quaternius skeleton from Mesh2Motion (`add-animations --retarget`, ADR_ACCESSORY_MODELS 21). The floor clips are joined to the standing ones through Mixamo's Stand_Up (kept as a clip to build from, not written: `{\"Stand_Up\": {\"emit\": false}}` in --options).",
+  "source": "https://mesh2motion.org/",
+  "license": "CC0-1.0",
+  "roles": {
+    "attention": [
+      "Help_One_Arm"
+    ],
+    "think_long": [
+      "Confused"
+    ]
+  },
+  "extras": {
+    "greet": [
+      "Bow"
+    ],
+    "attention": [
+      "Help_Two_Arms"
+    ],
+    "sleep": [
+      "Sleeping"
+    ],
+    "lie_down": [
+      "Lie_Down_Back"
+    ],
+    "wake": [
+      "Stand_Up_Back"
+    ],
+    "workout_floor": [
+      "Workout_Pushup"
+    ],
+    "floor_sit_enter": [
+      "Meditate_Enter"
+    ],
+    "floor_sit_idle": [
+      "Meditate_Idle"
+    ],
+    "floor_sit_exit": [
+      "Meditate_Exit"
+    ]
+  },
+  "clips": [
+    {
+      "match": [
+        "Bow",
+        "Help_One_Arm",
+        "Help_Two_Arms",
+        "Confused"
+      ],
+      "options": {
+        "mirror": false,
+        "blend_ref": "@stand"
+      }
+    },
+    {
+      "match": "Sleeping",
+      "options": {
+        "loop": true,
+        "mirror": false,
+        "in_place": false
+      }
+    },
+    {
+      "match": "Pushup",
+      "options": {
+        "loop": true,
+        "mirror": false,
+        "in_place": true
+      }
+    },
+    {
+      "match": "Meditate",
+      "options": {
+        "loop": true,
+        "mirror": false,
+        "emit": false
+      }
+    }
+  ],
+  "derived": [
+    {
+      "name": "Workout_Pushup",
+      "requires": [
+        "Pushup",
+        "Stand_Up"
+      ],
+      "options": {
+        "compose": [
+          "Lie_Down",
+          [
+            "Pushup",
+            6
+          ],
+          "Stand_Up"
+        ],
+        "ease": 30,
+        "ease_from": "@stand",
+        "ease_to": "@stand"
+      }
+    },
+    {
+      "name": "Lie_Down_Back",
+      "requires": [
+        "Sleeping",
+        "Stand_Up"
+      ],
+      "options": {
+        "compose": [
+          "Lie_Down"
+        ],
+        "ease": 0,
+        "ease_from": "@stand",
+        "ease_to": "Sleeping",
+        "ease_frames": 36,
+        "in_place": true
+      }
+    },
+    {
+      "name": "Stand_Up_Back",
+      "requires": [
+        "Sleeping",
+        "Stand_Up"
+      ],
+      "options": {
+        "compose": [
+          "Stand_Up"
+        ],
+        "ease": 0,
+        "ease_from": "Sleeping",
+        "ease_to": "@stand",
+        "ease_frames": 36,
+        "in_place": true
+      }
+    },
+    {
+      "name": "Meditate_Idle",
+      "requires": [
+        "Meditate"
+      ],
+      "options": {
+        "compose": [
+          "Meditate"
+        ],
+        "ease": 0
+      }
+    },
+    {
+      "name": "Meditate_Enter",
+      "requires": [
+        "Meditate"
+      ],
+      "options": {
+        "hold": "Meditate",
+        "ease_from": "@stand",
+        "ease_frames": 36
+      }
+    },
+    {
+      "name": "Meditate_Exit",
+      "requires": [
+        "Meditate"
+      ],
+      "options": {
+        "hold": "Meditate",
+        "ease_to": "@stand",
+        "ease_frames": 36
+      }
+    }
+  ]
+}

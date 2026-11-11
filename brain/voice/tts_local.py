@@ -20,7 +20,13 @@ class PiperVoiceNotFound(RuntimeError):
 
 
 class PiperTTSBackend(TTSBackend):
-    def __init__(self, config: TTSLocalConfig, voices_dir: Path, *, piper_bin: str = "piper") -> None:
+    def __init__(
+        self,
+        config: TTSLocalConfig,
+        voices_dir: Path,
+        *,
+        piper_bin: str = "piper",
+    ) -> None:
         self._config = config
         self._voices_dir = voices_dir
         self._piper_bin = piper_bin
@@ -34,7 +40,9 @@ class PiperTTSBackend(TTSBackend):
         other value (including None) falls back to the one configured
         default voice."""
         if voice_id and voice_id.startswith("piper:"):
-            candidate = self._voices_dir / f"{voice_id.removeprefix('piper:')}.onnx"
+            candidate = (
+                self._voices_dir / f"{voice_id.removeprefix('piper:')}.onnx"
+            )
             if candidate.is_file():
                 return candidate
         return self._voices_dir / self._config.voice_model_path
@@ -42,10 +50,18 @@ class PiperTTSBackend(TTSBackend):
     async def health_check(self) -> bool:
         import shutil
 
-        return shutil.which(self._piper_bin) is not None and self._resolve_voice_path(None).is_file()
+        return (
+            shutil.which(self._piper_bin) is not None
+            and self._resolve_voice_path(None).is_file()
+        )
 
     async def synthesize(
-        self, text: str, out_wav_path: Path, *, voice_id: str | None = None, params: dict[str, Any] | None = None
+        self,
+        text: str,
+        out_wav_path: Path,
+        *,
+        voice_id: str | None = None,
+        params: dict[str, Any] | None = None,
     ) -> None:
         onnx_path = self._resolve_voice_path(voice_id)
         if not onnx_path.is_file():
@@ -56,7 +72,13 @@ class PiperTTSBackend(TTSBackend):
             )
 
         out_wav_path.parent.mkdir(parents=True, exist_ok=True)
-        args = [self._piper_bin, "--model", str(onnx_path), "--output_file", str(out_wav_path)]
+        args = [
+            self._piper_bin,
+            "--model",
+            str(onnx_path),
+            "--output_file",
+            str(out_wav_path),
+        ]
         # Passes through e.g. length_scale/noise_scale/speaker as --flag
         # value pairs without this backend needing to know Piper's full CLI
         # surface -- same "params dict, opaque to the client" convention
@@ -72,8 +94,12 @@ class PiperTTSBackend(TTSBackend):
                 stderr=asyncio.subprocess.PIPE,
             )
         except FileNotFoundError as exc:
-            raise RuntimeError(f"`{self._piper_bin}` executable not found (pip install piper-tts)") from exc
+            raise RuntimeError(
+                f"`{self._piper_bin}` executable not found (pip install piper-tts)"
+            ) from exc
 
         _, stderr = await proc.communicate(input=text.encode("utf-8"))
         if proc.returncode != 0:
-            raise RuntimeError(f"piper failed ({proc.returncode}): {stderr.decode(errors='replace')}")
+            raise RuntimeError(
+                f"piper failed ({proc.returncode}): {stderr.decode(errors='replace')}"
+            )

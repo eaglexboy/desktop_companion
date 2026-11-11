@@ -11,7 +11,9 @@ import pytest
 from brain.voice.stereo import ensure_stereo_wav
 
 
-def _write(path: Path, channels: int, width: int, rate: int, frames: bytes) -> None:
+def _write(
+    path: Path, channels: int, width: int, rate: int, frames: bytes
+) -> None:
     with wave.open(str(path), "wb") as w:
         w.setnchannels(channels)
         w.setsampwidth(width)
@@ -21,7 +23,12 @@ def _write(path: Path, channels: int, width: int, rate: int, frames: bytes) -> N
 
 def _read(path: Path) -> tuple[int, int, int, bytes]:
     with wave.open(str(path), "rb") as w:
-        return w.getnchannels(), w.getsampwidth(), w.getframerate(), w.readframes(w.getnframes())
+        return (
+            w.getnchannels(),
+            w.getsampwidth(),
+            w.getframerate(),
+            w.readframes(w.getnframes()),
+        )
 
 
 def test_mono_16bit_becomes_two_identical_channels(tmp_path):
@@ -48,7 +55,9 @@ def test_other_sample_widths_duplicate_whole_samples(tmp_path, width):
 
     channels, got_width, _, data = _read(wav)
     assert (channels, got_width) == (2, width)
-    expected = b"".join(frames[i : i + width] * 2 for i in range(0, len(frames), width))
+    expected = b"".join(
+        frames[i : i + width] * 2 for i in range(0, len(frames), width)
+    )
     assert data == expected
 
 

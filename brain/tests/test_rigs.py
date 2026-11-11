@@ -105,7 +105,9 @@ def test_a_skeleton_is_told_by_the_names_its_tool_gives_its_bones():
         ("Hips", None),
     ],
 )
-def test_character_creator_bones_map_to_their_quaternius_equivalents(name, target):
+def test_character_creator_bones_map_to_their_quaternius_equivalents(
+    name, target
+):
     assert rigs.character_creator_to_quaternius(name) == target
 
 
@@ -148,17 +150,22 @@ def test_only_the_bones_with_an_equivalent_are_renamed():
         and "CC_Base_L_Eye" not in mapped
     )
     assert len(mapped) == 16
-    assert rigs.quaternius_names(rigs.AUTO_RIG_PRO, ["spine_03_x", "spine_02_x"]) == {
+    assert rigs.quaternius_names(
+        rigs.AUTO_RIG_PRO, ["spine_03_x", "spine_02_x"]
+    ) == {
         "spine_03_x": "spine_02"
     }  # spine_02_x has no equivalent
 
 
-def test_a_body_converted_from_another_rig_plays_its_own_retargeted_libraries(tmp_path):
+def test_a_body_converted_from_another_rig_plays_its_own_retargeted_libraries(
+    tmp_path,
+):
     model = tmp_path / "assets" / "custom_templates" / "hero.glb"
     model.parent.mkdir(parents=True)
     model.write_bytes(b"glTF")
     assert (
-        al.library_folder(tmp_path, model) == tmp_path / "assets" / "animation_library"
+        al.library_folder(tmp_path, model)
+        == tmp_path / "assets" / "animation_library"
     )
     assert not al.is_retargeted(model) and not al.is_retargeted(None)
     al.rig_sidecar(model).write_text(
@@ -170,7 +177,8 @@ def test_a_body_converted_from_another_rig_plays_its_own_retargeted_libraries(tm
         == tmp_path / "assets" / "animation_library_body" / "hero"
     )
     assert (
-        al.library_folder(tmp_path, None) == tmp_path / "assets" / "animation_library"
+        al.library_folder(tmp_path, None)
+        == tmp_path / "assets" / "animation_library"
     )
     assert models.converted_bodies(tmp_path) == ["hero"]
 
@@ -285,9 +293,9 @@ make(bones, "Mesh", ["pelvis"], __OUT__, action={"name": "Wave_Loop", "bone": "u
 
 def accessors_of(gltf: dict, animation: dict, channel: dict) -> int:
     """How many keys a channel has."""
-    return gltf["accessors"][animation["samplers"][channel["sampler"]]["input"]][
-        "count"
-    ]
+    return gltf["accessors"][
+        animation["samplers"][channel["sampler"]]["input"]
+    ]["count"]
 
 
 def _gltf(path: Path) -> dict:
@@ -317,7 +325,9 @@ def test_a_character_creator_body_is_converted_and_a_library_is_retargeted_onto_
     body, library = tmp_path / "body.glb", tmp_path / "Pack.glb"
     _run(_BODY, body)
     _run(_LIBRARY, library)
-    assert rigs.rig_family(al.library_contents(body)[0]) == rigs.CHARACTER_CREATOR
+    assert (
+        rigs.rig_family(al.library_contents(body)[0]) == rigs.CHARACTER_CREATOR
+    )
 
     converted, done = models.convert_rig_body(body, tmp_path / "rig")
     assert (
@@ -356,7 +366,9 @@ def test_a_character_creator_body_is_converted_and_a_library_is_retargeted_onto_
 
     # the clip is not one a role uses, so nothing is retargeted until it is: Idle_Loop is
     monkeypatch.setattr(models, "wanted_clips", lambda names: sorted(names))
-    clips = models.retarget_library_onto(deploy, "hero", library_dir / "Pack.glb")
+    clips = models.retarget_library_onto(
+        deploy, "hero", library_dir / "Pack.glb"
+    )
     assert clips == ["Wave_Loop"]
 
     result = deploy / "assets" / "animation_library_body" / "hero" / "Pack.glb"

@@ -28,22 +28,22 @@ import mathutils  # pyright: ignore[reportMissingImports]
 sys.path.insert(
     0, str(Path(__file__).resolve().parent.parent)
 )  # repo root, for blender.animation_library
-from blender.animation_library import (  # noqa: E402
+from blender.animation_library import (
     INTENSITY_VARIANTS,
+    MIRROR_SUFFIX,
     MIXAMO_PREFIX,
     Clip,
     blend_through,
     finish_clips,
-    reverse_clip,
     in_place_clip,
     loop_clip,
-    MIRROR_SUFFIX,
     mirror_bone,
     mixamo_to_quaternius,
     offset_hips,
     ping_pong,
     q_angle_deg,
     reduce_keys,
+    reverse_clip,
     scale_intensity,
     seat_offset,
     trim_clip,
@@ -58,18 +58,36 @@ HIPS_TOLERANCE_M = 0.002
 def _assign(armature, action) -> None:
     armature.animation_data_create()
     armature.animation_data.action = action
-    if getattr(armature.animation_data, "action_slot", None) is None and action.slots:
+    if (
+        getattr(armature.animation_data, "action_slot", None) is None
+        and action.slots
+    ):
         armature.animation_data.action_slot = action.slots[0]
 
 
 def _import_fbx(path: str):
     """(new objects, the imported action). Blender 5's `import_scene.fbx` fails when run without a
     file list, so the new importer is used."""
-    before_objects, before_actions = set(bpy.data.objects), set(bpy.data.actions)
+    before_objects, before_actions = (
+        set(bpy.data.objects),
+        set(bpy.data.actions),
+    )
     bpy.ops.wm.fbx_import(filepath=path)
     objects = [o for o in bpy.data.objects if o not in before_objects]
     actions = [a for a in bpy.data.actions if a not in before_actions]
     return objects, (actions[0] if actions else None)
+
+
+def _import_gltf(path: str):
+    """(new objects, the imported actions by name)."""
+    before_objects, before_actions = (
+        set(bpy.data.objects),
+        set(bpy.data.actions),
+    )
+    bpy.ops.import_scene.gltf(filepath=path)
+    objects = [o for o in bpy.data.objects if o not in before_objects]
+    actions = [a for a in bpy.data.actions if a not in before_actions]
+    return objects, actions
 
 
 def _remove(objects, actions=()) -> None:
@@ -85,7 +103,9 @@ class Host:
 
     def __init__(self, path: str) -> None:
         bpy.ops.import_scene.gltf(filepath=path)
-        self.armature = next(o for o in bpy.data.objects if o.type == "ARMATURE")
+        self.armature = next(
+            o for o in bpy.data.objects if o.type == "ARMATURE"
+        )
         self.world = self.armature.matrix_world.to_3x3().normalized()
         self.order: list = []
 
@@ -102,7 +122,8 @@ class Host:
             for b in self.armature.data.bones
         }
         self.pelvis_world = (
-            self.armature.matrix_world @ self.armature.data.bones["pelvis"].head_local
+            self.armature.matrix_world
+            @ self.armature.data.bones["pelvis"].head_local
         )
         # where a foot bone sits with the body standing: the lowest the feet go
         self.floor = min(
@@ -128,7 +149,10 @@ class Host:
             _assign(marm, action)
             world = marm.matrix_world.to_3x3().normalized()
             mixamo_hips = marm.data.bones[f"{MIXAMO_PREFIX}Hips"]
-            ratio = self.pelvis_world.z / (marm.matrix_world @ mixamo_hips.head_local).z
+            ratio = (
+                self.pelvis_world.z
+                / (marm.matrix_world @ mixamo_hips.head_local).z
+            )
             source = {
                 mixamo_to_quaternius(b.name): b
                 for b in marm.data.bones
@@ -161,7 +185,10 @@ class Host:
                 desired = {}
                 changes = {
                     name: (
-                        world @ marm.pose.bones[bone.name].matrix.to_3x3().normalized()
+                        world
+                        @ marm.pose.bones[bone.name]
+                        .matrix.to_3x3()
+                        .normalized()
                     )
                     @ mixamo_rest[name].inverted()
                     for name, bone in source.items()
@@ -173,7 +200,9 @@ class Host:
                         if mirror:
                             change = (
                                 reflect
-                                @ changes.get(mirror_bone(str(bone.name)), change)
+                                @ changes.get(
+                                    mirror_bone(str(bone.name)), change
+                                )
                                 @ reflect
                             )
                         desired[bone.name] = (
@@ -197,7 +226,8 @@ class Host:
                     q = basis.to_quaternion()
                     quats[bone.name].append((q.w, q.x, q.y, q.z))
                 travel = (
-                    marm.matrix_world @ marm.pose.bones[f"{MIXAMO_PREFIX}Hips"].head
+                    marm.matrix_world
+                    @ marm.pose.bones[f"{MIXAMO_PREFIX}Hips"].head
                 ) - (marm.matrix_world @ mixamo_hips.head_local)
                 hips.append(
                     (
@@ -233,10 +263,112 @@ class Host:
         finally:
             _remove(objects, [action])
 
+    def retarget_native(self, path: str, clip_name: str) -> Clip:
+        """A clip from a .glb whose skeleton is the Quaternius one (bone names and all), as exported
+        by a tool such as Mesh2Motion. Such a file's own rest pose is the pose it was exported in
+        (a bow, a seat on the floor), so nothing is measured from it: every bone's *world
+        orientation* in each frame is taken as the orientation to give the same bone here, which the
+        two skeletons share. The hips' height is scaled by the leg lengths (the clip's skeleton may be
+        a little shorter or taller than this one). The first sample is the clip's first key, so a
+        clip that starts a frame late does not show the rest pose first."""
+        objects, actions = _import_gltf(path)
+        try:
+            marm = next(o for o in objects if o.type == "ARMATURE")
+            action = next(
+                (a for a in actions if a.name == clip_name),
+                next((a for a in actions if clip_name in a.name), None),
+            )
+            if action is None:
+                raise SystemExit(
+                    f"{path} has no clip {clip_name} ({[a.name for a in actions]})"
+                )
+            _assign(marm, action)
+            source = {b.name: b for b in marm.data.bones if b.name in self.rest}
+            if not {"pelvis", "thigh_l", "calf_l"} <= set(source):
+                raise SystemExit(f"{path} is not on the Quaternius skeleton")
+
+            def leg(armature) -> float:
+                bones = armature.data.bones
+                return sum(
+                    bones[f"{n}_{side}"].length
+                    for n in ("thigh", "calf")
+                    for side in ("l", "r")
+                )
+
+            scale = leg(self.armature) / leg(marm)
+            world = marm.matrix_world
+            first, last = action.frame_range
+            frames: list[float] = []
+            quats: dict[str, list] = {
+                str(bone.name): [] for bone in self.order if bone.name in source
+            }
+            hips = []
+            frame = first
+            while frame <= last + 1e-6:
+                bpy.context.scene.frame_set(
+                    int(frame), subframe=frame - int(frame)
+                )
+                bpy.context.view_layer.update()
+                desired = {}
+                for bone in self.order:
+                    if bone.name in source:
+                        desired[bone.name] = (
+                            self.world.inverted()
+                            @ world.to_3x3().normalized()
+                            @ marm.pose.bones[bone.name]
+                            .matrix.to_3x3()
+                            .normalized()
+                        )
+                    else:
+                        desired[bone.name] = self.rest[bone.name]
+                for bone in self.order:
+                    if bone.name not in quats:
+                        continue
+                    rest = self.rest[bone.name]
+                    if bone.parent:
+                        basis = (
+                            rest.inverted()
+                            @ self.rest[bone.parent.name]
+                            @ desired[bone.parent.name].inverted()
+                            @ desired[bone.name]
+                        )
+                    else:
+                        basis = rest.inverted() @ desired[bone.name]
+                    q = basis.to_quaternion()
+                    quats[bone.name].append((q.w, q.x, q.y, q.z))
+                pelvis = (world @ marm.pose.bones["pelvis"].head) * scale
+                hips.append(
+                    (
+                        pelvis.x - self.pelvis_world.x,
+                        pelvis.y - self.pelvis_world.y,
+                        pelvis.z - self.pelvis_world.z,
+                    )
+                )
+                frames.append(float(frame))
+                frame += 1.0
+            rest = self.pelvis_world
+            up = (self.world @ self.rest["pelvis"]).to_quaternion()
+            return Clip(
+                frames,
+                quats,
+                hips,
+                0.0,
+                {
+                    "hips_rest": (rest.x, rest.y, rest.z),
+                    "pelvis_rest": (up.w, up.x, up.y, up.z),
+                },
+            )
+        finally:
+            _remove(objects, actions)
+
     def hips_to_basis(self, world_travel) -> mathutils.Vector:
         """A hips offset in world axes as the pelvis bone's pose-bone location."""
         rest = self.rest["pelvis"]
-        return rest.inverted() @ self.world.inverted() @ mathutils.Vector(world_travel)
+        return (
+            rest.inverted()
+            @ self.world.inverted()
+            @ mathutils.Vector(world_travel)
+        )
 
     def write(self, name: str, clip: Clip) -> None:
         """Keys a clip onto the skeleton as an action called `name` (1 frame = 1/30 s)."""
@@ -267,7 +399,9 @@ class Host:
             pelvis.location = travel[i]
             pelvis.keyframe_insert("location", frame=clip.frames[i] - origin)
 
-    def plant_feet(self, clip: Clip, hips_move, feet_move, floor: float) -> Clip:
+    def plant_feet(
+        self, clip: Clip, hips_move, feet_move, floor: float
+    ) -> Clip:
         """The clip with its hips moved by `hips_move` (world axes) and its legs re-solved so the
         feet stay where the clip puts them, moved by `feet_move` and kept above `floor`
         (world z). Two-bone IK per leg, bending the knee the way the clip does, with the foot
@@ -285,7 +419,9 @@ class Host:
 
         def pose(i: int, hips) -> None:
             for name, samples in clip.quats.items():
-                bones[name].rotation_quaternion = mathutils.Quaternion(samples[i])
+                bones[name].rotation_quaternion = mathutils.Quaternion(
+                    samples[i]
+                )
             bones["pelvis"].location = self.hips_to_basis(
                 tuple(a + b for a, b in zip(clip.hips[i], hips))
             )
@@ -318,15 +454,22 @@ class Host:
                 target, knee_before, foot_turn = want[thigh]
                 hip = world @ bones[thigh].head
                 upper = (world @ bones[calf].head - hip).length
-                lower = (world @ bones[foot].head - world @ bones[calf].head).length
+                lower = (
+                    world @ bones[foot].head - world @ bones[calf].head
+                ).length
                 reach = target - hip
                 dist = min(
-                    max(reach.length, abs(upper - lower) + 1e-4), upper + lower - 1e-4
+                    max(reach.length, abs(upper - lower) + 1e-4),
+                    upper + lower - 1e-4,
                 )
                 axis = reach.normalized()
-                along = (upper * upper - lower * lower + dist * dist) / (2 * dist)
+                along = (upper * upper - lower * lower + dist * dist) / (
+                    2 * dist
+                )
                 height = math.sqrt(max(upper * upper - along * along, 0.0))
-                bend = (knee_before - hip) - axis * (knee_before - hip).dot(axis)
+                bend = (knee_before - hip) - axis * (knee_before - hip).dot(
+                    axis
+                )
                 bend = (
                     bend.normalized()
                     if bend.length > 1e-6
@@ -346,13 +489,18 @@ class Host:
                         q.negate()  # the same rotation, the near way round, so a clip never spins
                     previous[name] = q
                     out.quats[name][i] = (q.w, q.x, q.y, q.z)
-        out.hips = [tuple(a + b for a, b in zip(h, hips_move)) for h in clip.hips]  # type: ignore[misc]
+        out.hips = [
+            tuple(a + b for a, b in zip(h, hips_move)) for h in clip.hips
+        ]  # type: ignore[misc]
         return out
 
     def sit_reference(self, library: str, clip: str):
         """(where the pelvis sits, every bone's rotation, how far the hips are from rest) in a
         library's seated clip's first frame, for this skeleton's size."""
-        before_objects, before_actions = set(bpy.data.objects), set(bpy.data.actions)
+        before_objects, before_actions = (
+            set(bpy.data.objects),
+            set(bpy.data.actions),
+        )
         bpy.ops.import_scene.gltf(filepath=library)
         objects = [o for o in bpy.data.objects if o not in before_objects]
         actions = [a for a in bpy.data.actions if a not in before_actions]
@@ -367,7 +515,11 @@ class Host:
                 self.pelvis_world.z
                 / (rig.matrix_world @ rig.data.bones["pelvis"].head_local).z
             )
-            target = (position.x * ratio, position.y * ratio, position.z * ratio)
+            target = (
+                position.x * ratio,
+                position.y * ratio,
+                position.z * ratio,
+            )
             quats = {}
             for bone in rig.pose.bones:
                 q = bone.rotation_quaternion
@@ -378,7 +530,9 @@ class Host:
             _remove(objects, actions)
 
 
-def _process(clip: Clip, options: dict, seat, host: "Host | None" = None) -> Clip:
+def _process(
+    clip: Clip, options: dict, seat, host: "Host | None" = None
+) -> Clip:
     seat_target = seat[0] if seat else None
     if options.get("trim"):
         clip = trim_clip(clip, *options["trim"])
@@ -429,17 +583,22 @@ def convert_clips(spec_path: str) -> None:
     references = {}
     stand = spec.get("stand_reference")
     if stand:
-        _target, quats, hips = host.sit_reference(stand["library"], stand["clip"])
+        _, quats, hips = host.sit_reference(stand["library"], stand["clip"])
         references["@stand"] = (quats, hips)
     made: dict[str, tuple[Clip, dict]] = {}
-    derived = [e for e in spec["clips"] if "fbx" not in e]
+    derived = [e for e in spec["clips"] if "fbx" not in e and "glb" not in e]
     for entry in spec["clips"]:
-        if "fbx" not in entry:
+        if "fbx" not in entry and "glb" not in entry:
             continue
         options = entry.get("options", {})
-        sources = [("", host.retarget(entry["fbx"]))]
-        if options.get("mirror"):
-            sources.append((MIRROR_SUFFIX, host.retarget(entry["fbx"], mirror=True)))
+        if "glb" in entry:
+            sources = [("", host.retarget_native(entry["glb"], entry["clip"]))]
+        else:
+            sources = [("", host.retarget(entry["fbx"]))]
+            if options.get("mirror"):
+                sources.append(
+                    (MIRROR_SUFFIX, host.retarget(entry["fbx"], mirror=True))
+                )
         print(f"MIXAMO {entry['name']}: {len(sources[0][1])} frames")
         for suffix, source in sources:
             products = []
@@ -447,24 +606,34 @@ def convert_clips(spec_path: str) -> None:
                 "mirror_main", True
             ):  # (a long clip may be mirrored only in its parts)
                 products.append(
-                    (entry["name"], _process(source, options, seat, host), options)
+                    (
+                        entry["name"],
+                        _process(source, options, seat, host),
+                        options,
+                    )
                 )
             for extra in options.get(
                 "extract", []
             ):  # a part of the clip as a clip of its own
                 sub = {**options, **extra, "extract": []}
-                products.append((extra["name"], _process(source, sub, seat, host), sub))
+                products.append(
+                    (extra["name"], _process(source, sub, seat, host), sub)
+                )
             for name, clip, used in products:
                 made[name + suffix] = (clip, used)
     written = []
     for name, (clip, used) in finish_clips(made, derived, references).items():
+        if not used.get("emit", True):  # a clip only made to build others from
+            continue
         host.write(name, clip)
         written.append(name)
         if used.get("variants") and not name.endswith(
             MIRROR_SUFFIX
         ):  # (a mirrored copy has no variants of its own: size)
             for label, (amount, speed) in INTENSITY_VARIANTS.items():
-                host.write(f"{name}_{label}", scale_intensity(clip, amount, speed))
+                host.write(
+                    f"{name}_{label}", scale_intensity(clip, amount, speed)
+                )
                 written.append(f"{name}_{label}")
     # The library is a skeleton with something skinned to it (a glTF has no skin without a mesh),
     # and its clips. The mesh is one small triangle.
@@ -500,7 +669,9 @@ def _quaternius_axes(host_glb: str) -> dict:
     world = rig.matrix_world.to_3x3().normalized()
     axes = {
         b.name: (
-            world @ b.matrix_local.to_3x3().normalized() @ mathutils.Vector((0, 0, 1))
+            world
+            @ b.matrix_local.to_3x3().normalized()
+            @ mathutils.Vector((0, 0, 1))
         ).normalized()
         for b in rig.data.bones
     }
@@ -513,7 +684,8 @@ def convert_body(fbx: str, out: str, host_glb: str | None = None) -> None:
     """A Mixamo character as a Quaternius-rigged .glb: bones renamed (and the vertex groups that
     go with them) and rolled like the Quaternius bones (so that Quaternius clips turn them the right
     way), the tip bone dropped, the Quaternius `root` bone added above the hips, and the FBX's
-    centimetre scale and rotation applied so it is one metre-scale, Z-up object."""
+    centimetre scale and rotation applied so it is one metre-scale, Z-up object.
+    """
     bpy.ops.wm.read_factory_settings(use_empty=True)
     axes = _quaternius_axes(host_glb) if host_glb else {}
     objects, action = _import_fbx(fbx)
@@ -536,7 +708,8 @@ def convert_body(fbx: str, out: str, host_glb: str | None = None) -> None:
                 target in axes
             ):  # the same roll as the Quaternius bone (the vector in this armature's own axes)
                 bone.align_roll(
-                    arm.matrix_world.to_3x3().normalized().inverted() @ axes[target]
+                    arm.matrix_world.to_3x3().normalized().inverted()
+                    @ axes[target]
                 )
     root = edit.new("root")
     root.head, root.tail = (0.0, 0.0, 0.0), (0.0, 0.0, 0.1)

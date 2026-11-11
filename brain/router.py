@@ -12,7 +12,12 @@ from typing import Any, Literal
 
 from brain.config import LLMLocalConfig, Settings
 from brain.events import emit, llm_purpose
-from brain.llm_pool import LLMClient, LLMPool, LocalLLMClient, build_cloud_client
+from brain.llm_pool import (
+    LLMClient,
+    LLMPool,
+    LocalLLMClient,
+    build_cloud_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +58,7 @@ _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 def _extract_json_object(raw: str) -> str:
     match = _JSON_OBJECT_RE.search(raw)
     return match.group(0) if match else raw
+
 
 EscalationThreshold = Literal["auto", "always_local", "always_cloud"]
 
@@ -142,7 +148,9 @@ class Router:
         keyword_tools: bool = True,
     ) -> None:
         if local_pool.is_empty and cloud_pool.is_empty:
-            raise RuntimeError("Router requires at least one local or cloud LLM provider")
+            raise RuntimeError(
+                "Router requires at least one local or cloud LLM provider"
+            )
         self._local_pool = local_pool
         self._cloud_pool = cloud_pool
         self._classifier = classifier
@@ -153,7 +161,11 @@ class Router:
         self._keyword_tools = keyword_tools
 
     def register_tool(
-        self, name: str, description: str, parameters: dict[str, Any], handler: ToolHandler
+        self,
+        name: str,
+        description: str,
+        parameters: dict[str, Any],
+        handler: ToolHandler,
     ) -> None:
         self._tools[name] = ToolSpec(name, description, parameters, handler)
 
@@ -181,7 +193,11 @@ class Router:
         if self._escalation_threshold == "always_cloud":
             return True, "general", "escalation_threshold=always_cloud"
         if self._classifier is None:
-            return False, "general", "no classifier configured, defaulting to local"
+            return (
+                False,
+                "general",
+                "no classifier configured, defaulting to local",
+            )
         started = time.monotonic()
 
         # Classifier Fallback Rule: on timeout or error, default to LOCAL
@@ -190,7 +206,14 @@ class Router:
         try:
             with llm_purpose("classify"):
                 raw = await self._classifier.chat(
-                    [{"role": "user", "content": _CLASSIFY_PROMPT.format(user_text=user_text)}],
+                    [
+                        {
+                            "role": "user",
+                            "content": _CLASSIFY_PROMPT.format(
+                                user_text=user_text
+                            ),
+                        }
+                    ],
                     max_tokens=_CLASSIFY_MAX_TOKENS,
                 )
             verdict = json.loads(_extract_json_object(raw))
@@ -201,13 +224,28 @@ class Router:
             reason = str(verdict.get("reason", ""))
             emit(
                 "router.classified",
-                {"escalate": escalate, "capability": capability, "reason": reason, "raw": raw[:300],
-                 "ms": round((time.monotonic() - started) * 1000)},
+                {
+                    "escalate": escalate,
+                    "capability": capability,
+                    "reason": reason,
+                    "raw": raw[:300],
+                    "ms": round((time.monotonic() - started) * 1000),
+                },
             )
             return escalate, capability, reason
-        except Exception as exc:  # noqa: BLE001 -- flaky classification must never crash chat
-            logger.warning("Classifier failed (%s); defaulting to local execution", exc)
-            emit("router.classify_failed", {"error": str(exc)[:300], "ms": round((time.monotonic() - started) * 1000)})
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 -- flaky classification must never crash chat
+            logger.warning(
+                "Classifier failed (%s); defaulting to local execution", exc
+            )
+            emit(
+                "router.classify_failed",
+                {
+                    "error": str(exc)[:300],
+                    "ms": round((time.monotonic() - started) * 1000),
+                },
+            )
             return False, "general", f"classifier error: {exc}"
 
     async def handle(
@@ -224,27 +262,40 @@ class Router:
             tool = self._tools[tool_name]
             result = await tool.handler(user_text)
             return RouterResult(
-                text=str(result), source=f"tool:{tool_name}", escalated=False, reason="keyword pre-filter match"
+                text=str(result),
+                source=f"tool:{tool_name}",
+                escalated=False,
+                reason="keyword pre-filter match",
             )
 
         escalate, capability, reason = await self._classify(user_text)
         pool = self._cloud_pool if escalate else self._local_pool
         wanted_escalation = escalate
         if escalate and pool.is_empty:
-            logger.warning("Classifier wants to escalate but no cloud pool is configured; falling back to local")
+            logger.warning(
+                "Classifier wants to escalate but no cloud pool is configured; falling back to local"
+            )
             pool = self._local_pool
             escalate = False
 
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history or [])
-        user_content = f"{user_text}\n\n{reply_format.reminder}" if reply_format else user_text
+        user_content = (
+            f"{user_text}\n\n{reply_format.reminder}"
+            if reply_format
+            else user_text
+        )
         messages.append({"role": "user", "content": user_content})
 
         emit(
             "router.route",
-            {"pool": "cloud" if escalate else "local", "wanted_escalation": wanted_escalation,
-             "fell_back_to_local": wanted_escalation and not escalate, "capability": capability if escalate else None,
-             "reason": reason},
+            {
+                "pool": "cloud" if escalate else "local",
+                "wanted_escalation": wanted_escalation,
+                "fell_back_to_local": wanted_escalation and not escalate,
+                "capability": capability if escalate else None,
+                "reason": reason,
+            },
         )
         if escalate:
             # Capability is a preference, not a hard filter -- LLMPool.chat()
@@ -252,7 +303,9 @@ class Router:
             # every other enabled provider in priority order if none match
             # (see llm_pool.py's LLMPool docstring).
             with llm_purpose("reply"):
-                source, reply = await pool.chat(messages, max_tokens=1024, required_capability=capability)
+                source, reply = await pool.chat(
+                    messages, max_tokens=1024, required_capability=capability
+                )
         else:
             with llm_purpose("reply"):
                 source, reply = await pool.chat(messages, max_tokens=1024)
@@ -270,9 +323,19 @@ class Router:
                     source2, fixed = await pool.chat(repair, max_tokens=1024)
                 if reply_format.is_valid(fixed):
                     source, reply = source2, fixed
-            except Exception as exc:  # noqa: BLE001 -- a failed repair must never lose the reply we already have
-                logger.warning("Reply repair failed (%s); keeping the original reply", exc)
-        return RouterResult(text=reply, source=source, escalated=escalate, reason=reason, capability=capability if escalate else None)
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 -- a failed repair must never lose the reply we already have
+                logger.warning(
+                    "Reply repair failed (%s); keeping the original reply", exc
+                )
+        return RouterResult(
+            text=reply,
+            source=source,
+            escalated=escalate,
+            reason=reason,
+            capability=capability if escalate else None,
+        )
 
     async def aclose(self) -> None:
         await self._local_pool.aclose()
@@ -288,10 +351,19 @@ def build_router(settings: Settings) -> Router:
     local_pool = LLMPool([("local", LocalLLMClient(settings.llm.local), [])])
 
     cloud_items = sorted(
-        ((name, cfg) for name, cfg in settings.llm.cloud.items() if cfg.enabled),
+        (
+            (name, cfg)
+            for name, cfg in settings.llm.cloud.items()
+            if cfg.enabled
+        ),
         key=lambda item: -item[1].priority,
     )
-    cloud_pool = LLMPool([(name, build_cloud_client(cfg), cfg.capabilities) for name, cfg in cloud_items])
+    cloud_pool = LLMPool(
+        [
+            (name, build_cloud_client(cfg), cfg.capabilities)
+            for name, cfg in cloud_items
+        ]
+    )
 
     classifier_cfg = settings.llm.resolved_classifier()
     classifier_client = LocalLLMClient(
@@ -312,15 +384,23 @@ def build_router(settings: Settings) -> Router:
     )
 
     async def _change_appearance(request: str) -> str:
-        raise NotImplementedError("change_appearance is a stub -- not yet wired to the appearance pipeline")
+        raise NotImplementedError(
+            "change_appearance is a stub -- not yet wired to the appearance pipeline"
+        )
 
     async def _revert_appearance(_request: str = "") -> str:
-        raise NotImplementedError("revert_appearance is a stub -- not yet wired to the appearance pipeline")
+        raise NotImplementedError(
+            "revert_appearance is a stub -- not yet wired to the appearance pipeline"
+        )
 
     router.register_tool(
         "change_appearance",
         "Change the companion's visual appearance based on a free-form request.",
-        {"type": "object", "properties": {"request": {"type": "string"}}, "required": ["request"]},
+        {
+            "type": "object",
+            "properties": {"request": {"type": "string"}},
+            "required": ["request"],
+        },
         _change_appearance,
     )
     router.register_tool(

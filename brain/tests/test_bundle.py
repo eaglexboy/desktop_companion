@@ -381,6 +381,7 @@ def _with_looks(deploy: Path) -> Path:
             (deploy / "assets" / f"look-v{version}.glb").write_bytes(
                 data
             )  # version 1's file was pruned
+    assert manifest is not None
     save_manifest(deploy, manifest)
     (deploy / "assets" / "look-v1.glb").unlink(
         missing_ok=True

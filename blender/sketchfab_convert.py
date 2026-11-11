@@ -13,6 +13,10 @@ What it does, and why (docs/ADR_ACCESSORY_MODELS.md, decision 17):
 * Shape keys are dropped: a mesh with shape keys cannot be decimated, and a model that cannot be
   brought under the triangle budget cannot be built (a Sketchfab model of half a million triangles
   is normal). Textures are shrunk and the meshes decimated to the budgets in the same pass.
+* A model whose rest pose lies on its back (the author's skeleton is bound lying down and the
+  upright figure is the first frame of its animation, which is thrown away) is turned upright: if the
+  posed figure is clearly upright and the bound one is not, the whole figure is turned by the shortest
+  rotation that takes the bound figure's up direction onto Z (its bind pose is kept as it is).
 * The objects Blender's importer makes for display (the bone-shape sphere), the empties, and the
   baked motion Sketchfab models are exported with, are left out.
 
@@ -25,11 +29,12 @@ from pathlib import Path
 
 import bpy  # pyright: ignore[reportMissingImports]
 import mathutils  # pyright: ignore[reportMissingImports]
+import numpy as np
 
 sys.path.insert(
     0, str(Path(__file__).resolve().parent.parent)
 )  # repo root, for blender.sketchfab
-from blender.sketchfab import clean_names, is_helper_bone  # noqa: E402
+from blender.sketchfab import clean_names, is_helper_bone
 
 SMALL_PART_TRIANGLES = (
     600  # parts this small keep their detail when the rest is decimated
@@ -58,7 +63,9 @@ def _decimate(meshes: list, max_triangles: int) -> None:
     kept = total - sum(
         counts[m.name] for m in big
     )  # the small parts, which are left as they are
-    ratio = max(0.01, (max_triangles - kept) / max(1, sum(counts[m.name] for m in big)))
+    ratio = max(
+        0.01, (max_triangles - kept) / max(1, sum(counts[m.name] for m in big))
+    )
     for mesh in big:
         modifier = mesh.modifiers.new("Decimate", "DECIMATE")
         modifier.ratio = ratio
@@ -67,6 +74,80 @@ def _decimate(meshes: list, max_triangles: int) -> None:
             modifier=modifier.name, index=0
         )  # on the bind shape, before the armature
         bpy.ops.object.modifier_apply(modifier=modifier.name)
+
+
+def _points(arm, meshes, posed: bool, skinned_only: bool = True) -> np.ndarray:
+    """The vertices (N x 3, world space) of the skinned meshes of `arm` (or of all the meshes), posed or
+    as bound, in a fixed order."""
+    out = []
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    for mesh in meshes:
+        if skinned_only and not any(
+            m.type == "ARMATURE" and m.object is arm for m in mesh.modifiers
+        ):
+            continue
+        source = mesh.evaluated_get(depsgraph) if posed else mesh
+        data = source.to_mesh() if posed else mesh.data
+        n = len(data.vertices)
+        flat = np.empty(n * 3)
+        data.vertices.foreach_get("co", flat)
+        world = np.array(source.matrix_world)
+        out.append(flat.reshape(n, 3) @ world[:3, :3].T + world[:3, 3])
+        if posed:
+            source.to_mesh_clear()
+    return np.vstack(out) if out else np.zeros((0, 3))
+
+
+def _size(points: np.ndarray) -> np.ndarray:
+    return (
+        points.max(axis=0) - points.min(axis=0) if len(points) else np.zeros(3)
+    )
+
+
+def stand_up_posed_figure(arm, meshes) -> str | None:
+    """Turns the figure upright when it is bound lying down and upright only in the first frame of its
+    animation (see the module docstring). The pose is not baked in: the bind pose is what the
+    libraries are measured from, and baking a raised arm in would pull whatever shares its weights.
+    The turn is the shortest one that takes the bound figure's up direction (the axis along which its
+    vertices rise from the bound to the posed state) onto Z."""
+    posed, bound = _points(arm, meshes, True), _points(arm, meshes, False)
+    whole = _points(arm, meshes, True, skinned_only=False)
+    posed_size, bound_size, whole_size = (
+        _size(posed),
+        _size(bound),
+        _size(whole),
+    )
+    if not (
+        bound_size[2] < bound_size[1]
+        and posed_size[2] > 1.5 * posed_size[1]
+        and posed_size[2] >= 0.7 * whole_size[2]
+    ):
+        return (
+            None  # (a few skinned parts of a bigger model are not the figure)
+        )
+    up, *_ = np.linalg.lstsq(
+        bound - bound.mean(axis=0), posed[:, 2] - posed[:, 2].mean(), rcond=None
+    )
+    norm = float(np.linalg.norm(up))
+    if norm < 1e-9:
+        return None
+    direction = up / norm
+    axis = int(np.argmax(np.abs(direction)))
+    if (
+        abs(direction[axis]) > 0.8
+    ):  # a figure lying down lies at a right angle: no stray tilt
+        direction = np.zeros(3)
+        direction[axis] = np.sign(up[axis])
+    turn = (
+        mathutils.Vector(direction)
+        .rotation_difference(mathutils.Vector((0.0, 0.0, 1.0)))
+        .to_matrix()
+        .to_4x4()
+    )
+    for obj in (arm, *meshes):
+        obj.matrix_world = turn @ obj.matrix_world
+    bpy.context.view_layer.update()
+    return f"the figure is bound lying down: turned upright (height {bound_size[2]:.2f} -> {posed_size[2]:.2f})"
 
 
 def convert(
@@ -94,7 +175,11 @@ def convert(
 
     # Loose parts that hang from one bone become skinned to it.
     for mesh in meshes:
-        if mesh.parent is arm and mesh.parent_type == "BONE" and mesh.parent_bone:
+        if (
+            mesh.parent is arm
+            and mesh.parent_type == "BONE"
+            and mesh.parent_bone
+        ):
             world, bone = mesh.matrix_world.copy(), mesh.parent_bone
             mesh.parent = None
             mesh.matrix_world = world
@@ -107,6 +192,10 @@ def convert(
         world = obj.matrix_world.copy()
         obj.parent = None
         obj.matrix_world = world
+
+    note = stand_up_posed_figure(arm, meshes)
+    if note:
+        print(f"SKETCHFAB_FIX {note}")
 
     # The helper bones out, the names cleaned.
     bpy.context.view_layer.objects.active = arm
@@ -130,7 +219,9 @@ def convert(
     arm.animation_data_clear()
     for action in list(bpy.data.actions):
         bpy.data.actions.remove(action)
-    for obj in [o for o in bpy.data.objects if o is not arm and o not in meshes]:
+    for obj in [
+        o for o in bpy.data.objects if o is not arm and o not in meshes
+    ]:
         bpy.data.objects.remove(
             obj, do_unlink=True
         )  # the empties of the wrappers, and anything else loose
@@ -149,7 +240,9 @@ def convert(
             width, height = image.size
             if max(width, height) > max_texture:
                 ratio = max_texture / max(width, height)
-                image.scale(max(1, round(width * ratio)), max(1, round(height * ratio)))
+                image.scale(
+                    max(1, round(width * ratio)), max(1, round(height * ratio))
+                )
     if max_triangles:
         _decimate(meshes, max_triangles)
     bpy.ops.export_scene.gltf(

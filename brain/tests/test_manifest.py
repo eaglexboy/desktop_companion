@@ -44,9 +44,16 @@ def _build_json(**overrides) -> dict:
         "size_bytes": 358556,
         "has_face": True,
         "speech_indicator_mode": "viseme_shapekeys",
-        "capabilities": {"has_head": True, "has_arms": False, "has_legs": False, "has_face": True},
+        "capabilities": {
+            "has_head": True,
+            "has_arms": False,
+            "has_legs": False,
+            "has_face": True,
+        },
         "viseme_shape_keys": [f"viseme_{c}" for c in "ABCDEFGHX"],
-        "animation_clips": [{"name": "idle_lookaround", "loop": True, "duration_s": 4.0}],
+        "animation_clips": [
+            {"name": "idle_lookaround", "loop": True, "duration_s": 4.0}
+        ],
         "bounds": {"height_m": 2.45, "width_m": 2.0, "depth_m": 2.31},
         "warnings": [],
     }
@@ -66,7 +73,9 @@ def test_append_version_starts_at_one_from_empty_manifest():
 
 
 def test_append_version_increments_and_retains_history():
-    m1 = append_version(None, _build_json(glb_filename="look-v1.glb"), LOOK_SPEC)
+    m1 = append_version(
+        None, _build_json(glb_filename="look-v1.glb"), LOOK_SPEC
+    )
     m2 = append_version(m1, _build_json(glb_filename="look-v2.glb"), LOOK_SPEC)
     assert m2.current_version == 2
     assert len(m2.versions) == 2
@@ -138,7 +147,9 @@ def test_atomic_write_str_and_bytes(tmp_path: Path):
     assert target2.read_bytes() == b"\x00\x01\x02"
 
 
-def test_atomic_write_exdev_is_surfaced_not_swallowed(tmp_path: Path, monkeypatch):
+def test_atomic_write_exdev_is_surfaced_not_swallowed(
+    tmp_path: Path, monkeypatch
+):
     """Confirms atomic_write doesn't silently catch EXDEV -- the caller
     (blender_gen.py) is responsible for ensuring the temp file is
     same-filesystem in the first place; this just verifies no error-hiding

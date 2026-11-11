@@ -424,18 +424,23 @@ def test_add_outfit_needs_an_installed_body_and_a_sane_name(deploy, tmp_path):
 def test_the_generator_and_the_brain_agree_on_where_an_outfit_lives(deploy):
     import ast
 
-    source = (
-        Path(__file__).resolve().parents[2] / "blender" / "generator.py"
-    ).read_text()
+    # the generator is split into parts (generator.py and blender/gen_*.py): it is in one of them
+    sources = [
+        p.read_text()
+        for p in sorted(
+            (Path(__file__).resolve().parents[2] / "blender").glob("gen*.py")
+        )
+    ]
     func = next(
         n
+        for source in sources
         for n in ast.parse(source).body
         if isinstance(n, ast.FunctionDef) and n.name == "outfit_model_path"
     )
     namespace: dict = {"Path": Path}
-    exec(
+    exec(  # noqa: S102 -- our own source, no bpy needed
         compile(ast.Module([func], []), "generator", "exec"), namespace
-    )  # noqa: S102 -- our own source, no bpy needed
+    )
     for body in ("standard_humanoid_female", "custom:robot"):
         assert namespace["outfit_model_path"](
             deploy, body, "ranger"
@@ -747,6 +752,31 @@ def test_the_animation_matrix_lists_libraries_and_what_each_body_gets(deploy):
     assert bodies["custom:mech"]["libraries"]["pack"]["fits"] is False
 
 
+def test_a_model_with_no_armature_is_inspected_and_not_reported_as_never_inspected(
+    deploy,
+):
+    core = sorted(REQUIRED_BONES)
+    _library(
+        deploy / "assets" / "animation_library" / "pack.glb",
+        ["root", *core],
+        ["Idle_Loop"],
+    )
+    _model(
+        deploy,
+        "custom_templates",
+        "statue",
+        {**_CAPS, "bone_names": [], "warnings": ["no armature found"]},
+    )
+    _model(
+        deploy, "custom_templates", "unread", None
+    )  # no .caps.json: this one never was
+    bodies = {b["body"]: b for b in models.animation_matrix(deploy)["bodies"]}
+    assert (
+        bodies["custom:statue"]["libraries"] == {}
+    )  # a static mesh: no library fits, and we know it
+    assert bodies["custom:unread"]["libraries"] is None  # not analysed yet
+
+
 def test_ground_sitting_clips_are_preferred_to_the_chair_ones_and_only_a_whole_set_counts(
     deploy,
 ):
@@ -881,11 +911,7 @@ def _toy_clip(n: int = 20):
     return Clip(
         [float(i + 1) for i in range(n)],
         {"upperarm_l": swing},
-        (
-            [(0.0, 0.0, 0.1 * (i > 4))] * n
-            if False
-            else [(0.0, 0.0, 0.0)] * 5 + [(0.2, 0.0, 0.0)] * (n - 5)
-        ),
+        ([(0.0, 0.0, 0.0)] * 5 + [(0.2, 0.0, 0.0)] * (n - 5)),
     )
 
 
@@ -916,7 +942,7 @@ def test_clip_processing_trims_loops_scales_and_blends():
     calm, eager = scale_intensity(clip, 0.5, 0.8), scale_intensity(clip, 1.4, 1.25)
     reach = lambda c: max(
         q_angle_deg(q, c.quats["upperarm_l"][0]) for q in c.quats["upperarm_l"]
-    )  # noqa: E731
+    )
     assert reach(calm) < reach(clip) < reach(eager)
     assert calm.frames[-1] > clip.frames[-1] > eager.frames[-1]  # slower and faster
     assert in_place_clip(clip).hips[-1][0] == clip.hips[0][0]
@@ -1217,6 +1243,123 @@ def test_a_body_that_lies_down_turns_on_the_floor_instead_of_over_its_head():
     assert lying_turn(start, end, None) is None
 
 
+# --- native clips on the Quaternius skeleton (Mesh2Motion...) ---------------------------------
+
+
+def test_native_clips_are_eased_looped_and_joined_to_the_floor_work():
+    from blender.animation_library import mixamo_clip_defaults, mixamo_derived_clips
+
+    for gesture in ("Bow", "Help_One_Arm", "Help_Two_Arms", "Confused"):
+        defaults = mixamo_clip_defaults(gesture)
+        assert defaults["blend_ref"] == "@stand" and not defaults["mirror"]
+    assert mixamo_clip_defaults("Sleeping")["loop"]
+    pushup = mixamo_clip_defaults("Pushup")
+    assert pushup["loop"] and pushup["in_place"]
+    meditate = mixamo_clip_defaults("Meditate")
+    assert (
+        meditate["loop"] and meditate["emit"] is False
+    )  # only its derived clips are used
+
+    derived = {
+        d["name"]: d["options"]
+        for d in mixamo_derived_clips({"Pushup", "Sleeping", "Meditate", "Stand_Up"})
+    }
+    assert derived["Workout_Pushup"]["compose"] == [
+        "Lie_Down",
+        ["Pushup", 6],
+        "Stand_Up",
+    ]
+    assert derived["Lie_Down_Back"]["ease_to"] == "Sleeping"  # lies down into its pose
+    assert derived["Stand_Up_Back"]["ease_from"] == "Sleeping"  # and gets up from it
+    assert derived["Meditate_Enter"]["hold"] == "Meditate"
+    assert derived["Meditate_Exit"]["ease_to"] == "@stand"
+    # no way to get up, no floor work; the meditation needs nothing else
+    names = {
+        d["name"] for d in mixamo_derived_clips({"Pushup", "Sleeping", "Meditate"})
+    }
+    assert names == {"Meditate_Idle", "Meditate_Enter", "Meditate_Exit"}
+
+
+def test_native_clips_fill_the_roles_they_are_for():
+    from blender.animation_library import pick_clips
+
+    picked = pick_clips(
+        {
+            "Bow",
+            "Help_One_Arm",
+            "Help_Two_Arms",
+            "Confused",
+            "Sleeping",
+            "Lie_Down_Back",
+            "Stand_Up_Back",
+            "Workout_Pushup",
+            "Meditate_Enter",
+            "Meditate_Idle",
+            "Meditate_Exit",
+        }
+    )
+    assert picked["attention"] == "Help_One_Arm"
+    assert picked["attention.alt1"] == "Help_Two_Arms"
+    assert picked["think_long"] == "Confused"
+    assert picked["greet"] == "Bow"  # no greeting of its own: Bow stands in
+    assert (picked["sleep"], picked["lie_down"], picked["wake"]) == (
+        "Sleeping",
+        "Lie_Down_Back",
+        "Stand_Up_Back",
+    )
+    assert picked["workout_floor"] == "Workout_Pushup"
+    assert picked["floor_sit_idle"] == "Meditate_Idle"
+
+
+def test_the_clips_of_a_set_keep_their_option_numbers_whichever_library_has_them():
+    from blender.animation_library import merge_picks, pick_clips
+
+    side = {  # a way of sleeping with a shift in it, and the way to get up slowly
+        "Lie_Down",
+        "Sleeping_Idle_1",
+        "Sleeping_Roll",
+        "Stand_Up",
+        "Standing_Up",
+        "FloorSit_Enter",
+        "FloorSit_Idle",
+        "FloorSit_Exit",
+    }
+    back = {  # another, with neither
+        "Lie_Down_Back",
+        "Sleeping",
+        "Stand_Up_Back",
+        "Meditate_Enter",
+        "Meditate_Idle",
+        "Meditate_Exit",
+    }
+    plan: dict = {}
+    merge_picks(plan, pick_clips(back), "back")  # (a library that sorts first)
+    merge_picks(plan, pick_clips(side), "side")
+    assert plan["sleep"] == ("back", "Sleeping")
+    assert plan["sleep.alt1"] == ("side", "Sleeping_Idle_1")
+    assert (
+        plan["lie_down"][1] == "Lie_Down_Back"
+        and plan["lie_down.alt1"][1] == "Lie_Down"
+    )
+    assert plan["wake"][1] == "Stand_Up_Back" and plan["wake.alt1"][1] == "Stand_Up"
+    # the shift and the slow get-up belong to the second set, not the first
+    assert "sleep_alt" not in plan and plan["sleep_alt.alt1"][1] == "Sleeping_Roll"
+    assert "wake_slow" not in plan and plan["wake_slow.alt1"][1] == "Standing_Up"
+    # the same for the floor sit
+    assert plan["floor_sit_idle"][1] == "Meditate_Idle"
+    assert plan["floor_sit_enter.alt1"][1] == "FloorSit_Enter"
+    assert plan["floor_sit_exit.alt1"][1] == "FloorSit_Exit"
+
+    again: dict = {}  # in the other order the same sets are the same numbers
+    merge_picks(again, pick_clips(side), "side")
+    merge_picks(again, pick_clips(back), "back")
+    assert (
+        again["sleep"][1] == "Sleeping_Idle_1" and again["sleep.alt1"][1] == "Sleeping"
+    )
+    assert again["sleep_alt"][1] == "Sleeping_Roll" and "sleep_alt.alt1" not in again
+    assert again["wake.alt1"][1] == "Stand_Up_Back"
+
+
 # --- clips that are options for an action -------------------------------------------------------
 
 
@@ -1369,3 +1512,77 @@ def test_installing_a_library_whose_clips_start_late_warns(deploy, tmp_path, cap
     )
     models.add_animation_library(deploy, pack, "late")
     assert "Late_Loop" in capsys.readouterr().err
+
+
+def _install_body(deploy: Path, stem: str = "toy") -> Path:
+    """A custom body as `add-body` leaves one: the model, its sidecars and a retargeted library."""
+    folder = deploy / "assets" / "custom_templates"
+    folder.mkdir(parents=True, exist_ok=True)
+    model = folder / f"{stem}.glb"
+    model.write_bytes(b"glTF")
+    for suffix in (
+        ".caps.json",
+        ".credits.json",
+        ".face.json",
+        ".pose.json",
+        ".rig.json",
+        ".hold",
+    ):
+        (folder / f"{stem}{suffix}").write_text("{}")
+    derived = deploy / "assets" / "animation_library_body" / stem
+    derived.mkdir(parents=True)
+    (derived / "UAL1_Standard.glb").write_bytes(b"glTF")
+    return model
+
+
+def test_remove_body_deletes_the_model_and_what_belongs_to_it_only(deploy):
+    _install_body(deploy, "toy")
+    other = _install_body(deploy, "toy_two")
+    (deploy / "assets" / "custom_templates" / "toy.glb.keep").write_text("not its own")
+    gone = models.remove_body(deploy, "custom:toy")
+    assert {p.name for p in gone} == {
+        "toy.glb",
+        "toy.caps.json",
+        "toy.credits.json",
+        "toy.face.json",
+        "toy.pose.json",
+        "toy.rig.json",
+        "toy.hold",
+        "UAL1_Standard.glb",
+        "toy",
+    }
+    assert not (deploy / "assets" / "animation_library_body" / "toy").exists()
+    assert not (deploy / "assets" / "custom_templates" / "toy.glb").exists()
+    assert (deploy / "assets" / "custom_templates" / "toy.glb.keep").is_file()
+    assert (
+        other.is_file()
+        and (deploy / "assets" / "animation_library_body" / "toy_two").is_dir()
+    )
+
+
+def test_remove_body_dry_run_deletes_nothing_and_unknown_is_refused(deploy):
+    model = _install_body(deploy)
+    assert model in models.remove_body(deploy, "custom:toy", dry_run=True)
+    assert model.is_file()
+    with pytest.raises(SystemExit, match="not an installed body"):
+        models.remove_body(deploy, "custom:nope")
+
+
+def test_remove_body_refuses_the_body_being_worn_unless_forced(deploy):
+    model = _install_body(deploy)
+    (deploy / "manifest.json").write_text(
+        json.dumps(
+            {
+                "current_version": 2,
+                "versions": [
+                    {"version": 1, "look_spec": {"base_template": "primitive_blob"}},
+                    {"version": 2, "look_spec": {"base_template": "custom:toy"}},
+                ],
+            }
+        )
+    )
+    with pytest.raises(SystemExit, match="wears now"):
+        models.remove_body(deploy, "custom:toy")
+    assert model.is_file()
+    models.remove_body(deploy, "custom:toy", force=True)
+    assert not model.exists()

@@ -10,6 +10,10 @@ import Deskmate
 Item {
     id: root
     property string lookSource: ""
+    // Hidden from the moment a look starts loading until Main.qml says its first clip is
+    // playing: a freshly loaded body stands in its bind pose (a T) until then.
+    property bool concealed: false
+    onLookSourceChanged: root.concealed = true
     property alias controller: avatarController
     // The QQuick3DNode IdleBehaviors.qml animates (eulerRotation/scale/
     // position), since View3D itself is a 2D Item with no such 3D transform
@@ -43,6 +47,7 @@ Item {
     View3D {
         id: view3d
         anchors.fill: parent
+        opacity: root.concealed ? 0 : 1
 
         environment: SceneEnvironment {
             backgroundMode: SceneEnvironment.Transparent
@@ -89,6 +94,7 @@ Item {
                         avatarController.resetMorphWeights()
                         root.assetLoadResult(true, "")
                     } else if (status === RuntimeLoader.Status.Error) {
+                        root.concealed = false
                         // Keep running and keep the daemon connection open on
                         // a bad asset -- avatarController.root is left pointing
                         // at whatever previously loaded successfully (or null

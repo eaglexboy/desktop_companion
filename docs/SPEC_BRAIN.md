@@ -230,7 +230,7 @@ class LLMClient(ABC):
 2. **Provider Selection:** Queries matching capability tags (`code`, `complex_reasoning`, `large_context`) when escalation is warranted.
 3. **Extensible Tool Registry (V1 Accommodation for V2 Skills):**
    * Exposes an open registration method `register_tool(name: str, description: str, parameters: dict, handler: Callable)` in `router.py`, allowing V2 skills to plug in dynamically alongside V1's hardcoded `change_appearance` and `revert_appearance`.
-   * Built-in V1 tools: `change_appearance(request: str)`, `revert_appearance(request: str = "")` and `unlock_appearance()`. While the current look is an imported (`custom:`) model, the companion keeps it: `change_appearance` is declined and the autonomous redesign is skipped, until the user says it may change its look (or asks for a generated one); see [ADR_IMPORTED_LOOK_LOCK.md](ADR_IMPORTED_LOOK_LOCK.md). The `unlock_look` skill is the same unlock for a model that phrases it as a skill call. With no version in the request it steps back one version; "version N" / "look #N" restores that version (pointer rewrite if its `.glb` is kept, else a rebuild from the stored `look_spec` published as a new version; see [ADR_LOOK_HISTORY.md](ADR_LOOK_HISTORY.md)). The `revert_look` skill takes an optional `version` argument.
+   * Built-in V1 tools: `change_appearance(request: str)`, `revert_appearance(request: str = "")` and `unlock_appearance()`. While the current look is an imported (`custom:`) model, the companion keeps it: `change_appearance` is declined and the autonomous redesign is skipped, until the user says it may change its look (or asks for a generated one); see [ADR_IMPORTED_LOOK_LOCK.md](ADR_IMPORTED_LOOK_LOCK.md). A request that only names an installed model ("change your look to the Mascot model") is not a redesign and is made even while the look is kept: the current look is rebuilt on that model (nothing is asked of the designer). Asking for the model it already wears builds it again (its files may have changed), and "rebuild your look" does the same for any imported look. The name may be a letter off, and a switching word (change, switch, become, model, ...) has to be in the message. A message like that makes the change itself when the model's reply carries no `change_look` action: the user's words, never the model's text, are what is read (`brain/pipeline.py`). The `unlock_look` skill is the same unlock for a model that phrases it as a skill call. With no version in the request it steps back one version; "version N" / "look #N" restores that version (pointer rewrite if its `.glb` is kept, else a rebuild from the stored `look_spec` published as a new version; see [ADR_LOOK_HISTORY.md](ADR_LOOK_HISTORY.md)). The `revert_look` skill takes an optional `version` argument.
    * Models lacking native tool calling are supported via a lightweight intent classifier and keyword pre-filter.
 4. **Return Envelope:** Yields `{text, provider, escalated, rationale}`.
 
@@ -470,6 +470,8 @@ Returns screen-local `Placement(x, y, screen_name, hidden)`:
 
 ### 3. Administrative REST Surface (`brain/main.py`)
 
+`brain/main.py` wires the daemon and holds the routes; the shared state is `brain/app_state.py`, the chat and speech pipeline (speaking, presence, the return greeting) `brain/pipeline.py`, the background loops `brain/background.py`.
+
 The daemon exposes an asynchronous FastAPI HTTP service. FastAPI automatically synthesizes and serves interactive OpenAPI 3.1 specifications (`/openapi.json` and `/docs`) directly from Pydantic models.
 
 The primary administrative endpoints and concrete wire payloads include:
@@ -578,6 +580,6 @@ Automated unit and integration test runs must execute with zero external network
 * **`test_router.py`:** Asserts local routing, capability escalation, cloud failover (1 timeout retry, 60s cooldown on 429), empty-completion guards, and open tool registration via `register_tool`.
 * **`test_personality.py`:** Tests SQLite bootstrapping, DDL table creation, identity persistence, exponential decay math, and reflection clamping ($\pm 5$ traits, $\pm 20$ mood).
 * **`test_voice.py`:** Asserts per-call overrides on `synthesize()`, STT/TTS failovers, and viseme timing calculations.
-* **`test_appearance.py`:** Asserts LookSpec validation, 120s timeout handling, Option B staged holding, atomic manifest commits, and Bubblewrap missing-binary detection.
+* **`test_appearance.py`:** Asserts LookSpec validation, 160s timeout handling, Option B staged holding, atomic manifest commits, and Bubblewrap missing-binary detection.
 * **`test_presence.py`:** Asserts corner placement logic, multi-monitor migration, and D-Bus logind/screensaver telemetry parsing.
 * **`test_ipc.py`:** Tests Origin/Host validation, client handshake (`hello` $\to$ `welcome`), duplicate `client_id` closure (`4409`), dual-delivery payload generation, and unhandled-event graceful passthrough for reserved agent task/permission envelopes (`plan_id` verification).

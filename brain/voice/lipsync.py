@@ -40,14 +40,24 @@ class RhubarbLipSync:
         self.rhubarb_bin = rhubarb_bin
         self.recognizer = recognizer
 
-    async def extract_visemes(self, wav_path: Path, dialog_text: str | None = None) -> list[VisemeFrame]:
+    async def extract_visemes(
+        self, wav_path: Path, dialog_text: str | None = None
+    ) -> list[VisemeFrame]:
         """Runs rhubarb against `wav_path`, optionally passing `dialog_text`
         (the known text that was synthesized -- always available here,
         since we generated the audio ourselves, which is exactly the case
         Rhubarb's own docs say `--dialogFile` most improves)."""
         with tempfile.TemporaryDirectory() as tmp:
             out_json = Path(tmp) / "visemes.json"
-            args = [self.rhubarb_bin, "-r", self.recognizer, "-f", "json", "-o", str(out_json)]
+            args = [
+                self.rhubarb_bin,
+                "-r",
+                self.recognizer,
+                "-f",
+                "json",
+                "-o",
+                str(out_json),
+            ]
             if dialog_text:
                 dialog_file = Path(tmp) / "dialog.txt"
                 dialog_file.write_text(dialog_text)
@@ -56,7 +66,9 @@ class RhubarbLipSync:
 
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    *args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
                 )
             except FileNotFoundError as exc:
                 raise LipSyncError(
@@ -67,22 +79,32 @@ class RhubarbLipSync:
 
             _, stderr = await proc.communicate()
             if proc.returncode != 0:
-                raise LipSyncError(f"rhubarb failed ({proc.returncode}): {stderr.decode(errors='replace')}")
+                raise LipSyncError(
+                    f"rhubarb failed ({proc.returncode}): {stderr.decode(errors='replace')}"
+                )
 
             data = json.loads(out_json.read_text())
 
         return [
-            VisemeFrame(start_s=cue["start"], end_s=cue["end"], shape_key=shape_key_name(cue["value"]))
+            VisemeFrame(
+                start_s=cue["start"],
+                end_s=cue["end"],
+                shape_key=shape_key_name(cue["value"]),
+            )
             for cue in data.get("mouthCues", [])
         ]
 
 
 async def extract_visemes_if_needed(
-    lipsync: RhubarbLipSync, wav_path: Path, *, has_face: bool, dialog_text: str | None = None
+    lipsync: RhubarbLipSync,
+    wav_path: Path,
+    *,
+    has_face: bool,
+    dialog_text: str | None = None,
 ) -> list[VisemeFrame]:
     """Extraction is bypassed completely if has_face == false -- a faceless
     avatar has no viseme shape keys to drive at all (see
-    blender/generator.py's Mode B / talk_pulse), so there's no reason to
+    blender/generator.py's sound_waves mode), so there's no reason to
     even shell out to rhubarb."""
     if not has_face:
         return []

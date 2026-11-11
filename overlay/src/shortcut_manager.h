@@ -15,6 +15,7 @@ class ShortcutManager : public QObject
 {
     Q_OBJECT
     QML_ELEMENT
+    QML_UNCREATABLE("Created by main.cpp")
 
 public:
     explicit ShortcutManager(QObject *parent = nullptr);
