@@ -1,0 +1,10 @@
+# Third-party code is kept byte for byte as released (see status_page/static/vendor/three/README.txt).
+status_page/static/vendor/
+
+# Not ours to format.
+overlay/build/
+overlay/qml/
+node_modules/
+.venv/
+*.min.js
+*.min.css

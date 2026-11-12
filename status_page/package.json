@@ -1,0 +1,15 @@
+{
+  "name": "deskmate-admin-tooling",
+  "private": true,
+  "description": "Type checking and formatting for the Admin app's JavaScript. Nothing is built or bundled: the browser runs the files in static/ as written.",
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "format": "prettier --write static/js static/css",
+    "format:check": "prettier --check static/js static/css"
+  },
+  "devDependencies": {
+    "@types/three": "0.170.0",
+    "prettier": "3.3.3",
+    "typescript": "5.6.3"
+  }
+}

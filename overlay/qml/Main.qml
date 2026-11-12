@@ -174,6 +174,25 @@ Window {
     property string deskmateDataDir: typeof dataDir !== "undefined" ? dataDir : ""
     // qmllint enable unqualified
 
+    // Testing only (DESKMATE_FRAME_DUMP_DIR, see main.cpp): pictures of the avatar after a load.
+    // qmllint disable unqualified
+    readonly property string frameDumpDir: typeof testFrameDumpDir === "string" ? testFrameDumpDir : ""
+    // qmllint enable unqualified
+    property int frameDumpLeft: 0
+    property double frameDumpFrom: 0
+    Timer {
+        interval: 120
+        repeat: true
+        running: root.frameDumpLeft > 0
+        onTriggered: {
+            --root.frameDumpLeft;
+            const name = root.frameDumpDir + "/frame_" + String(Date.now() - root.frameDumpFrom).padStart(5, "0") + (avatar3d.concealed ? "_hidden" : "_shown") + ".png";
+            avatar3d.grabToImage(function (result) {
+                result.saveToFile(name);
+            });
+        }
+    }
+
     WindowMaskHelper {
         id: maskHelper
     }
@@ -391,8 +410,13 @@ Window {
             lookSource: root.currentLookPath
 
             onAssetLoadResult: function (ok, error) {
-                if (ok)
+                if (ok) {
                     idleBehaviors.modelLoaded();
+                    if (root.frameDumpDir !== "") {
+                        root.frameDumpFrom = Date.now();
+                        root.frameDumpLeft = 60;
+                    }
+                }
                 root.ipc.sendAssetSwapResult(ok, root.pendingManifestVersion, ok ? "" : error);
             }
         }

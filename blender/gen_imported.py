@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from pathlib import Path
 
 import bpy  # pyright: ignore[reportMissingImports]
@@ -113,6 +114,121 @@ def _draw_both_sides(meshes) -> None:
                 material.use_backface_culling = False
 
 
+# The materials of a body's own hair, eyebrows and eyelashes. Mirrored by
+# brain/appearance/build_options.py `HAIR_MATERIAL` (a test pins them together).
+HAIR_MATERIAL = re.compile(r"hair|eyebrow|eyelash", re.IGNORECASE)
+
+
+def _srgb_to_linear(c: float) -> float:
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def tint_hair(meshes, hex_color: str, flat: bool = False) -> int:
+    """Multiplies the colour texture of the body's hair materials by `hex_color`. The hair of the
+    standard humanoids is a grey texture made to be tinted, so a multiply gives any hair colour and
+    white leaves it as modelled. A hair or beard model is made with a near-black texture, which a
+    multiply cannot lighten, so with `flat` the texture is dropped and the colour is the material's
+    own. Returns how many materials were tinted."""
+    h = hex_color.lstrip("#")
+    r, g, b = (
+        _srgb_to_linear(int(h[i : i + 2], 16) / 255.0) for i in (0, 2, 4)
+    )
+    if min(r, g, b) >= 0.9999:
+        return 0
+    done: set = set()
+    for mesh in meshes:
+        for material in mesh.data.materials:
+            if (
+                material is None
+                or material.name in done
+                or not HAIR_MATERIAL.search(material.name)
+                or material.node_tree is None
+            ):
+                continue
+            done.add(material.name)
+            tree = material.node_tree
+            bsdf = next(
+                (n for n in tree.nodes if n.type == "BSDF_PRINCIPLED"), None
+            )
+            if bsdf is None:
+                continue
+            socket = bsdf.inputs["Base Color"]
+            if flat:
+                for link in list(socket.links):
+                    tree.links.remove(link)
+                socket.default_value = (r, g, b, 1.0)
+                continue
+            mix = tree.nodes.new("ShaderNodeMix")
+            mix.data_type = "RGBA"
+            mix.blend_type = "MULTIPLY"
+            mix.inputs["Factor"].default_value = 1.0
+            mix.inputs["B"].default_value = (r, g, b, 1.0)
+            if socket.links:
+                tree.links.new(socket.links[0].from_socket, mix.inputs["A"])
+            else:
+                mix.inputs["A"].default_value = socket.default_value
+            tree.links.new(mix.outputs["Result"], socket)
+    return len(done)
+
+
+def _bind_unweighted_vertices(armature, meshes) -> int:
+    """A vertex that no bone has a weight for stays where it was when the body moves, and the glTF
+    exporter ties it to a bone of its own that never moves (`neutral_bone`): a pair of eyes the model
+    was made with no weights for floated in front of the face when the head turned. Each such vertex
+    is given to the bone nearest to it. A file that was exported once already has that bone and the
+    weights on it: those count as no weights, and are removed. Returns how many vertices were bound.
+    """
+    import numpy as np
+
+    neutral = "neutral_bone"
+
+    bones = {
+        bone.name: (
+            np.array(armature.matrix_world @ bone.head_local),
+            np.array(armature.matrix_world @ bone.tail_local),
+        )
+        for bone in armature.data.bones
+        if bone.name not in ("root", "neutral_bone")
+    }
+    if not bones:
+        return 0
+    names = list(bones)
+    heads = np.array([bones[n][0] for n in names])
+    tails = np.array([bones[n][1] for n in names])
+    along = tails - heads
+    length_squared = np.maximum((along * along).sum(axis=1), 1e-12)
+    bound = 0
+    for mesh in meshes:
+        if not any(m.type == "ARMATURE" for m in mesh.modifiers):
+            continue
+        index = {g.index: g.name for g in mesh.vertex_groups}
+        loose = [
+            v
+            for v in mesh.data.vertices
+            if sum(g.weight for g in v.groups if index.get(g.group) != neutral)
+            <= 1e-6
+        ]
+        # Every weight on that bone goes, not only a loose piece's: a vertex that was a few percent on it
+        # (the face of this model) is pulled that far toward a bone that is not where the skin was bound.
+        if neutral in mesh.vertex_groups:
+            mesh.vertex_groups.remove(mesh.vertex_groups[neutral])
+        for vertex in loose:
+            point = np.array(mesh.matrix_world @ vertex.co)
+            t = np.clip(
+                ((point - heads) * along).sum(axis=1) / length_squared, 0, 1
+            )
+            nearest = np.linalg.norm(
+                point - (heads + t[:, None] * along), axis=1
+            )
+            name = names[int(nearest.argmin())]
+            group = mesh.vertex_groups.get(name) or mesh.vertex_groups.new(
+                name=name
+            )
+            group.add([vertex.index], 1.0, "REPLACE")
+            bound += 1
+    return bound
+
+
 def _rename_meshes_named_for_bones(armature, meshes) -> None:
     """A mesh object named like a bone ("Head" on a model whose pieces were named for the bones they follow)
     exports as a node of the same name as the bone's, and a loader that finds a bone by its name (Qt's,
@@ -216,6 +332,10 @@ def build_imported_model(path: Path, warnings: list[str]) -> dict:
     else:
         _bake_import_pose(armatures[0], meshes, warnings)
         _rename_meshes_named_for_bones(armatures[0], meshes)
+        if _bind_unweighted_vertices(armatures[0], meshes):
+            warnings.append(
+                "some vertices had no bone weights: each follows the bone nearest to it"
+            )
 
     bpy.context.view_layer.update()
     roots = [
@@ -297,6 +417,7 @@ def build_imported_model(path: Path, warnings: list[str]) -> dict:
             key=lambda n: VISEME_CODES.index(n[len(SHAPE_KEY_PREFIX) :]),
         ),
         "body": largest,
+        "import_scale": k,  # how much the model was scaled to the build's standard height
         "bounds": (lo, hi),
         "body_bounds": (
             lo,
@@ -318,6 +439,27 @@ def _width_above(meshes, z: float) -> float:
                 lo_x, hi_x = min(lo_x, co.x), max(hi_x, co.x)
         evaluated.to_mesh_clear()
     return hi_x - lo_x if hi_x > lo_x else 0.0
+
+
+def _top_centre(meshes, z: float) -> tuple[float, float] | None:
+    """Middle (x, y) of the deformed meshes above height `z`: where the top of the head, or of
+    whatever is worn on it, really is. The head bone starts at the base of the head, so its x and
+    y are not the middle of the skull."""
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    lo_x, hi_x = math.inf, -math.inf
+    lo_y, hi_y = math.inf, -math.inf
+    for obj in meshes:
+        evaluated = obj.evaluated_get(depsgraph)
+        mesh = evaluated.to_mesh()
+        for vertex in mesh.vertices:
+            co = evaluated.matrix_world @ vertex.co
+            if co.z > z:
+                lo_x, hi_x = min(lo_x, co.x), max(hi_x, co.x)
+                lo_y, hi_y = min(lo_y, co.y), max(hi_y, co.y)
+        evaluated.to_mesh_clear()
+    if hi_x < lo_x:
+        return None
+    return (lo_x + hi_x) / 2, (lo_y + hi_y) / 2
 
 
 def _front_surface_y(meshes, x: float, z: float) -> float | None:
@@ -530,12 +672,18 @@ def imported_socket_frames(imported: dict, socket_bones: dict) -> dict:
     centre_z = hi.z - head_h / 2
 
     eyes = _find_eyes(imported)[0] if "socket_eyes" in socket_bones else None
-    top = (cx, cy, hi.z + 0.1 * k_head)
+    # What sits on the head is centred on the head itself (the middle of the mesh near the top,
+    # which is the hood if one is worn), not on the head bone, and rests on its top. The parametric
+    # head items are drawn with their base 0.1 below their socket and then scaled about it by
+    # `k_head`, so the socket is put 0.1 * k_head above the point the item should stand on.
+    middle = _top_centre(imported["meshes"], hi.z - 0.5 * head_h)
+    hx, hy = middle if middle is not None else (cx, cy)
+    top = (hx, hy, hi.z + 0.1 * k_head)
     worn = (
-        cx,
-        cy,
-        hi.z - 0.12 * head_h,
-    )  # a hat sits down on the head; the orbit floats above it
+        hx,
+        hy,
+        hi.z - 0.03 * head_h + 0.1 * k_head,
+    )  # a hat sits just down on the head; the orbit floats above it
     frames: dict = {}
     for socket, bone in socket_bones.items():
         # A spine bone runs from the pelvis to the chest: the waist is its lower part, the chest its
@@ -551,7 +699,17 @@ def imported_socket_frames(imported: dict, socket_bones: dict) -> dict:
         )
         pos = bone_pos(bone, along)
         if socket == "socket_head_top":
-            frames[socket] = {"location": worn, "k": k_head}
+            # a model file's origin is its attach point: for the head that is the head bone's own
+            # point (as the neck's and the hands' are their bones'), not the point the parametric
+            # items are drawn from (`worn`). Measured from the mesh the fit is only within a few
+            # millimetres, which shows as the skull poking through a hairstyle.
+            frames[socket] = {
+                "location": worn,
+                "k": k_head,
+                "asset": (
+                    tuple(head_pos) if head_pos is not None else (hx, hy, hi.z)
+                ),
+            }
         elif socket == "socket_orbit":
             frames[socket] = {"location": top, "k": k_head}
         elif socket == "socket_eyes":

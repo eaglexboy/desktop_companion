@@ -1,5 +1,5 @@
 [Unit]
-Description=Deskmate status page (read-only, separate from the brain)
+Description=Deskmate Admin app and status page (read-only except the Build page, separate from the brain)
 # Deliberately NOT PartOf/After the brain: it has to stay up, and be restartable,
 # independently of the thing it reports on.
 
@@ -10,6 +10,8 @@ WorkingDirectory=@REPO_ROOT@
 ExecStart=@VENV_PYTHON@ -m status_page.app
 Restart=on-failure
 RestartSec=5
+# It stops at once now (open streams end when it is told to stop); this only bounds a stop that hangs.
+TimeoutStopSec=15
 
 [Install]
 WantedBy=graphical-session.target

@@ -114,6 +114,11 @@ class AccessoryModel:
     item: str
     path: Path
     requires: tuple[str, ...]
+    # the base templates it is made for; empty means every body (a hairstyle fits the head it was
+    # authored for: the male cut leaves the back of a female skull bare)
+    bodies: tuple[str, ...]
+    units: str  # "body": authored at the size of the body's own source model, so scaled with it
+    skin: str  # "body": skinned with the body's own weights (hair); "" rigid on its socket's bone
     scale: float
     offset: tuple[float, float, float]
     rotation: tuple[float, float, float]
@@ -227,6 +232,11 @@ def discover_accessory_models(deploy_dir: Path) -> list[AccessoryModel]:
                     item=glb.stem,
                     path=glb,
                     requires=tuple(r for r in requires if r in CAPABILITIES),
+                    bodies=tuple(
+                        b for b in meta.get("bodies", []) if isinstance(b, str)
+                    ),
+                    units="body" if meta.get("units") == "body" else "",
+                    skin="body" if meta.get("skin") == "body" else "",
                     scale=_number(meta.get("scale"), 1.0),
                     offset=_triple(meta.get("offset"), (0.0, 0.0, 0.0)),
                     rotation=_triple(meta.get("rotation"), (0.0, 0.0, 0.0)),
@@ -274,6 +284,8 @@ def effective_wardrobe_catalog(deploy_dir: Path, base_template: str) -> dict:
     }
     needs: dict[tuple[str, str], tuple[str, ...]] = {}
     for model in discover_accessory_models(deploy_dir):
+        if model.bodies and base_template not in model.bodies:
+            continue  # made for another body
         items = accessories.setdefault(model.socket, [])
         if model.item not in items:
             items.append(model.item)
@@ -701,6 +713,9 @@ def add_accessory(
     offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
     rotation: tuple[float, float, float] = (0.0, 0.0, 0.0),
     requires: list[str] | None = None,
+    bodies: list[str] | None = None,
+    skin: str | None = None,
+    units: str | None = None,
 ) -> Path:
     if socket not in SOCKETS:
         raise SystemExit(f"socket must be one of {', '.join(SOCKETS)}")
@@ -727,6 +742,12 @@ def add_accessory(
         "offset": list(offset),
         "rotation": list(rotation),
     }
+    if bodies:
+        meta["bodies"] = bodies
+    if skin == "body":
+        meta["skin"] = "body"
+    if units == "body":
+        meta["units"] = "body"
     dest.with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n")
     return dest
 

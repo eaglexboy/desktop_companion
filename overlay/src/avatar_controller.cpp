@@ -331,6 +331,17 @@ int AvatarController::clipAnimationCount(const QString &name) const
     return int(clipAnimations(name).size());
 }
 
+int AvatarController::clipKeyframeGroupCount(const QString &name) const
+{
+    int groups = 0;
+    for (QObject *anim : clipAnimations(name))
+    {
+        if (QObject *timeline = timelineOf(anim))
+            groups += int(timeline->children().size());
+    }
+    return groups;
+}
+
 bool AvatarController::clipRunning(const QString &name) const
 {
     const QList<QObject *> anims = clipAnimations(name);

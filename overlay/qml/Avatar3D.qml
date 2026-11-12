@@ -130,7 +130,9 @@ Item {
     View3D {
         id: view3d
         anchors.fill: parent
-        opacity: root.concealed ? 0 : 1
+        // Not 0: a view that is not drawn at all does not bring its skeleton up to date, and the first frame drawn
+        // after it is revealed shows the pose it had when it was last drawn (an arm left out).
+        opacity: root.concealed ? 0.004 : 1
         // Named, not left to the first camera found: `mapFrom3DScene` (bodyBox) answers 0 without it.
         camera: camera
 

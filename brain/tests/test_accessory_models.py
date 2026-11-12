@@ -1,5 +1,6 @@
 """Which accessories a body can wear: rig reading (blender/sockets.py), the
-accessory sidecars, and the catalog the designer sees (brain/appearance/models.py)."""
+accessory sidecars, and the catalog the designer sees (brain/appearance/models.py).
+"""
 
 from __future__ import annotations
 
@@ -67,8 +68,14 @@ def test_mixamo_rig_gets_every_socket_on_the_right_bones():
 
 def test_blender_style_names_and_fingers_are_not_hands():
     sockets = find_socket_bones(BLENDER_STYLE)
-    assert sockets["socket_hand_R"] == "hand.R" and sockets["socket_hand_L"] == "hand.L"
-    assert sockets["socket_chest"] == "spine.002" and sockets["socket_waist"] == "spine"
+    assert (
+        sockets["socket_hand_R"] == "hand.R"
+        and sockets["socket_hand_L"] == "hand.L"
+    )
+    assert (
+        sockets["socket_chest"] == "spine.002"
+        and sockets["socket_waist"] == "spine"
+    )
 
 
 def test_rig_without_hands_or_neck_loses_only_those_sockets():
@@ -118,7 +125,9 @@ def deploy(tmp_path):
     return tmp_path
 
 
-def _model(deploy: Path, folder: str, name: str, caps: dict | None = None) -> Path:
+def _model(
+    deploy: Path, folder: str, name: str, caps: dict | None = None
+) -> Path:
     path = deploy / "assets" / folder / f"{name}.glb"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"glb")
@@ -127,7 +136,9 @@ def _model(deploy: Path, folder: str, name: str, caps: dict | None = None) -> Pa
     return path
 
 
-def _accessory(deploy: Path, socket: str, item: str, meta: dict | None = None) -> None:
+def _accessory(
+    deploy: Path, socket: str, item: str, meta: dict | None = None
+) -> None:
     path = deploy / "assets" / "wardrobe" / socket / f"{item}.glb"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"glb")
@@ -136,21 +147,33 @@ def _accessory(deploy: Path, socket: str, item: str, meta: dict | None = None) -
 
 
 def test_procedural_body_offers_the_catalog_and_clothes(deploy):
-    catalog = models.effective_wardrobe_catalog(deploy, "standard_humanoid_female")
+    catalog = models.effective_wardrobe_catalog(
+        deploy, "standard_humanoid_female"
+    )
     assert "hoodie" in catalog["outfits"] and "sneakers" in catalog["footwear"]
     assert "glasses" in catalog["accessories"]["socket_eyes"]
     blob = models.effective_wardrobe_catalog(deploy, "primitive_blob")
     assert "socket_hand_R" not in blob["accessories"]  # a blob has no hands
 
 
-def test_installed_body_keeps_its_clothes_and_only_wears_what_its_rig_carries(deploy):
+def test_installed_body_keeps_its_clothes_and_only_wears_what_its_rig_carries(
+    deploy,
+):
     _model(
         deploy,
         "custom_templates",
         "robot",
         {
-            "capabilities": {"has_head": True, "has_arms": False, "has_legs": False},
-            "supported_sockets": ["socket_head_top", "socket_eyes", "socket_chest"],
+            "capabilities": {
+                "has_head": True,
+                "has_arms": False,
+                "has_legs": False,
+            },
+            "supported_sockets": [
+                "socket_head_top",
+                "socket_eyes",
+                "socket_chest",
+            ],
         },
     )
     catalog = models.effective_wardrobe_catalog(deploy, "custom:robot")
@@ -162,12 +185,16 @@ def test_installed_body_keeps_its_clothes_and_only_wears_what_its_rig_carries(de
     }
 
 
-def test_uninspected_model_is_permissive_so_existing_installs_keep_working(deploy):
+def test_uninspected_model_is_permissive_so_existing_installs_keep_working(
+    deploy,
+):
     _model(deploy, "custom_templates", "legacy")  # no .caps.json
     profile = models.body_profile(deploy, "custom:legacy")
     assert profile.imported and profile.sockets is None
     catalog = models.effective_wardrobe_catalog(deploy, "custom:legacy")
-    assert "socket_hand_R" in catalog["accessories"] and catalog["outfits"] == ["none"]
+    assert "socket_hand_R" in catalog["accessories"] and catalog["outfits"] == [
+        "none"
+    ]
 
 
 def test_installed_standard_humanoid_replaces_the_procedural_profile(deploy):
@@ -176,7 +203,11 @@ def test_installed_standard_humanoid_replaces_the_procedural_profile(deploy):
         "base_templates",
         "standard_humanoid_male",
         {
-            "capabilities": {"has_head": True, "has_arms": True, "has_legs": True},
+            "capabilities": {
+                "has_head": True,
+                "has_arms": True,
+                "has_legs": True,
+            },
             "supported_sockets": ["socket_head_top", "socket_hand_R"],
         },
     )
@@ -194,19 +225,24 @@ def test_installed_standard_humanoid_replaces_the_procedural_profile(deploy):
     ).imported  # the other is still procedural
 
 
-def test_accessory_model_on_disk_joins_the_catalog_with_sidecar_settings(deploy):
+def test_accessory_model_on_disk_joins_the_catalog_with_sidecar_settings(
+    deploy,
+):
     _accessory(
-        deploy, "socket_head_top", "top_hat", {"scale": 0.5, "offset": [0, 0, 0.1]}
+        deploy,
+        "socket_head_top",
+        "top_hat",
+        {"scale": 0.5, "offset": [0, 0, 0.1]},
     )
     found = models.discover_accessory_models(deploy)
-    assert [(m.socket, m.item, m.scale, m.offset, m.requires) for m in found] == [
-        ("socket_head_top", "top_hat", 0.5, (0.0, 0.0, 0.1), ("has_head",))
-    ]
+    assert [
+        (m.socket, m.item, m.scale, m.offset, m.requires) for m in found
+    ] == [("socket_head_top", "top_hat", 0.5, (0.0, 0.0, 0.1), ("has_head",))]
     assert (
         "top_hat"
-        in models.effective_wardrobe_catalog(deploy, "standard_humanoid_female")[
-            "accessories"
-        ]["socket_head_top"]
+        in models.effective_wardrobe_catalog(
+            deploy, "standard_humanoid_female"
+        )["accessories"]["socket_head_top"]
     )
 
 
@@ -219,7 +255,9 @@ def test_accessory_without_a_sidecar_gets_defaults_from_its_socket(deploy):
 def test_a_garbled_sidecar_value_falls_back_instead_of_breaking_every_validation(
     deploy,
 ):
-    _accessory(deploy, "socket_head_top", "odd_hat", {"scale": "big", "offset": "up"})
+    _accessory(
+        deploy, "socket_head_top", "odd_hat", {"scale": "big", "offset": "up"}
+    )
     (model,) = models.discover_accessory_models(deploy)
     assert model.scale == 1.0 and model.offset == (0.0, 0.0, 0.0)
 
@@ -228,15 +266,15 @@ def test_accessory_needing_something_the_body_lacks_is_not_offered(deploy):
     _accessory(deploy, "socket_chest", "jetpack", {"requires": ["has_legs"]})
     assert (
         "jetpack"
-        in models.effective_wardrobe_catalog(deploy, "standard_humanoid_female")[
-            "accessories"
-        ]["socket_chest"]
+        in models.effective_wardrobe_catalog(
+            deploy, "standard_humanoid_female"
+        )["accessories"]["socket_chest"]
     )
     assert (
         "jetpack"
-        not in models.effective_wardrobe_catalog(deploy, "primitive_mechanical")[
-            "accessories"
-        ]["socket_chest"]
+        not in models.effective_wardrobe_catalog(
+            deploy, "primitive_mechanical"
+        )["accessories"]["socket_chest"]
     )
 
 
@@ -255,7 +293,9 @@ def test_validation_rejects_an_accessory_the_body_cannot_carry(deploy):
     validate_against_catalogs(
         _spec("standard_humanoid_female", {"socket_hand_R": "wand"}), deploy
     )
-    with pytest.raises(CatalogError, match="not available for 'primitive_blob'"):
+    with pytest.raises(
+        CatalogError, match="not available for 'primitive_blob'"
+    ):
         validate_against_catalogs(
             _spec("primitive_blob", {"socket_hand_R": "wand"}), deploy
         )
@@ -265,10 +305,17 @@ def test_add_accessory_installs_the_file_and_sidecar(deploy, tmp_path):
     source = tmp_path / "hat.glb"
     source.write_bytes(_glb({"asset": {"version": "2.0"}, "meshes": [{}]}))
     dest = models.add_accessory(
-        deploy, source, "socket_head_top", "top_hat", scale=0.4, offset=(0, 0, 0.05)
+        deploy,
+        source,
+        "socket_head_top",
+        "top_hat",
+        scale=0.4,
+        offset=(0, 0, 0.05),
     )
     assert dest.is_file()
-    assert json.loads(dest.with_suffix(".json").read_text())["requires"] == ["has_head"]
+    assert json.loads(dest.with_suffix(".json").read_text())["requires"] == [
+        "has_head"
+    ]
     with pytest.raises(SystemExit):
         models.add_accessory(deploy, source, "socket_nowhere", "x")
 
@@ -284,7 +331,8 @@ def test_rig_with_only_a_named_trunk_and_limbs_carries_head_sockets_on_the_trunk
     ]
     sockets = find_socket_bones(mascot)
     assert (
-        sockets["socket_head_top"] == "Body_00" and sockets["socket_chest"] == "Body_00"
+        sockets["socket_head_top"] == "Body_00"
+        and sockets["socket_chest"] == "Body_00"
     )
     assert (
         sockets["socket_hand_L"] == "hand.L_04"
@@ -343,20 +391,28 @@ def test_outfit_model_is_offered_only_on_the_body_it_was_made_for(deploy):
     _model(deploy, "base_templates", "standard_humanoid_female", _CAPS)
     _model(deploy, "base_templates", "standard_humanoid_male", _CAPS)
     _outfit(deploy, "standard_humanoid_female", "ranger")
-    female = models.effective_wardrobe_catalog(deploy, "standard_humanoid_female")
+    female = models.effective_wardrobe_catalog(
+        deploy, "standard_humanoid_female"
+    )
     male = models.effective_wardrobe_catalog(deploy, "standard_humanoid_male")
-    assert female["outfits"] == ["none", "ranger"] and female["footwear"] == ["none"]
+    assert female["outfits"] == ["none", "ranger"] and female["footwear"] == [
+        "none"
+    ]
     assert male["outfits"] == ["none"]
     assert (
         "ranger"
-        not in models.effective_wardrobe_catalog(deploy, "primitive_blob")["outfits"]
+        not in models.effective_wardrobe_catalog(deploy, "primitive_blob")[
+            "outfits"
+        ]
     )
 
 
 def test_outfit_models_follow_a_custom_body_by_name(deploy):
     _model(deploy, "custom_templates", "robot", _CAPS)
     _outfit(deploy, "custom:robot", "suit")
-    assert models.effective_wardrobe_catalog(deploy, "custom:robot")["outfits"] == [
+    assert models.effective_wardrobe_catalog(deploy, "custom:robot")[
+        "outfits"
+    ] == [
         "none",
         "suit",
     ]
@@ -409,7 +465,9 @@ def test_add_outfit_needs_an_installed_body_and_a_sane_name(deploy, tmp_path):
     for bad in ("none", "has space", "../x"):
         with pytest.raises(SystemExit):
             models.add_outfit(deploy, source, "standard_humanoid_female", bad)
-    dest = models.add_outfit(deploy, source, "standard_humanoid_female", "ranger")
+    dest = models.add_outfit(
+        deploy, source, "standard_humanoid_female", "ranger"
+    )
     assert (
         dest
         == deploy
@@ -462,7 +520,9 @@ def test_designer_is_told_which_outfits_each_installed_body_can_wear(deploy):
     )
 
 
-def test_generate_face_sidecar_reports_why_it_could_not(deploy, tmp_path, monkeypatch):
+def test_generate_face_sidecar_reports_why_it_could_not(
+    deploy, tmp_path, monkeypatch
+):
     model = _model(deploy, "base_templates", "standard_humanoid_female")
 
     class Done:
@@ -495,9 +555,12 @@ def test_generate_face_sidecar_never_overwrites_a_hand_made_one_unless_forced(
 
     monkeypatch.setattr(models, "_generator_run", fake)
     assert models.generate_face_sidecar(model) == "exists" and not calls
-    assert json.loads(models.face_sidecar_path(model).read_text()) == {"hand": "made"}
+    assert json.loads(models.face_sidecar_path(model).read_text()) == {
+        "hand": "made"
+    }
     assert (
-        models.generate_face_sidecar(model, force=True) == "written" and len(calls) == 1
+        models.generate_face_sidecar(model, force=True) == "written"
+        and len(calls) == 1
     )
 
 
@@ -517,9 +580,9 @@ def test_inspect_body_reads_an_installed_models_rig_into_its_caps_without_copyin
         return report
 
     monkeypatch.setattr(models, "_run_inspect", fake_inspect)
-    assert models.inspect_body(deploy, "custom:mascot")["supported_sockets"] == [
-        "socket_head_top"
-    ]
+    assert models.inspect_body(deploy, "custom:mascot")[
+        "supported_sockets"
+    ] == ["socket_head_top"]
     assert seen == [(model, models.caps_path(model))]
     assert models.effective_wardrobe_catalog(deploy, "custom:mascot")[
         "accessories"
@@ -586,7 +649,8 @@ def test_animation_libraries_are_installed_only_if_they_have_clips_and_a_rig(
     )
     dest, clips = models.add_animation_library(deploy, pack, "pack")
     assert (
-        dest == deploy / "assets" / "animation_library" / "pack.glb" and dest.is_file()
+        dest == deploy / "assets" / "animation_library" / "pack.glb"
+        and dest.is_file()
     )
     assert clips == ["Idle_Loop", "Walk_Loop"]
 
@@ -639,7 +703,12 @@ def test_a_body_is_told_which_libraries_fit_its_rig_and_what_they_give(deploy):
         "standard_humanoid_female",
         {**_CAPS, "bone_names": ["root", *core, "head"]},
     )
-    _model(deploy, "custom_templates", "mech", {**_CAPS, "bone_names": ["Body", "Arm"]})
+    _model(
+        deploy,
+        "custom_templates",
+        "mech",
+        {**_CAPS, "bone_names": ["Body", "Arm"]},
+    )
     _model(deploy, "custom_templates", "statue", {**_CAPS, "bone_names": []})
 
     fits = models.animation_support(deploy, "standard_humanoid_female")
@@ -652,7 +721,9 @@ def test_a_body_is_told_which_libraries_fit_its_rig_and_what_they_give(deploy):
             "sit_exit": "Sitting_Exit",
         }
     }
-    assert "sit (on a chair it brings)" in models._describe_animations(fits or {})
+    assert "sit (on a chair it brings)" in models._describe_animations(
+        fits or {}
+    )
     assert models.animation_support(deploy, "custom:mech") == {
         "pack": {}
     }  # another rig
@@ -664,7 +735,9 @@ def test_a_body_is_told_which_libraries_fit_its_rig_and_what_they_give(deploy):
     }  # no rig of its own
 
 
-def test_a_body_missing_some_bones_still_wears_a_library_without_their_tracks(deploy):
+def test_a_body_missing_some_bones_still_wears_a_library_without_their_tracks(
+    deploy,
+):
     folder = deploy / "assets" / "animation_library"
     core = sorted(REQUIRED_BONES)
     _library(
@@ -692,9 +765,12 @@ def test_a_body_missing_some_bones_still_wears_a_library_without_their_tracks(de
     assert models.animation_gaps(deploy, "custom:handless") == {
         "pack": ["ball_l", "index_01_l"]
     }
-    assert "(no fingers, toes: those stay still)" in models._describe_animations(
-        models.animation_support(deploy, "custom:handless") or {},
-        models.animation_gaps(deploy, "custom:handless"),
+    assert (
+        "(no fingers, toes: those stay still)"
+        in models._describe_animations(
+            models.animation_support(deploy, "custom:handless") or {},
+            models.animation_gaps(deploy, "custom:handless"),
+        )
     )
     assert models.animation_support(deploy, "custom:armless") == {
         "pack": {}
@@ -727,7 +803,9 @@ def test_the_animation_matrix_lists_libraries_and_what_each_body_gets(deploy):
         "standard_humanoid_female",
         {**_CAPS, "bone_names": ["root", *core]},
     )
-    _model(deploy, "custom_templates", "mech", {**_CAPS, "bone_names": ["Body"]})
+    _model(
+        deploy, "custom_templates", "mech", {**_CAPS, "bone_names": ["Body"]}
+    )
 
     matrix = models.animation_matrix(deploy)
     assert matrix["libraries"] == [
@@ -792,10 +870,13 @@ def test_ground_sitting_clips_are_preferred_to_the_chair_ones_and_only_a_whole_s
     }
     assert pick_clips(both)["sit_idle"] == "GroundSit_Idle"
     assert (
-        pick_clips({"GroundSit_Enter", "Sitting_Idle_Loop", "Sitting_Exit"}) == {}
+        pick_clips({"GroundSit_Enter", "Sitting_Idle_Loop", "Sitting_Exit"})
+        == {}
     )  # a mix would sit on air
     assert (
-        pick_clips({"Sitting_Enter", "Sitting_Idle_Loop", "Sitting_Exit"})["sit_enter"]
+        pick_clips({"Sitting_Enter", "Sitting_Idle_Loop", "Sitting_Exit"})[
+            "sit_enter"
+        ]
         == "Sitting_Enter"
     )
 
@@ -804,7 +885,15 @@ def test_ground_sitting_clips_are_preferred_to_the_chair_ones_and_only_a_whole_s
 
 
 def _quaternius_bones() -> set[str]:
-    names = {"root", "pelvis", "spine_01", "spine_02", "spine_03", "neck_01", "Head"}
+    names = {
+        "root",
+        "pelvis",
+        "spine_01",
+        "spine_02",
+        "spine_03",
+        "neck_01",
+        "Head",
+    }
     for side in ("l", "r"):
         names |= {
             f"{part}_{side}"
@@ -862,7 +951,9 @@ def test_the_mixamo_skeleton_maps_one_to_one_onto_the_quaternius_one():
         and not is_mixamo_rig(sorted(_quaternius_bones()))
     )
     mapped = {bone: mixamo_to_quaternius(bone) for bone in mixamo}
-    assert mapped["mixamorig:HeadTop_End"] is None  # the tip bone has no counterpart
+    assert (
+        mapped["mixamorig:HeadTop_End"] is None
+    )  # the tip bone has no counterpart
     targets = [t for t in mapped.values() if t]
     assert len(targets) == len(set(targets)) == 64
     assert set(targets) == _quaternius_bones() - {
@@ -876,18 +967,23 @@ def test_the_mixamo_skeleton_maps_one_to_one_onto_the_quaternius_one():
 
 
 def test_mixamo_clips_are_named_and_given_defaults_by_what_they_are():
-    from blender.animation_library import clip_name_from_file, mixamo_clip_defaults
+    from blender.animation_library import (
+        clip_name_from_file,
+        mixamo_clip_defaults,
+    )
 
     assert (
         clip_name_from_file("Mixamo_Standing_Greeting") == "Standing_Greeting"
-        and clip_name_from_file("Maximo_Sitting_Rubbing_Arm") == "Sitting_Rubbing_Arm"
+        and clip_name_from_file("Maximo_Sitting_Rubbing_Arm")
+        == "Sitting_Rubbing_Arm"
     )
     assert mixamo_clip_defaults("Standing_Greeting")["variants"] is True
     seated = mixamo_clip_defaults("Sitting_Talking")
     assert seated["seat"] is True and seated["blend"] and seated["max_seconds"]
     angry = mixamo_clip_defaults("Angry")
     assert (
-        angry["extract"][0]["name"] == "Angry_Hip_Thrust" and angry["in_place"] is False
+        angry["extract"][0]["name"] == "Angry_Hip_Thrust"
+        and angry["in_place"] is False
     )  # the sway is the point
     assert mixamo_clip_defaults("Wave") == {
         "loop": False,
@@ -928,23 +1024,33 @@ def test_clip_processing_trims_loops_scales_and_blends():
 
     clip = _toy_clip()
     cut = trim_clip(clip, 6, 15)
-    assert len(cut) == 10 and cut.frames[0] == 0 and cut.quats["upperarm_l"][0][1] > 0.3
+    assert (
+        len(cut) == 10
+        and cut.frames[0] == 0
+        and cut.quats["upperarm_l"][0][1] > 0.3
+    )
     with pytest.raises(ValueError):
         trim_clip(clip, 100, 200)
 
     looped = loop_clip(cut, blend=3)
     assert (
-        q_angle_deg(looped.quats["upperarm_l"][-1], looped.quats["upperarm_l"][0])
+        q_angle_deg(
+            looped.quats["upperarm_l"][-1], looped.quats["upperarm_l"][0]
+        )
         < 1e-3
     )  # ends where it started
     assert looped.hips[-1] == looped.hips[0]
 
-    calm, eager = scale_intensity(clip, 0.5, 0.8), scale_intensity(clip, 1.4, 1.25)
+    calm, eager = scale_intensity(clip, 0.5, 0.8), scale_intensity(
+        clip, 1.4, 1.25
+    )
     reach = lambda c: max(
         q_angle_deg(q, c.quats["upperarm_l"][0]) for q in c.quats["upperarm_l"]
     )
     assert reach(calm) < reach(clip) < reach(eager)
-    assert calm.frames[-1] > clip.frames[-1] > eager.frames[-1]  # slower and faster
+    assert (
+        calm.frames[-1] > clip.frames[-1] > eager.frames[-1]
+    )  # slower and faster
     assert in_place_clip(clip).hips[-1][0] == clip.hips[0][0]
 
     rest = (1.0, 0.0, 0.0, 0.0)
@@ -962,10 +1068,14 @@ def test_clip_processing_trims_loops_scales_and_blends():
         0.3,
         pytest.approx(-0.15),
     )  # lowered to the seat
-    assert seat_offset((0.0, 0.0, 0.7), (0.0, 0.3, 0.55), 0.05)[2] == pytest.approx(
+    assert seat_offset((0.0, 0.0, 0.7), (0.0, 0.3, 0.55), 0.05)[
+        2
+    ] == pytest.approx(
         -0.05
     )  # not through the floor
-    assert seat_offset((0.0, 0.0, 0.5), (0.0, 0.3, 0.55), 0.0)[2] == pytest.approx(
+    assert seat_offset((0.0, 0.0, 0.5), (0.0, 0.3, 0.55), 0.0)[
+        2
+    ] == pytest.approx(
         0.05
     )  # raised if it sits lower
 
@@ -976,8 +1086,12 @@ def test_key_reduction_keeps_the_shape_of_the_motion():
     clip = _toy_clip(40)
     frames, values = clip.frames, clip.quats["upperarm_l"]
     kept = reduce_keys(frames, values, q_angle_deg, 0.25)
-    assert kept[0] == 0 and kept[-1] == len(frames) - 1 and len(kept) < len(frames)
-    flat = reduce_keys(frames[:8], [(1.0, 0.0, 0.0, 0.0)] * 8, q_angle_deg, 0.25)
+    assert (
+        kept[0] == 0 and kept[-1] == len(frames) - 1 and len(kept) < len(frames)
+    )
+    flat = reduce_keys(
+        frames[:8], [(1.0, 0.0, 0.0, 0.0)] * 8, q_angle_deg, 0.25
+    )
     assert flat == [0, 7]
 
 
@@ -999,7 +1113,11 @@ def test_mirrored_clips_are_listed_beside_the_clip_they_mirror():
         "greet.high.mirror" not in picked and "angry.mirror" not in picked
     )  # only where the copy exists
     assert "idle.mirror" not in picked
-    assert (mirror_bone("hand_l"), mirror_bone("thigh_r"), mirror_bone("spine_02")) == (
+    assert (
+        mirror_bone("hand_l"),
+        mirror_bone("thigh_r"),
+        mirror_bone("spine_02"),
+    ) == (
         "hand_r",
         "thigh_l",
         "spine_02",
@@ -1020,7 +1138,12 @@ def _clip(frames: int, quat, z: float = 0.0):
 
 
 def test_a_clip_can_be_reversed_eased_and_joined_to_another():
-    from blender.animation_library import ease_ends, join_clips, pose_at, reverse_clip
+    from blender.animation_library import (
+        ease_ends,
+        join_clips,
+        pose_at,
+        reverse_clip,
+    )
 
     rising = _clip(3, (1.0, 0.0, 0.0, 0.0))
     rising.hips = [(0.0, 0.0, 0.0), (0.0, 0.0, 0.5), (0.0, 0.0, 1.0)]
@@ -1069,7 +1192,11 @@ def test_finish_clips_eases_each_clip_to_the_clips_it_follows_and_composes_the_w
         "Sleeping_Idle": (lying, {}),
         "Stand_Up": (
             stand,
-            {"ease_from": "Sleeping_Idle", "ease_to": "@stand", "ease_frames": 2},
+            {
+                "ease_from": "Sleeping_Idle",
+                "ease_to": "@stand",
+                "ease_frames": 2,
+            },
         ),
         "Laying_Idle": (
             _clip(3, (1.0, 0.0, 0.0, 0.0), z=0.3),
@@ -1092,10 +1219,18 @@ def test_finish_clips_eases_each_clip_to_the_clips_it_follows_and_composes_the_w
     assert (
         len(done["Stand_Up"][0]) == 4 + 2 + 2
     )  # eased in from the sleeping pose and out to the idle
-    assert done["Stand_Up"][0].hips[0][2] == pytest.approx(0.2 + (1.0 - 0.2) / 3)
-    assert done["Stand_Up"][0].hips[-1][2] == pytest.approx(1.0 + (0.9 - 1.0) * 2 / 3)
-    assert len(done["Laying_Idle"][0]) == 3 + 2 + 2  # both ends to the sleeping pose
-    assert len(done["Lonely"][0]) == 3  # references that are not there are ignored
+    assert done["Stand_Up"][0].hips[0][2] == pytest.approx(
+        0.2 + (1.0 - 0.2) / 3
+    )
+    assert done["Stand_Up"][0].hips[-1][2] == pytest.approx(
+        1.0 + (0.9 - 1.0) * 2 / 3
+    )
+    assert (
+        len(done["Laying_Idle"][0]) == 3 + 2 + 2
+    )  # both ends to the sleeping pose
+    assert (
+        len(done["Lonely"][0]) == 3
+    )  # references that are not there are ignored
     assert (
         len(done["Workout"][0]) == 4 + 1 + 3 + 1 + 3
     )  # made of the raw clips: Stand_Up, Laying_Idle twice
@@ -1180,22 +1315,34 @@ def test_a_ping_pong_clip_ends_where_it_began_and_is_still_at_the_turn():
         [(0.0, 0.0, z) for z in (0.0, 0.1, 0.2, 0.3, 0.4)],
     )
     out = ping_pong(clip, 2.0)
-    angle = [q_angle_deg(out.quats["pelvis"][0], q) for q in out.quats["pelvis"]]
+    angle = [
+        q_angle_deg(out.quats["pelvis"][0], q) for q in out.quats["pelvis"]
+    ]
 
     assert len(out) == 2 * 4 * 2 + 1  # out and back, twice as slow
-    assert out.frames == [float(i) for i in range(len(out))]  # evenly spaced from 0
+    assert out.frames == [
+        float(i) for i in range(len(out))
+    ]  # evenly spaced from 0
     assert (
         angle[0] == 0 and angle[-1] < 1e-6
     )  # back in the first pose, not a snap to it
-    assert abs(max(angle) - 60) < 1e-6 and angle.index(max(angle)) == len(out) // 2
-    assert out.hips[0] == out.hips[-1] and abs(out.hips[len(out) // 2][2] - 0.4) < 1e-9
+    assert (
+        abs(max(angle) - 60) < 1e-6 and angle.index(max(angle)) == len(out) // 2
+    )
+    assert (
+        out.hips[0] == out.hips[-1]
+        and abs(out.hips[len(out) // 2][2] - 0.4) < 1e-9
+    )
     # eased: it moves least at the start and at the turn, so it does not bounce off the turn
     steps = [abs(b - a) for a, b in zip(angle, angle[1:])]
     middle = len(out) // 2
     assert steps[0] < max(steps) / 5 and steps[middle - 1] < max(steps) / 5
     # the same path both ways
     assert all(abs(angle[i] - angle[-1 - i]) < 1e-6 for i in range(len(out)))
-    assert len(ping_pong(clip, 1.0)) == 9 and len(ping_pong(clip.copy(), 3.0)) == 25
+    assert (
+        len(ping_pong(clip, 1.0)) == 9
+        and len(ping_pong(clip.copy(), 3.0)) == 25
+    )
 
 
 def test_a_body_that_lies_down_turns_on_the_floor_instead_of_over_its_head():
@@ -1247,7 +1394,10 @@ def test_a_body_that_lies_down_turns_on_the_floor_instead_of_over_its_head():
 
 
 def test_native_clips_are_eased_looped_and_joined_to_the_floor_work():
-    from blender.animation_library import mixamo_clip_defaults, mixamo_derived_clips
+    from blender.animation_library import (
+        mixamo_clip_defaults,
+        mixamo_derived_clips,
+    )
 
     for gesture in ("Bow", "Help_One_Arm", "Help_Two_Arms", "Confused"):
         defaults = mixamo_clip_defaults(gesture)
@@ -1262,20 +1412,27 @@ def test_native_clips_are_eased_looped_and_joined_to_the_floor_work():
 
     derived = {
         d["name"]: d["options"]
-        for d in mixamo_derived_clips({"Pushup", "Sleeping", "Meditate", "Stand_Up"})
+        for d in mixamo_derived_clips(
+            {"Pushup", "Sleeping", "Meditate", "Stand_Up"}
+        )
     }
     assert derived["Workout_Pushup"]["compose"] == [
         "Lie_Down",
         ["Pushup", 6],
         "Stand_Up",
     ]
-    assert derived["Lie_Down_Back"]["ease_to"] == "Sleeping"  # lies down into its pose
-    assert derived["Stand_Up_Back"]["ease_from"] == "Sleeping"  # and gets up from it
+    assert (
+        derived["Lie_Down_Back"]["ease_to"] == "Sleeping"
+    )  # lies down into its pose
+    assert (
+        derived["Stand_Up_Back"]["ease_from"] == "Sleeping"
+    )  # and gets up from it
     assert derived["Meditate_Enter"]["hold"] == "Meditate"
     assert derived["Meditate_Exit"]["ease_to"] == "@stand"
     # no way to get up, no floor work; the meditation needs nothing else
     names = {
-        d["name"] for d in mixamo_derived_clips({"Pushup", "Sleeping", "Meditate"})
+        d["name"]
+        for d in mixamo_derived_clips({"Pushup", "Sleeping", "Meditate"})
     }
     assert names == {"Meditate_Idle", "Meditate_Enter", "Meditate_Exit"}
 
@@ -1314,16 +1471,18 @@ def test_native_clips_fill_the_roles_they_are_for():
 def test_the_clips_of_a_set_keep_their_option_numbers_whichever_library_has_them():
     from blender.animation_library import merge_picks, pick_clips
 
-    side = {  # a way of sleeping with a shift in it, and the way to get up slowly
-        "Lie_Down",
-        "Sleeping_Idle_1",
-        "Sleeping_Roll",
-        "Stand_Up",
-        "Standing_Up",
-        "FloorSit_Enter",
-        "FloorSit_Idle",
-        "FloorSit_Exit",
-    }
+    side = (
+        {  # a way of sleeping with a shift in it, and the way to get up slowly
+            "Lie_Down",
+            "Sleeping_Idle_1",
+            "Sleeping_Roll",
+            "Stand_Up",
+            "Standing_Up",
+            "FloorSit_Enter",
+            "FloorSit_Idle",
+            "FloorSit_Exit",
+        }
+    )
     back = {  # another, with neither
         "Lie_Down_Back",
         "Sleeping",
@@ -1341,10 +1500,17 @@ def test_the_clips_of_a_set_keep_their_option_numbers_whichever_library_has_them
         plan["lie_down"][1] == "Lie_Down_Back"
         and plan["lie_down.alt1"][1] == "Lie_Down"
     )
-    assert plan["wake"][1] == "Stand_Up_Back" and plan["wake.alt1"][1] == "Stand_Up"
+    assert (
+        plan["wake"][1] == "Stand_Up_Back"
+        and plan["wake.alt1"][1] == "Stand_Up"
+    )
     # the shift and the slow get-up belong to the second set, not the first
-    assert "sleep_alt" not in plan and plan["sleep_alt.alt1"][1] == "Sleeping_Roll"
-    assert "wake_slow" not in plan and plan["wake_slow.alt1"][1] == "Standing_Up"
+    assert (
+        "sleep_alt" not in plan and plan["sleep_alt.alt1"][1] == "Sleeping_Roll"
+    )
+    assert (
+        "wake_slow" not in plan and plan["wake_slow.alt1"][1] == "Standing_Up"
+    )
     # the same for the floor sit
     assert plan["floor_sit_idle"][1] == "Meditate_Idle"
     assert plan["floor_sit_enter.alt1"][1] == "FloorSit_Enter"
@@ -1354,9 +1520,13 @@ def test_the_clips_of_a_set_keep_their_option_numbers_whichever_library_has_them
     merge_picks(again, pick_clips(side), "side")
     merge_picks(again, pick_clips(back), "back")
     assert (
-        again["sleep"][1] == "Sleeping_Idle_1" and again["sleep.alt1"][1] == "Sleeping"
+        again["sleep"][1] == "Sleeping_Idle_1"
+        and again["sleep.alt1"][1] == "Sleeping"
     )
-    assert again["sleep_alt"][1] == "Sleeping_Roll" and "sleep_alt.alt1" not in again
+    assert (
+        again["sleep_alt"][1] == "Sleeping_Roll"
+        and "sleep_alt.alt1" not in again
+    )
     assert again["wake.alt1"][1] == "Stand_Up_Back"
 
 
@@ -1405,13 +1575,16 @@ def test_the_options_of_several_libraries_are_all_kept():
     plan: dict = {}
     merge_picks(
         plan,
-        pick_clips({"Talking", "Talking_1", "Waving", "Waving_Low", "Standing_Up"}),
+        pick_clips(
+            {"Talking", "Talking_1", "Waving", "Waving_Low", "Standing_Up"}
+        ),
         "floor",
     )
     held = {
         key
         for key in plan
-        if key.split(".")[0] not in ("talk", "greet", "sleep", "sleep_alt", "idle_look")
+        if key.split(".")[0]
+        not in ("talk", "greet", "sleep", "sleep_alt", "idle_look")
     }
     merge_picks(
         plan,
@@ -1474,11 +1647,14 @@ def test_new_floor_clips_have_the_options_they_need():
     )
     enter, leave = done["FloorSit_Enter"][0], done["FloorSit_Exit"][0]
     assert len(enter) == 2 + 36 and len(leave) == 2 + 36
-    assert enter.hips[0][2] > enter.hips[-1][2] and enter.hips[-1][2] == pytest.approx(
+    assert enter.hips[0][2] > enter.hips[-1][2] and enter.hips[-1][
+        2
+    ] == pytest.approx(
         0.14
     )  # down from standing to the floor
     assert (
-        leave.hips[0][2] == pytest.approx(0.14) and leave.hips[-1][2] > leave.hips[0][2]
+        leave.hips[0][2] == pytest.approx(0.14)
+        and leave.hips[-1][2] > leave.hips[0][2]
     )  # and back up
     assert len(done["FloorSit_Idle"][0]) == 4
 
@@ -1498,7 +1674,9 @@ def test_clips_that_start_after_time_zero_are_reported_because_they_flash_the_re
     assert late_starts({}) == []
 
 
-def test_installing_a_library_whose_clips_start_late_warns(deploy, tmp_path, capsys):
+def test_installing_a_library_whose_clips_start_late_warns(
+    deploy, tmp_path, capsys
+):
     pack = tmp_path / "late.glb"
     pack.write_bytes(
         _glb(
@@ -1506,7 +1684,9 @@ def test_installing_a_library_whose_clips_start_late_warns(deploy, tmp_path, cap
                 "asset": {"version": "2.0"},
                 "skins": [{}],
                 "accessors": [{"min": [0.067]}],
-                "animations": [{"name": "Late_Loop", "samplers": [{"input": 0}]}],
+                "animations": [
+                    {"name": "Late_Loop", "samplers": [{"input": 0}]}
+                ],
             }
         )
     )
@@ -1538,7 +1718,9 @@ def _install_body(deploy: Path, stem: str = "toy") -> Path:
 def test_remove_body_deletes_the_model_and_what_belongs_to_it_only(deploy):
     _install_body(deploy, "toy")
     other = _install_body(deploy, "toy_two")
-    (deploy / "assets" / "custom_templates" / "toy.glb.keep").write_text("not its own")
+    (deploy / "assets" / "custom_templates" / "toy.glb.keep").write_text(
+        "not its own"
+    )
     gone = models.remove_body(deploy, "custom:toy")
     assert {p.name for p in gone} == {
         "toy.glb",
@@ -1575,8 +1757,14 @@ def test_remove_body_refuses_the_body_being_worn_unless_forced(deploy):
             {
                 "current_version": 2,
                 "versions": [
-                    {"version": 1, "look_spec": {"base_template": "primitive_blob"}},
-                    {"version": 2, "look_spec": {"base_template": "custom:toy"}},
+                    {
+                        "version": 1,
+                        "look_spec": {"base_template": "primitive_blob"},
+                    },
+                    {
+                        "version": 2,
+                        "look_spec": {"base_template": "custom:toy"},
+                    },
                 ],
             }
         )
@@ -1586,3 +1774,56 @@ def test_remove_body_refuses_the_body_being_worn_unless_forced(deploy):
     assert model.is_file()
     models.remove_body(deploy, "custom:toy", force=True)
     assert not model.exists()
+
+
+def test_an_accessory_made_for_one_body_is_offered_only_on_it(deploy):
+    """A hairstyle fits the head it was authored for: the male cut leaves a female skull bare."""
+    _accessory(
+        deploy,
+        "socket_head_top",
+        "FemaleCut",
+        {"bodies": ["standard_humanoid_female"]},
+    )
+    _accessory(deploy, "socket_head_top", "AnyCut")
+    female = models.effective_wardrobe_catalog(
+        deploy, "standard_humanoid_female"
+    )
+    male = models.effective_wardrobe_catalog(deploy, "standard_humanoid_male")
+    assert {"FemaleCut", "AnyCut"} <= set(
+        female["accessories"]["socket_head_top"]
+    )
+    assert "AnyCut" in male["accessories"]["socket_head_top"]
+    assert "FemaleCut" not in male["accessories"]["socket_head_top"]
+
+
+def test_add_accessory_records_the_bodies_it_is_for(deploy, tmp_path):
+    source = tmp_path / "hair.glb"
+    source.write_bytes(_glb({"asset": {"version": "2.0"}, "meshes": [{}]}))
+    dest = models.add_accessory(
+        deploy,
+        source,
+        "socket_head_top",
+        "Cut",
+        bodies=["standard_humanoid_male"],
+    )
+    assert json.loads(dest.with_suffix(".json").read_text())["bodies"] == [
+        "standard_humanoid_male"
+    ]
+    everyone = models.add_accessory(deploy, source, "socket_head_top", "Any")
+    assert "bodies" not in json.loads(everyone.with_suffix(".json").read_text())
+
+
+def test_add_accessory_records_skin_and_units_only_when_asked(deploy, tmp_path):
+    source = tmp_path / "hair.glb"
+    source.write_bytes(_glb({"asset": {"version": "2.0"}, "meshes": [{}]}))
+    plain = models.add_accessory(deploy, source, "socket_head_top", "Plain")
+    meta = json.loads(plain.with_suffix(".json").read_text())
+    assert "skin" not in meta and "units" not in meta
+    hair = models.add_accessory(
+        deploy, source, "socket_head_top", "Cut", skin="body", units="body"
+    )
+    meta = json.loads(hair.with_suffix(".json").read_text())
+    assert meta["skin"] == "body" and meta["units"] == "body"
+    found = {m.item: m for m in models.discover_accessory_models(deploy)}
+    assert found["Cut"].skin == "body" and found["Cut"].units == "body"
+    assert found["Plain"].skin == "" and found["Plain"].units == ""

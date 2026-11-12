@@ -65,6 +65,11 @@ class PaletteSpec(_Strict):
     secondary: str = Field(pattern=_HEX_COLOR_RE)
     accent: str = Field(pattern=_HEX_COLOR_RE)
     emissive: str = Field(pattern=_HEX_COLOR_RE)
+    # Tints the hair a body's own model has (eyebrows, eyelashes). White leaves it as
+    # modelled, so a look made before this existed is unchanged.
+    hair: str = Field(default="#ffffff", pattern=_HEX_COLOR_RE)
+    # The same for a hair or beard that is added to the body as a model of its own.
+    hairstyle: str = Field(default="#ffffff", pattern=_HEX_COLOR_RE)
 
 
 class WardrobeSpec(_Strict):

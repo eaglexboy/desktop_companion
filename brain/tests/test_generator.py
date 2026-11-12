@@ -1512,6 +1512,56 @@ def _limbed_model_with_pelvis_glb(path: Path) -> None:
     )
 
 
+def test_a_piece_with_no_bone_weights_follows_the_bone_nearest_to_it(tmp_path):
+    """A model made with a pair of eyes that have no weights left them floating where they were
+    when the head turned: the exporter tied them to a bone of its own (`neutral_bone`) that never
+    moves."""
+    deploy = tmp_path / "deploy" / "assets"
+    (deploy / "custom_templates").mkdir(parents=True)
+    path = deploy / "custom_templates" / "eyes.glb"
+    script = _LIMBED_MODEL_SCRIPT.replace(
+        "bpy.ops.export_scene.gltf",
+        """bpy.ops.object.select_all(action="DESELECT")
+arm.select_set(True); bpy.context.view_layer.objects.active = arm
+bpy.ops.object.mode_set(mode="EDIT")
+spare = arm.data.edit_bones.new("neutral_bone")
+spare.head, spare.tail = (0, 0, 0), (0, 0, 0.1)
+bpy.ops.object.mode_set(mode="OBJECT")
+bpy.ops.mesh.primitive_cube_add(size=0.1, location=(0, -0.2, 1.6))
+eye = bpy.context.active_object
+eye.name = "Eye"
+eye.vertex_groups.new(name="neutral_bone").add(list(range(8)), 1.0, "REPLACE")
+bpy.ops.object.select_all(action="DESELECT")
+eye.select_set(True); arm.select_set(True); bpy.context.view_layer.objects.active = arm
+bpy.ops.object.parent_set(type="ARMATURE_NAME")
+bpy.ops.export_scene.gltf""",
+        1,
+    )
+    subprocess.run(
+        [
+            BLENDER_BIN,
+            "--background",
+            "--factory-startup",
+            "--python-expr",
+            script % str(path),
+        ],
+        capture_output=True,
+        check=True,
+        timeout=120,
+    )
+    result, out_path, build_json = _compile(
+        _minimal_spec(base_template="custom:eyes", has_face=False),
+        tmp_path,
+        "eyes",
+    )
+    assert result.returncode == 0, result.stderr
+    assert any("no bone weights" in w for w in build_json["warnings"])
+    assert any(
+        n.get("name") == "Eye" and "skin" in n
+        for n in _glb_gltf(out_path)["nodes"]
+    )  # skinned: it moves with the bone it was given
+
+
 def test_a_mesh_named_like_a_bone_does_not_take_the_bones_node_name(tmp_path):
     """A loader that finds a bone by its name (Qt's) would take the mesh node for it: the head of a robot
     whose parts were named for the bones sank into its body."""

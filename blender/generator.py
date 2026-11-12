@@ -51,6 +51,8 @@ from blender.animation_library import (
     rig_family_of,
 )
 from blender.gen_accessory_models import (
+    accessory_skin,
+    bind_like_body,
     bind_rigid,
     build_socket_accessory,
 )
@@ -97,6 +99,7 @@ from blender.gen_imported import (
     imported_socket_frames,
     relax_arms,
     roll_model_bones,
+    tint_hair,
 )
 from blender.gen_inspect import (
     _SOCKET_NAMES,
@@ -394,6 +397,12 @@ def main() -> None:
             )
             reset_scene()
             bpy.context.scene.render.fps = 30
+    if imported is not None:
+        tinted = tint_hair(imported["meshes"], palette.get("hair", "#ffffff"))
+        if tinted:
+            warnings.append(
+                f"tinted {tinted} hair material(s) {palette['hair']}"
+            )
 
     run_keys: list[str] = []
     library_plan: dict[str, tuple[Path, str]] = {}
@@ -458,12 +467,15 @@ def main() -> None:
         bound_accessories: list = (
             []
         )  # (object, bone): rigidly attached to the socket's bone
+        skinned_accessories: list = []  # skinned like the body (hair, a beard)
         socket_bones = (
             find_socket_bones([b.name for b in imported["armature"].data.bones])
             if imported["armature"] is not None
             else canonical_socket_bones()
         )
         frames = imported_socket_frames(imported, socket_bones)
+        for frame_ in frames.values():
+            frame_["body_scale"] = imported["import_scale"]
         for socket_name in _SOCKET_NAMES:
             item = accessories.get(socket_name)
             if not item:
@@ -477,6 +489,11 @@ def main() -> None:
                     f"model has no bone for {socket_name}; {item} is placed approximately"
                 )
                 accessory_objs += built
+            elif (
+                imported["armature"] is not None
+                and accessory_skin(DEPLOY_DIR, socket_name, item) == "body"
+            ):
+                skinned_accessories += built
             else:
                 bound_accessories += [
                     (obj, socket_bones[socket_name]) for obj in built
@@ -499,6 +516,7 @@ def main() -> None:
         parent_to_armature(arm_obj, meshes)
         for obj, bone_name in bound_accessories:
             bind_rigid(arm_obj, [obj], bone_name)
+        bind_like_body(arm_obj, skinned_accessories, imported["body"])
         if imported["armature"] is None:
             bake_proportions(arm_obj, proportions)
         bake_morphological_proportions(body, proportions)
@@ -516,7 +534,7 @@ def main() -> None:
                 )
             )
             bone = (
-                _face_bone(imported["meshes"], centre)
+                _face_bone(imported["meshes"], centre, imported["armature"])
                 if imported["armature"] is not None
                 else "head"
             )

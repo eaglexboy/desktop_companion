@@ -138,8 +138,23 @@ def _ellipse(
     return obj
 
 
-def _face_bone(meshes, point) -> str | None:
-    """The bone that moves the model's skin nearest `point`."""
+def _face_bone(meshes, point, armature=None) -> str | None:
+    """The bone that moves the model's skin nearest `point`, or the head bone when `point` is above
+    where the neck starts: the skin nearest a mouth is often a beard or a collar that follows the neck, and
+    a face that follows the neck stays behind when the head turns."""
+    if armature is not None:
+        bones = {b.name.lower(): b for b in armature.data.bones}
+        head, neck = bones.get("head"), bones.get("neck_01") or bones.get(
+            "neck"
+        )
+        # (a head bone often starts mid-head: the face is above the neck's start, not the head's)
+        start = neck or head
+        if (
+            head is not None
+            and start is not None
+            and point.z >= (armature.matrix_world @ start.head_local).z
+        ):
+            return head.name
     best, best_d = None, math.inf
     for mesh in meshes:
         for vertex in mesh.data.vertices:

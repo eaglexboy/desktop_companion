@@ -109,6 +109,10 @@ See [`docs/SPEC_OVERVIEW.md`](docs/SPEC_OVERVIEW.md) for the full target layout,
 * [`docs/ADR_GENERATED_BODIES.md`](docs/ADR_GENERATED_BODIES.md) — model-written Blender body scripts (sandboxed), deferred to V2+.
 * [`docs/ADR_IMPORTED_LOOK_LOCK.md`](docs/ADR_IMPORTED_LOOK_LOCK.md) — the companion keeps an imported model until the user frees it.
 * [`docs/ADR_LOOK_HISTORY.md`](docs/ADR_LOOK_HISTORY.md) — per-version look thumbnails, the status page Looks tab, and rollback by version number.
+* [`docs/ADR_BUILD_YOUR_LOOK.md`](docs/ADR_BUILD_YOUR_LOOK.md) — the Admin app's Build page: choose a body, clothes, colours and accessories, see the body move in a live 3D viewer, preview and apply a look.
+* [`docs/ADR_MODEL_IMPORT_PAGE.md`](docs/ADR_MODEL_IMPORT_PAGE.md) — importing bodies, outfits, accessories, animation libraries and bundles from the Admin app (proposed, not built).
+* [`docs/ADR_ADMIN_UI_ARCHITECTURE.md`](docs/ADR_ADMIN_UI_ARCHITECTURE.md) — how the Admin app's interface is built: measured boilerplate, a Preact + htm proof of concept, and the decision to split modules and add small shared helpers before the next pages (proposed).
+* [`docs/ADR_MODEL_SETTINGS_PAGE.md`](docs/ADR_MODEL_SETTINGS_PAGE.md) — a per-model settings page: animation roles, accessory sockets and placement, pose and face, availability and credits (proposed, not built).
 
 ## License
 
