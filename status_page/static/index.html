@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Deskmate Status</title>
+  <title>Deskmate Admin</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/css/tokens.css">
   <link rel="stylesheet" href="/static/css/base.css">
@@ -15,11 +15,15 @@
   <link rel="stylesheet" href="/static/css/logs.css">
   <link rel="stylesheet" href="/static/css/looks.css">
   <link rel="stylesheet" href="/static/css/animations.css">
+  <link rel="stylesheet" href="/static/css/build.css">
+  <script type="importmap">
+    { "imports": { "three": "/static/vendor/three/build/three.module.js", "three/addons/": "/static/vendor/three/examples/jsm/" } }
+  </script>
 </head>
 
 <body>
   <header>
-    <h1>Deskmate status</h1>
+    <h1>Deskmate Admin</h1>
     <nav role="tablist" id="nav">
       <button role="tab" data-tab="overview">Overview</button>
       <button role="tab" data-tab="thinking">Thinking</button>
@@ -27,6 +31,7 @@
       <button role="tab" data-tab="timeline">Mood timeline</button>
       <button role="tab" data-tab="looks">Looks</button>
       <button role="tab" data-tab="animations">Animations</button>
+      <button role="tab" data-tab="build">Build</button>
       <button role="tab" data-tab="chat">Chat &amp; memory</button>
       <button role="tab" data-tab="logs">Logs</button>
     </nav>
@@ -146,7 +151,8 @@
       <section class="wide">
         <h2>Looks <span class="sp"></span><span class="muted" id="looksSummary"></span></h2>
         <p class="reasoning-note">Every look the companion has had, newest first. This page is read-only: tell the companion
-          "go back to version N" and it restores that one (rebuilding it if the file is no longer kept).</p>
+          "go back to version N" and it restores that one (rebuilding it if the file is no longer kept). To make a look
+          yourself, use the Build page.</p>
         <p class="reasoning-note" id="looksLocked" hidden>The current look is an imported model, so the companion is keeping it:
           it will not redesign itself or take a request to change it. Tell it "you can change your look" to free it, or ask for a
           generated look.</p>
@@ -164,6 +170,56 @@
           libraries are installed with <code>python -m brain.appearance.models add-animations</code>.</p>
         <div id="animationsLibraries"></div>
         <div id="animationsBodies"></div>
+      </section>
+    </div>
+
+    <div class="tab" id="tab-build">
+      <section class="wide">
+        <h2>Build your look <span class="sp"></span><span class="muted" id="buildSummary"></span></h2>
+        <p class="reasoning-note">Choose where to start, then change the body, clothes, colors and accessories. The viewer shows the
+          body, its outfit and how it moves, live. <b>Preview</b> builds a picture of the whole look without changing anything;
+          <b>Apply</b> makes it the companion's next look, a new version like any other. This is the one page that changes anything.</p>
+        <p class="reasoning-note" id="buildNotice" hidden></p>
+        <div class="loading" id="buildLoading" role="status" aria-live="polite" hidden>
+          <span class="spinner" aria-hidden="true"></span><span id="buildLoadingText">Loading…</span>
+        </div>
+        <div class="build">
+          <div class="build-form">
+            <div class="field picker"><label for="buildStart">Start from</label>
+              <button type="button" id="buildStart" class="picker-button" aria-haspopup="listbox" aria-expanded="false" disabled>Loading…</button>
+              <div class="picker-panel" id="startPanel" hidden>
+                <input type="search" id="startFilter" placeholder="Filter: a body, an outfit, an accessory…" aria-label="Filter the choices" autocomplete="off">
+                <div class="picker-groups" id="startGroups" role="listbox"></div>
+              </div>
+            </div>
+            <div id="buildForm"><div class="empty">Choose where to start: a look you have had, or a new look on a body.</div></div>
+          </div>
+          <div class="build-side">
+            <div class="viewer-row">
+              <div class="viewer">
+                <canvas id="buildCanvas"></canvas>
+                <div class="viewer-empty" id="viewerEmpty">Choose where to start to see the body here.</div>
+              </div>
+              <div class="clips">
+                <div class="clip-list" id="clipList" role="listbox" aria-label="Animations"></div>
+                <button id="playPause" class="thick" disabled>Pause</button>
+              </div>
+            </div>
+            <p class="viewer-note" id="viewerNote"></p>
+            <div class="preview">
+              <div class="pic"><span class="muted" id="previewHint">Your preview appears here.</span><img id="previewPic" alt="Preview of the look" hidden></div>
+              <div class="muted" id="previewCaption"></div>
+              <span class="chip stale" id="previewStale" hidden>out of date: you changed something since</span>
+              <div class="status" id="previewStatus" role="status" aria-live="polite"></div>
+              <div class="actions">
+                <button id="previewBtn" disabled>Preview</button>
+                <button id="applyBtn" class="primary" disabled>Apply</button>
+              </div>
+              <div class="muted" id="applyNote"></div>
+              <div class="status" id="applyStatus" role="status" aria-live="polite"></div>
+            </div>
+          </div>
+        </div>
       </section>
     </div>
 

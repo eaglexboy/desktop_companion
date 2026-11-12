@@ -58,6 +58,12 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("testAttentionSeconds"),
                                              qEnvironmentVariableIntValue("DESKMATE_ATTENTION_TEST_SECONDS"));
 
+    // And DESKMATE_FRAME_DUMP_DIR: after each model loads, a picture of the avatar alone (not the screen) is
+    // saved there every 120 ms for seven seconds, with whether it is hidden in the name, to look at what a
+    // load shows.
+    engine.rootContext()->setContextProperty(QStringLiteral("testFrameDumpDir"),
+                                             qEnvironmentVariable("DESKMATE_FRAME_DUMP_DIR"));
+
     QObject::connect(&ipc, &IpcClient::welcomeReceived, &engine,
                      [&engine](const QVariantMap &, const QVariantMap &, const QString &assetDir)
                      {

@@ -6,6 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
+from brain.appearance.preview import PreviewStore
 from brain.config import (
     Settings,
 )
@@ -55,3 +56,5 @@ class AppState:
     # (text, created_at) of a return greeting that found no overlay connected;
     # delivered when one connects, unless it has gone stale.
     pending_greeting: tuple[str, float] | None = None
+    # Throwaway builds for the Build page's Preview button (never published).
+    previews: PreviewStore = field(default_factory=PreviewStore)

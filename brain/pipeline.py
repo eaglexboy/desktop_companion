@@ -325,6 +325,21 @@ async def _handle_chat_text(
         # model's) makes the change itself.
         # What it said instead (that it has no such model, for one: it is not told which are installed)
         # is replaced by the answer of the change itself.
+        # Or one that sent the action but made its own request of it ("knight, palette #4A90D9/...") when
+        # the user only asked for a rebuild or for a model: the request is the user's words, as it would
+        # have been had the model not sent it. (The designer's request was declined for an imported look.)
+        if state.evolution.is_direct_look_request(text):
+            actions = [
+                (
+                    SkillCall("change_look", {"request": text})
+                    if a.skill == "change_look"
+                    and not state.evolution.is_direct_look_request(
+                        str(a.args.get("request", ""))
+                    )
+                    else a
+                )
+                for a in actions
+            ]
         if not any(a.skill == "change_look" for a in actions):
             if state.evolution.is_direct_look_request(text):
                 actions = [

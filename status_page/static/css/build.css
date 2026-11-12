@@ -1,0 +1,477 @@
+/* Build page: the form, the live viewer and the preview. All lengths in rem. */
+.build [hidden],
+.build-side [hidden] {
+  display: none !important;
+}
+.build {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 62rem) {
+  .build {
+    grid-template-columns: minmax(18rem, 26rem) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+.build h3 {
+  margin: 1rem 0 0.375rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.build .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.8125rem;
+}
+.build .why {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.build select,
+.build input[type="color"] {
+  max-width: 100%;
+}
+
+/* A control that does not apply is plainly switched off: dimmed, hatched, with the reason beside it. */
+.build :disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.build select:disabled {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 0.3rem,
+    var(--line) 0.3rem 0.375rem
+  );
+}
+.build .field.off > label,
+.build .swatch-input.off .name,
+.build .slider.off > span:first-child {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.build .lock {
+  display: inline-block;
+  padding: 0 0.375rem;
+  border: 0.0625rem solid var(--line);
+  border-radius: 0.25rem;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.build .locked-note {
+  margin-bottom: 0.375rem;
+}
+
+.build .palette {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.build .swatch-input {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas: "name input" "hint hint";
+  align-items: center;
+  gap: 0.125rem 0.5rem;
+  font-size: 0.8125rem;
+}
+.build .swatch-input .name {
+  grid-area: name;
+}
+.build .swatch-input input {
+  grid-area: input;
+  justify-self: start;
+}
+.build .swatch-input .hint {
+  grid-area: hint;
+  color: var(--muted);
+  font-size: 0.6875rem;
+}
+.build .slider {
+  display: grid;
+  grid-template-columns: 6rem 1fr 4rem;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+}
+.build .slider.off {
+  opacity: 0.75;
+}
+.build .slider output {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The figure: each accessory choice beside the part it goes on. */
+.figure {
+  position: relative;
+  aspect-ratio: 15 / 16;
+  width: 100%;
+  max-width: 26rem;
+  margin: 0 auto 0.5rem;
+}
+.figure .silhouette {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.figure .sil {
+  fill: var(--line);
+}
+.figure .sil.limb {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 14;
+  stroke-linecap: round;
+}
+.figure .lead {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+.figure .dot {
+  fill: var(--accent);
+}
+.figure .slot {
+  position: absolute;
+  width: 32%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.figure .slot .preview-only {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  font-size: 0.6875rem;
+  font-style: italic;
+  color: var(--warn);
+}
+.figure .slot select {
+  font-size: 0.75rem;
+}
+.figure .slot.left {
+  left: 0;
+}
+.figure .slot.right {
+  right: 0;
+}
+.slot-head_top,
+.slot-orbit {
+  top: 7.5%;
+}
+.slot-eyes {
+  top: 17.5%;
+}
+.slot-neck {
+  top: 27.5%;
+}
+.slot-chest {
+  top: 37.5%;
+}
+.slot-waist {
+  top: 50%;
+}
+.slot-hand_R,
+.slot-hand_L {
+  top: 70%;
+}
+
+/* The viewer, with the animation list on its right and as tall as the model box. */
+.build-side {
+  max-width: 44rem;
+}
+.viewer-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 14rem;
+  gap: 0.75rem;
+}
+@media (max-width: 40rem) {
+  .viewer-row {
+    grid-template-columns: 1fr;
+  }
+  .viewer-row .clips {
+    height: 18rem;
+  }
+}
+.viewer {
+  position: relative;
+  aspect-ratio: 4 / 5;
+  width: 100%;
+  background: var(--bg);
+  border: 0.0625rem solid var(--line);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+.viewer canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.viewer-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  background: var(--bg);
+}
+.viewer-empty[hidden] {
+  display: none;
+}
+.clips {
+  position: relative;
+}
+.clip-list {
+  position: absolute;
+  inset: 0 0 3.75rem 0;
+  overflow-y: auto;
+  border: 0.0625rem solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--panel);
+}
+.clip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.0625rem;
+  width: 100%;
+  padding: 0.3125rem 0.625rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  font-size: 0.8125rem;
+}
+.clip .roles {
+  color: var(--muted);
+  font-size: 0.6875rem;
+}
+.clip:disabled {
+  opacity: 0.45;
+}
+.clip:disabled .cname {
+  text-decoration: line-through;
+}
+.clip[aria-selected="true"] {
+  background: var(--accent);
+  color: #fff;
+}
+.clip[aria-selected="true"] .roles {
+  color: inherit;
+  opacity: 0.85;
+}
+.clip-group,
+.empty-list {
+  padding: 0.375rem 0.625rem;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.thick {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3.25rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+.viewer-note {
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin: 0.375rem 0 0;
+}
+
+.build .preview {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+}
+.build .preview .pic {
+  aspect-ratio: 1;
+  max-width: 20rem;
+  background: var(--bg);
+  border: 0.0625rem solid var(--line);
+  border-radius: 0.5rem;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.build .preview .pic img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.build .preview .stale {
+  align-self: flex-start;
+  color: var(--warn);
+}
+.build .actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.build .primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* Work in progress should be impossible to miss. */
+.status:empty {
+  display: none;
+}
+.status.ok {
+  color: var(--ok);
+}
+.status.bad {
+  color: var(--bad);
+}
+.status.busy,
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.625rem 0.875rem;
+  border-radius: 0.5rem;
+  border: 0.0625rem solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.875rem;
+  animation: build-pulse 1.4s ease-in-out infinite;
+}
+.loading {
+  margin-bottom: 0.75rem;
+}
+.loading[hidden] {
+  display: none;
+}
+.status.busy::before,
+.spinner {
+  content: "";
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  border: 0.1875rem solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: build-spin 0.8s linear infinite;
+}
+@keyframes build-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes build-pulse {
+  50% {
+    background: color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status.busy,
+  .loading,
+  .status.busy::before,
+  .spinner {
+    animation: none;
+  }
+}
+
+/* "Start from": a button that opens a filterable list with collapsible groups. */
+.picker {
+  position: relative;
+}
+.picker-button {
+  width: 100%;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 1.75rem;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 1rem) 55%,
+    calc(100% - 0.75rem) 55%;
+  background-size: 0.3125rem 0.3125rem;
+  background-repeat: no-repeat;
+}
+.picker-panel {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  max-height: 28rem;
+  padding: 0.5rem;
+  background: var(--panel);
+  border: 0.0625rem solid var(--line);
+  border-radius: 0.5rem;
+  box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.25);
+}
+.picker-panel input[type="search"] {
+  width: 100%;
+  box-sizing: border-box;
+}
+.picker-groups {
+  overflow-y: auto;
+  min-height: 0;
+}
+.picker-groups .group {
+  margin-bottom: 0.25rem;
+}
+.picker-groups summary {
+  cursor: pointer;
+  padding: 0.3125rem 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.picker-groups .count {
+  margin-left: 0.25rem;
+  padding: 0 0.375rem;
+  border-radius: 0.625rem;
+  background: var(--code);
+  font-weight: 400;
+}
+.picker-groups .opt {
+  display: block;
+  width: 100%;
+  padding: 0.375rem 0.625rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: transparent;
+  text-align: left;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+.picker-groups .opt:hover {
+  background: var(--code);
+}
+.picker-groups .opt.on {
+  background: var(--accent);
+  color: #fff;
+}

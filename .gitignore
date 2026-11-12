@@ -11,6 +11,9 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 
+# Node tooling for the Admin app (type checking and formatting only; nothing is built)
+node_modules/
+
 # C++/Qt build output
 overlay/build/
 overlay/CMakeFiles/

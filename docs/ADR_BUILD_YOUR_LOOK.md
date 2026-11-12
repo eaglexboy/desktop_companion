@@ -1,6 +1,6 @@
 # Architecture Decision Record: Build Your Look (Admin app)
 
-* **Status:** Proposed. **Not implemented.**
+* **Status:** Accepted. Implemented. (The Models page, [ADR_MODEL_IMPORT_PAGE.md](ADR_MODEL_IMPORT_PAGE.md), is separate and not built.)
 * **Date:** 2026-11-11
 * **Deciders:** Architecture & Core Engineering Team
 * **Related:** [SPEC_STATUS_PAGE.md](SPEC_STATUS_PAGE.md) (the page this extends), [ADR_LOOK_HISTORY.md](ADR_LOOK_HISTORY.md) (versions, pictures, rollback; its "no restore button" decision is narrowed here), [ADR_IMPORTED_LOOK_LOCK.md](ADR_IMPORTED_LOOK_LOCK.md), [ADR_ACCESSORY_MODELS.md](ADR_ACCESSORY_MODELS.md) (what a body can carry; Quaternius is the supported source), [SPEC_BLENDER.md](SPEC_BLENDER.md) (the `LookSpec` and the generator), [ADR_MULTI_USER.md](ADR_MULTI_USER.md) (one brain and one Admin app per OS user), [ADR_NETWORK_AND_MOBILE_STRATEGY.md](ADR_NETWORK_AND_MOBILE_STRATEGY.md) (Origin/Host guards, auth token), [ADR_REMOTE_MODEL_PROCESSING.md](ADR_REMOTE_MODEL_PROCESSING.md) (where builds may run), [ADR_MODEL_IMPORT_PAGE.md](ADR_MODEL_IMPORT_PAGE.md) (the Models page, the other writing page)
@@ -13,7 +13,7 @@ The companion's look changes in two ways today: the companion's own reflection c
 
 The pieces to choose the look directly already exist:
 
-* `LookSpec` is a closed schema (`brain/appearance/spec.py`): base template, four proportions, a four-colour palette, surface material, outfit, footwear, eight accessory sockets, `seed` and `has_face`.
+* `LookSpec` is a closed schema (`brain/appearance/spec.py`): base template, four proportions, a four-color palette, surface material, outfit, footwear, eight accessory sockets, `seed` and `has_face`.
 * `effective_wardrobe_catalog(deploy_dir, base_template)` computes what a given body can wear, and `validate_against_catalogs` rejects the rest without running Blender.
 * The brain already accepts a full spec: `POST /appearance/generate` (202, fire-and-forget, progress events) and `POST /appearance/revert`.
 * The Looks tab already shows every version with its picture.
@@ -29,18 +29,18 @@ Two constraints shape the design:
 
 1. **The status page becomes the Admin app.** It is a set of pages the user navigates between. The existing tabs (Overview, Thinking, Skills, Mood, Animations, Looks, Chat & memory, Logs) stay as they are, and **Build** is a new page beside them. The change is to the page title, navigation and documentation only. The module (`status_page/`), the service (`deskmate-status.service`), the `[status]` config section and the URLs keep their names so installed units and configs do not break. A full rename can be decided separately.
 
-2. **Only a named set of pages writes: Build, and Models.** Every other page keeps the read-only guarantee: no write to `state.db`, no service control, nothing executed that the browser names. The guarantee in SPEC_STATUS_PAGE becomes "read-only except the routes of the pages named as writing", which are Build (this ADR) and Models ([ADR_MODEL_IMPORT_PAGE.md](ADR_MODEL_IMPORT_PAGE.md)). A new writing page needs its own decision and an entry in that list. ADR_LOOK_HISTORY decision 6 is narrowed the same way: the Looks tab still has no restore control, and Build is where the user acts. The write routes are a separate, named set in the server, each of them:
-    * accepts only `POST`, with a JSON body, and refuses a request whose `Origin` is present and not the page's own (the existing `Host` guard stays);
-    * requires the bearer token when `server.auth_token_file` is configured (ADR_MULTI_USER 2.2);
+2. **Only a named set of pages writes: Build, and Models.** Every other page keeps the read-only guarantee: no write to `state.db`, no service control, nothing executed that the browser names. The guarantee in SPEC_STATUS_PAGE becomes "read-only except the routes of the pages named as writing", which are Build (this ADR), Models ([ADR_MODEL_IMPORT_PAGE.md](ADR_MODEL_IMPORT_PAGE.md)) and, if built, Model settings ([ADR_MODEL_SETTINGS_PAGE.md](ADR_MODEL_SETTINGS_PAGE.md)). A new writing page needs its own decision and an entry in that list. ADR_LOOK_HISTORY decision 6 is narrowed the same way: the Looks tab still has no restore control, and Build is where the user acts. The write routes are a separate, named set in the server, each of them:
+    * accepts only `POST` (with a small JSON object) or `DELETE`, and refuses a request whose `Origin` is missing or is not the page's own, or that lacks the custom header `X-Deskmate-Admin` (a page on another origin cannot add it without a CORS preflight, which the app never answers). The existing `Host` guard stays. A middleware also refuses any method other than `GET`/`HEAD` on a path outside the writing pages, so a new route cannot become a write by accident;
+    * will also require the bearer token when `server.auth_token_file` is set, **once ADR_MULTI_USER 2.2 makes the brain consume it**. Today nothing reads that setting, and a browser page cannot hold a secret that other local users could not also read from the page, so the checks above are what applies;
     * names things only by value from the catalogs (a spec, never a path, a command or a script);
-    * is passed to the brain, which validates it again. The Admin app holds no appearance logic and never touches the manifest or the deploy directory's assets.
+    * is passed to the brain, which validates it again. The Admin app holds no appearance logic and writes nothing itself: it reads the manifest (for "start from") and serves installed model files to the viewer, both read-only.
 
 3. **What the user can choose.** The form is built from the body's own options, read from the brain, not hard-coded:
-    * **Body:** every installed body that is not held back, Quaternius bodies first, as the supported source (ADR_ACCESSORY_MODELS 15). A body from another source is listed with the features its converter gives it (the same facts as `models list`).
+    * **Body:** every installed body that is not held back, listed as the built-in primitives, then the standard humanoids, then installed models, each alphabetical (a Quaternius body is labelled as the supported source, ADR_ACCESSORY_MODELS 15). A body from another source is listed with the features its converter gives it (the same facts as `models list`).
     * **Outfit and footwear:** the generic garments on a procedural body, and the outfit models made for the chosen body. An installed body is offered no footwear and no generic garments, as the catalog already says.
-    * **Palette and material:** the four colours and the surface material. On a textured model the page says that colour does little instead of hiding the control.
+    * **Colors and surface:** the four palette colors and the surface material. A color is enabled only while something the look has chosen uses it: `primary` colors a built-in body and its eyes; `secondary` a built-in outfit, soles and a held item's dark parts; `accent` and `emissive` the parametric accessories (and footwear). An installed model keeps its own colors and has no surface, so for it only accessories take the palette, and an accessory that is a model file keeps its own colors too. A control that is off says why. The one exception is **hair**: a fifth color, `palette.hair`, tints the hair, eyebrows and eyelashes of a body whose own model has a material for them (the standard humanoids' are a grey texture made to be tinted). It multiplies the texture, so white (the default) leaves a look as modelled and an older look is unchanged; the brain offers it only for a body whose model has such a material, and the viewer shows it live. A sixth color, `palette.hairstyle`, colors a hair or beard that is added as a model of its own (it is on only while one is chosen). Those models are made with a near-black texture that a tint cannot lighten, so any color but white replaces the texture with a flat color (in the build and in the viewer); white keeps the model as it was made. The brain says what uses what (`colors` in the options); the page adds up the current choices.
     * **Accessories and proportions:** one picker per socket the body's rig can carry, and the four proportion sliders. Proportions apply to procedural bodies only.
-    * A control that does not apply to the chosen body is shown disabled with the reason, so the user learns what a body can do and does not wonder where an option went.
+    * A control that does not apply to the chosen body is shown plainly switched off (dimmed, hatched, struck through, with a *locked* tag and the reason), so the user learns what a body can do and does not wonder where an option went. The exception is an accessory socket the body cannot carry: those are left out of the figure and named in one line, since an empty choice beside the wrong body part is noise.
     * **Animations are viewed, not chosen.** The 3D viewer (decision 4) plays any clip the chosen body supports, so the user sees how the body will move. Which clip fills which role stays automatic (ADR_ACCESSORY_MODELS 14, 22) and is not part of the `LookSpec`, so Build does not change it. Choosing clips per role, or pinning a library, is a possible later step (open question 6).
     * Seed and `has_face` are not exposed; the seed is kept from the current look unless the user asks for a variation (open question 2).
 
@@ -82,7 +82,7 @@ Two constraints shape the design:
 * The viewer adds a 3D library to the Admin app (vendored, with its licence) and a new route that serves installed model files to the browser. The route is read-only and by id, and it is the new surface to test: no path in, no held model out, nothing outside the model folders.
 * The viewer and the overlay are different renderers, so they can disagree on lighting, glow and the face. The viewer cannot be used to judge the overlay's look; it exists to show shape and motion, and the page says so.
 * The viewer's hip scaling and bone handling must follow the generator's, or it would show a clip that the build does not play (feet sliding, a limb missing). A test compares the two for a body and a library.
-* A new brain endpoint is needed to return a preview picture and the options for a body. It is read-only apart from the scratch build.
+* The brain gains `GET /appearance/options` and the `/appearance/preview` routes (SPEC_BRAIN). Only the preview routes do work, and only in scratch.
 * The preview and the applied look use the same spec and seed, so they match on the same Blender version. On a different version they may differ a little (ADR_REMOTE_MODEL_PROCESSING, "Costs and risks").
 * SPEC_STATUS_PAGE, ADR_LOOK_HISTORY and its tests state that the page is read-only. They must change together with the code, or the read-only tests will rightly fail.
 
@@ -100,7 +100,7 @@ Two constraints shape the design:
 * **Applying also unlocks an imported look.** It would let the companion redesign a model the user just hand-built. Rejected: the lock is derived from what is current and stays that way.
 * **Refusing to build while locked.** Rejected: building by hand is the user acting directly, which the lock already allows (ADR_IMPORTED_LOOK_LOCK 6).
 
-## 5. Implementation plan (for later; each step ships on its own)
+## 5. Implementation plan (all seven steps are done)
 
 1. **Options for a body.** A brain endpoint (read-only) returning, for a body, the controls that apply and the choices in each, from `effective_wardrobe_catalog` and the body's capabilities, and the installed bodies with what each can do. Tests per body kind: procedural, Quaternius, installed with and without outfit models.
 2. **Viewer.** The read-only model route (body, outfit, library by id), the vendored three.js, and the viewer: load a body and an outfit, list and play the clips it supports, hip scaling as the generator does it. Tests for the route (no path, no held model, nothing outside the model folders) and for agreement with the generator on hips and missing bones. Quaternius body and library first; a converted body and its own libraries next.
@@ -110,9 +110,19 @@ Two constraints shape the design:
 6. **Admin app and Build page.** Navigation and title (UI and docs only), the form from the options endpoint, swatches, Preview and Apply, Start from, progress. CSS lengths in `rem` and no sizes in JavaScript, as the Sizing rules require.
 7. **Documentation.** SPEC_STATUS_PAGE, ADR_LOOK_HISTORY decision 6, SPEC_BRAIN (the endpoints), README.
 
+### Implementation notes
+
+* **Model-file accessories are drawn live.** Hair and a beard are `.glb` files, so the viewer loads them and fixes them to their socket's bone (head top, neck) using the build's own placement rules, measured at rest as the model loads; a parametric item exists only inside Blender, so under it the page says *Viewable in Preview only*, as it does for any accessory the viewer cannot place (another socket, a rotated placement, a rig with other bone names). Decision 4's list of what is not shown live is narrowed to match.
+* **First round of fixes after use.** The page loads nothing until a start is chosen; Apply needs a changed form; the viewer strips the body under an outfit as the build does (the skin showed through the cloth); colors and the surface switch off when nothing uses them; locked controls are obvious; accessories sit on a drawn figure; and the animations are a list beside the model. On the generator side, head accessories on an installed body are now centered on the head mesh (the head bone starts at the base of the skull, so the antenna sat off-center) and rest on the top of the head or hood instead of sinking 4 cm into it (`imported_socket_frames`).
+* **Preview** keeps one at a time (a second request gets `409`), holds the build lock only while Blender builds (the picture is rendered after it is released), keeps the newest three pictures under `<workspace>/blender_build/previews/` and removes them all at brain start and stop. A preview that is building when it is discarded has its Blender process stopped, since cancelling the task alone would leave it running.
+* **The viewer's hips ratio is measured once, when the models load**, as the pelvis's height in world space. It was first measured from the bone's own position each time a clip played, which read the wrong axis and, after the first clip, a bone that was already animated, so the body grew with every clip chosen. A browser test against a scratch brain found it; there is no browser in the test suite, so `build-spec.js` (the form logic) is tested with node and the viewer was checked by hand.
+* **Held bodies** are left out of the options and of the viewer's routes, as validation refuses them.
+* **Only `standard_humanoid_*` bodies are labelled Quaternius**; they are the only ones known to be. A custom body shows as converted (it has a rig record) or installed.
+* **The lock** needed no code: Apply is `POST /appearance/generate`, which never consulted it, and the lock is derived from what is current. Tests pin it (a generated result unlocks, an imported one stays locked, `look_unlocked_for` is never set).
+
 ## 6. Open questions
 
-1. **Preview picture on a remote worker.** The picture is made where the build runs; it reaches the page through the brain, not from the worker. Whether the brain keeps it in memory or in a scratch file depends on size.
+1. **Preview picture on a remote worker.** The picture is made where the build runs; with a worker it would reach the brain as a file and be served from there as now. Not needed until ADR_REMOTE_MODEL_PROCESSING is built.
 2. **Variations.** Should the page offer a "different seed" button for a procedural body, since the seed changes small details? It is not in the first version.
 3. **Reuse of a preview.** If the user previews a spec and then applies the same spec, the build could reuse the preview's `.glb`. It saves 20 s but couples the two paths (the file must be proven to be the one the spec describes). It is not in the first version.
 4. **Named presets.** Saving a spec under a name to return to later overlaps with the version history. Not decided.

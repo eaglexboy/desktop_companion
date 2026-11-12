@@ -454,6 +454,21 @@ def main(argv: list[str] | None = None) -> int:
         choices=core.CAPABILITIES,
         help="override what the body must have",
     )
+    acc.add_argument(
+        "--bodies",
+        nargs="*",
+        help="the base templates it is made for (default: every body), e.g. a hairstyle authored for one head",
+    )
+    acc.add_argument(
+        "--skin",
+        choices=["body"],
+        help="skin it with the body's own weights (hair, a beard) instead of rigidly on its socket's bone",
+    )
+    acc.add_argument(
+        "--units",
+        choices=["body"],
+        help="it was authored at the size of the body's own source model (a hairstyle from the same pack): scale it with the body",
+    )
     for command in (body, outfit, acc):
         command.add_argument(
             "--max-texture",
@@ -764,6 +779,9 @@ def main(argv: list[str] | None = None) -> int:
                 offset=tuple(args.offset),
                 rotation=tuple(args.rotation),
                 requires=args.requires,
+                bodies=args.bodies,
+                skin=args.skin,
+                units=args.units,
             )
             if sketch is not None:
                 core.credits_path(dest).write_text(

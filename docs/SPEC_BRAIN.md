@@ -518,6 +518,19 @@ The primary administrative endpoints and concrete wire payloads include:
   ```
 * **Behavior:** Processes dialogue through the router, logs to SQLite `interactions`, broadcasts `chat_response`, and emits `speech` (with synthesized audio and visemes) over WebSocket.
 
+#### `GET /appearance/options`
+What a look can be built from, for the Admin app's Build page ([ADR_BUILD_YOUR_LOOK.md](ADR_BUILD_YOUR_LOOK.md)). Read-only: it reads the deploy directory and runs nothing.
+
+* **Status:** `200 OK`
+* **Response Body:** `materials` (the surface materials) and `bodies`, one per body a look may use (held bodies are left out), the built-in primitives first, then the standard humanoids, then installed models, each alphabetical. Each body has `id`, `kind` (`quaternius`, `converted`, `installed`, `procedural`), `credit`, `has_face`, `note` (set for a textured installed body, which keeps its own colors), `animations` (the libraries that fit it, as `/api/animations`; `null` if its rig was never inspected) `colors` (what colors what, so the page can switch off a color nothing uses: `body` (palette entries that color the body: `primary` for a built-in one, `hair` for a body whose model has hair, eyebrow or eyelash materials), `surface`, `outfit`, `footwear`, `accessories` (per socket), `models` (accessory model files, which keep their own colors) `hair_models` (the accessory model files that are hair or a beard, which `palette.hairstyle` colors) and the `reasons` to show) and `controls`: `outfit`, `footwear`, `proportions` and `accessories` (one entry per socket; each also has `models`, the items that are model files with their `offset`, `scale` and `rotation`, which the page can draw itself). Every control is `{available, choices, reason}`; `reason` says why one is not available, for the page to show. What is offered is what validation accepts.
+
+#### `POST /appearance/preview`, `GET /appearance/preview/{id}`, `GET /appearance/preview/{id}/picture`, `DELETE /appearance/preview/{id}`
+A throwaway build of a LookSpec for the Admin app's Build page ([ADR_BUILD_YOUR_LOOK.md](ADR_BUILD_YOUR_LOOK.md)). The request body is a LookSpec, validated against the catalogs as for `/appearance/generate` (`422` if refused). Nothing is published: no manifest entry or version number, no change to the live look or its files, no memory note and no progress event, so the overlay does not reload. It takes the build lock like any build, so it waits for one under way and a look change waits for it; only one preview runs at a time (`409` for a second).
+
+* **`POST` response (`202`):** `{id, state, summary, error, created_at, has_picture}`; `state` is `queued`, `building`, `rendering`, `ready`, `failed` or `cancelled`. Poll `GET /appearance/preview/{id}` (`404` for an unknown id).
+* **`GET .../picture`:** the PNG, once `ready` (`404` before). The newest three finished pictures are kept, under the workspace's build scratch; all are removed at brain start and stop.
+* **`DELETE`:** cancels the preview if it is running (its Blender process is stopped) and deletes its picture.
+
 #### `POST /appearance/generate`
 * **Headers:** `Content-Type: application/json`
 * **Request Body:** LookSpec JSON payload.

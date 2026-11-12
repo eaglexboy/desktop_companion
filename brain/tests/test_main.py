@@ -298,6 +298,32 @@ def test_the_event_stream_ends_when_the_daemon_is_stopping(client):
         main._stopping.clear()
 
 
+def test_a_rebuild_the_user_asked_for_is_not_replaced_by_a_request_the_model_made_up(
+    client, monkeypatch
+):
+    """ "rebuild yourself" came back as change_look "knight, palette #4A90D9/#F5A623": the designer's
+    request, declined for an imported look, so nothing was rebuilt."""
+    c, state = client
+    _wire_fakes(
+        state,
+        chat_reply='{"say": "Alright, rebuilding.", "do": [{"skill": "change_look", "args": {"request": "knight, palette #4A90D9/#F5A623"}}]}',
+    )
+    asked = []
+
+    async def change(request: str) -> str:
+        asked.append(request)
+        return "Rebuilding."
+
+    monkeypatch.setattr(
+        state.evolution,
+        "is_direct_look_request",
+        lambda t: t == "rebuild yourself",
+    )
+    monkeypatch.setattr(state.evolution, "change_appearance", change)
+    c.post("/chat", json={"text": "rebuild yourself", "speak": False})
+    assert asked == ["rebuild yourself"]
+
+
 # --- synthetic WS golden path: hello -> welcome -> user_text_input -> chat_response + speech ---
 
 
@@ -1125,3 +1151,71 @@ def test_mood_label_names_what_the_overlay_acts_out():
     assert (
         mood_label({"valence": 10, "energy": 10, "stress": 90}) == "fidget"
     )  # stress first
+
+
+# --- GET /appearance/options -----------------------------------------------------
+
+
+def test_appearance_options_lists_bodies_and_changes_nothing(client):
+    c, state = client
+    deploy_dir = state.settings.deploy_dir
+    before = sorted(p.name for p in deploy_dir.rglob("*"))
+    response = c.get("/appearance/options")
+    assert response.status_code == 200
+    body = response.json()
+    assert {b["id"] for b in body["bodies"]} >= {"primitive_blob"}
+    assert "matte" in body["materials"]
+    assert sorted(p.name for p in deploy_dir.rglob("*")) == before
+
+
+# --- /appearance/preview ---------------------------------------------------------
+
+
+def test_preview_rejects_a_bad_spec_like_generate_does(client):
+    c, _state = client
+    bad = _valid_look_spec_payload()
+    bad["base_template"] = "no_such_template"
+    assert c.post("/appearance/preview", json=bad).status_code == 422
+
+
+def test_preview_runs_without_publishing_and_serves_its_picture(
+    client, monkeypatch
+):
+    from brain.appearance import blender_gen
+    from brain.appearance import preview as preview_mod
+
+    c, state = client
+
+    async def run_blender(settings, spec_path, out_glb, build_dir):
+        out_glb.write_bytes(b"glTF")
+        return {"status": "ok"}
+
+    async def render(settings, glb, target, label):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"\x89PNG-preview")
+        return target
+
+    monkeypatch.setattr(blender_gen, "_run_blender", run_blender)
+    monkeypatch.setattr(
+        blender_gen, "_verify_build_output", lambda *a, **k: None
+    )
+    monkeypatch.setattr(preview_mod, "render_picture", render)
+
+    started = c.post("/appearance/preview", json=_valid_look_spec_payload())
+    assert started.status_code == 202
+    preview_id = started.json()["id"]
+    info: dict = {}
+    for _ in range(200):
+        info = c.get(f"/appearance/preview/{preview_id}").json()
+        if info["state"] in ("ready", "failed"):
+            break
+        time.sleep(0.01)
+    assert info["state"] == "ready"
+    picture = c.get(f"/appearance/preview/{preview_id}/picture")
+    assert picture.status_code == 200 and picture.content == b"\x89PNG-preview"
+    assert not (state.settings.deploy_dir / "manifest.json").exists()
+
+    assert c.delete(f"/appearance/preview/{preview_id}").status_code == 200
+    assert c.get(f"/appearance/preview/{preview_id}").status_code == 404
+    assert c.get(f"/appearance/preview/{preview_id}/picture").status_code == 404
+    assert c.delete(f"/appearance/preview/{preview_id}").status_code == 404

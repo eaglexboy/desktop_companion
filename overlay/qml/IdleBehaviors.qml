@@ -517,17 +517,29 @@ Item {
         if (root.propAmount === 0)
             root.applyProp();
         const want = root.libraryWanted();
-        if (want && (want !== root.libraryPlaying || !root.controller.clipRunning(want)))
+        if (want && (want !== root.libraryPlaying || !root.controller.clipRunning(want))) {
             root.libraryPlaying = root.controller.playClip(want, -1) ? want : "";
+            root.clipStartedAt = Date.now();
+        }
     }
     // A freshly loaded body stands in its bind pose until its first clip is evaluated, so
     // Main.qml keeps it hidden until this says a clip is playing. The clip cannot start until the
     // model's animations exist, which on a big model is some time after the load reports success, so
     // it is tried again every 100 ms; the safety cap only keeps the avatar from staying hidden.
     signal revealRequested
+    // How much of a clip there is so far: its animations and the keyframe groups (a bone each) in
+    // them. The animations exist before their groups are all made, and a clip started then leaves the
+    // bones that have no group yet in the bind pose (a half T-pose) until it is started again.
+    function clipSize(clip) {
+        return root.controller.clipAnimationCount(clip) * 100000 + root.controller.clipKeyframeGroupCount(clip);
+    }
+    property double loadedAt: 0
+    property double clipStartedAt: 0
     property int loadedCount: -1
     property int loadedStable: 0
     function modelLoaded() {
+        root.loadedAt = Date.now();
+        console.log("deskmate load: model reported");
         root.loadedCount = -1;
         root.loadedStable = 0;
         root.libraryPlaying = "";   // a new model: nothing is playing on it yet
@@ -554,11 +566,13 @@ Item {
             return;
         }
         const want = root.libraryWanted();
-        const count = want ? root.controller.clipAnimationCount(want) : 0;
+        const count = want ? root.clipSize(want) : 0;
         root.loadedStable = (count > 0 && count === root.loadedCount) ? root.loadedStable + 1 : 0;
         root.loadedCount = count;
         if (root.loadedStable >= 3) {
             root.loading = false;
+            console.log("deskmate load: clip " + want + " complete after " + (Date.now() - root.loadedAt) + " ms (" + (count % 100000) + " keyframe groups); starting it");
+            root.lateCount = count;   // the size it was started at: only a clip that grows after this is "late"
             root.syncLibrary();
             if (root.libraryPlaying !== "") {
                 loadRetry.stop();
@@ -570,8 +584,18 @@ Item {
     Timer {
         id: revealSoon
         interval: 300
+        property int delays: 0
         onTriggered: {
+            const before = root.clipStartedAt;
             root.syncLibrary();   // an animation that came after the clip started (all must run) is started while still hidden
+            // A clip started again has been rewound: shown in the same frame it is the bind pose (the
+            // left arm out, on one model) until it takes hold. Reveal a moment after the last start.
+            if (root.clipStartedAt !== before && revealSoon.delays < 3) {
+                ++revealSoon.delays;
+                revealSoon.restart();
+                return;
+            }
+            revealSoon.delays = 0;
             root.revealRequested();
         }
     }
@@ -593,14 +617,17 @@ Item {
                 lateWatch.stop();
                 return;
             }
-            if (root.loading || root.libraryOneShot !== "")
+            // A clip started a moment ago may not yet report that it runs: starting it again at that point
+            // rewinds it, and the body is seen in its bind pose (a half T-pose) for a frame or two.
+            if (root.loading || root.libraryOneShot !== "" || Date.now() - root.clipStartedAt < 1500)
                 return;
             const want = root.libraryWanted();
-            const count = want ? root.controller.clipAnimationCount(want) : 0;
+            const count = want ? root.clipSize(want) : 0;
             const grew = count !== root.lateCount;
             root.lateCount = count;
             const stopped = want && !root.controller.clipRunning(want) && root.lateRestarts < 3;
             if (grew || stopped) {
+                console.log("deskmate load: " + (grew ? "clip grew to " + (count % 100000) + " keyframe groups" : "clip stopped") + " " + (Date.now() - root.loadedAt) + " ms after the load; starting it again");
                 if (stopped && !grew)
                     ++root.lateRestarts;
                 root.syncLibrary();

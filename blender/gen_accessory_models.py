@@ -12,6 +12,7 @@ import bpy  # pyright: ignore[reportMissingImports]
 import mathutils  # pyright: ignore[reportMissingImports]
 
 from blender.gen_garments import _assemble
+from blender.gen_imported import tint_hair
 from blender.gen_wardrobe import _ACCESSORY_BUILDERS, _SOCKET_LOCATIONS
 
 
@@ -89,9 +90,16 @@ def build_socket_accessory(
         deploy_dir / "assets" / "wardrobe" / socket_name / f"{item}.glb"
     )
     if asset_path.is_file():
+        if frame and frame.get("asset"):
+            location = tuple(frame["asset"])  # where a model file's origin goes
         meta = _accessory_sidecar(asset_path)
         meshes = _import_accessory_meshes(asset_path)
+        tint_hair(meshes, palette.get("hairstyle", "#ffffff"), flat=True)
         scale = _sidecar_number(meta.get("scale"), 1.0)
+        if meta.get("units") == "body" and frame:
+            # authored at the size of the body's own source model (a hairstyle from the same pack),
+            # which the build then scales to its standard height: scale it with the body
+            scale *= frame.get("body_scale", 1.0)
         offset = mathutils.Vector(_sidecar_triple(meta.get("offset")))
         rotation = mathutils.Euler(_sidecar_triple(meta.get("rotation")))
         matrix = (
@@ -160,6 +168,38 @@ def _join_objects(objs, name: str):
     joined.name = name
     joined.select_set(False)
     return joined
+
+
+def accessory_skin(deploy_dir: Path, socket_name: str, item: str) -> str:
+    """`"body"` if the accessory model's sidecar says it is skinned with the body's own weights
+    (hair, a beard: they sit on skin that is blended between bones, and rigid on one bone they
+    drift from it as the head moves), else "" (rigid on its socket's bone)."""
+    asset = deploy_dir / "assets" / "wardrobe" / socket_name / f"{item}.glb"
+    if not asset.is_file():
+        return ""
+    return "body" if _accessory_sidecar(asset).get("skin") == "body" else ""
+
+
+def bind_like_body(arm_obj, objs, source) -> None:
+    """Skins objects with the weights of the nearest vertex of `source` (the body), so they move
+    with the skin under them. The vertex groups are the body's, named for its bones.
+    """
+    for obj in objs:
+        for group in source.vertex_groups:
+            obj.vertex_groups.new(name=group.name)
+        transfer = obj.modifiers.new("BodyWeights", "DATA_TRANSFER")
+        transfer.object = source
+        transfer.use_vert_data = True
+        transfer.data_types_verts = {"VGROUP_WEIGHTS"}
+        transfer.vert_mapping = "NEAREST"
+        transfer.layers_vgroup_select_src = "ALL"
+        transfer.layers_vgroup_select_dst = "NAME"
+        with bpy.context.temp_override(object=obj, active_object=obj):
+            bpy.ops.object.modifier_apply(modifier=transfer.name)
+        modifier = obj.modifiers.new("Armature", "ARMATURE")
+        modifier.object = arm_obj
+        obj.parent = arm_obj
+        obj.matrix_parent_inverse = arm_obj.matrix_world.inverted()
 
 
 def bind_rigid(arm_obj, objs, bone_name: str) -> None:

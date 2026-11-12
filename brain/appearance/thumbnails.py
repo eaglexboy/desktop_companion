@@ -42,7 +42,16 @@ async def render_thumbnail(
 ) -> Path | None:
     """Renders `glb` to the version's PNG. Best-effort: a failure is logged and
     returns None, because a missing picture must never fail a look change."""
-    target = thumbnail_path(settings, version)
+    return await render_picture(
+        settings, glb, thumbnail_path(settings, version), f"v{version}"
+    )
+
+
+async def render_picture(
+    settings: Settings, glb: Path, target: Path, label: str
+) -> Path | None:
+    """Renders `glb` to the PNG `target` (replaced only once complete). Best-effort:
+    returns None on failure, with `label` in the log."""
     target.parent.mkdir(parents=True, exist_ok=True)
     scratch = target.with_suffix(".tmp.png")
     args = [
@@ -67,13 +76,13 @@ async def render_thumbnail(
             proc.communicate(), timeout=RENDER_TIMEOUT_S
         )
     except (TimeoutError, OSError) as exc:
-        logger.warning("thumbnail render for v%d failed: %s", version, exc)
+        logger.warning("thumbnail render for %s failed: %s", label, exc)
         scratch.unlink(missing_ok=True)
         return None
     if proc.returncode != 0 or b"THUMB_OK" not in out or not scratch.is_file():
         logger.warning(
-            "thumbnail render for v%d failed (exit %s)",
-            version,
+            "thumbnail render for %s failed (exit %s)",
+            label,
             proc.returncode,
         )
         scratch.unlink(missing_ok=True)

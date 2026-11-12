@@ -133,6 +133,10 @@ public:
     // How many animations the clip has so far: a model's animations are made one after another
     // after it loads, so a clip is only complete once this stops growing.
     Q_INVOKABLE int clipAnimationCount(const QString &name) const;
+    // How many keyframe groups (one per bone and property) the clip's timelines have so far. They are
+    // made after the loader reports the model, and a clip started before they are all there leaves the
+    // bones that have none in the bind pose (a T) until it is started again.
+    Q_INVOKABLE int clipKeyframeGroupCount(const QString &name) const;
     Q_INVOKABLE bool playClip(const QString &name, int loops = 1, bool hold = false);
     // Shows the chair a body sits on (the generator's SIT_PROP_NODE) by `amount`: 1 is the
     // whole chair, 0 gone. It is a mesh with exactly three morph targets, the first of which

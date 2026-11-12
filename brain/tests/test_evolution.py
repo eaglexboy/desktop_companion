@@ -1217,3 +1217,35 @@ def test_only_a_promise_in_the_reply_makes_the_change(tmp_path):
         "Milo is my favourite.",
     ):
         assert not _PROMISES_A_CHANGE.search(said), said
+
+
+# --- applying a look by hand (the Build page) and the lock ----------------------
+
+
+@pytest.mark.asyncio
+async def test_applying_a_look_by_hand_is_not_blocked_by_the_lock_and_a_generated_result_unlocks(
+    tmp_path, monkeypatch
+):
+    settings, evolution = _evolution_on_custom_look(tmp_path, monkeypatch)
+    await _publish(evolution, base_template="custom:miss")
+    assert evolution.look_locked() is True
+
+    await _publish(evolution)  # the user builds a generated look: no refusal
+    assert _manifest(settings).current_version == 2
+    assert evolution.look_locked() is False
+    assert evolution._store.get_agent_state("look_unlocked_for") is None
+
+
+@pytest.mark.asyncio
+async def test_applying_on_a_locked_model_keeps_it_locked_and_never_unlocks_it(
+    tmp_path, monkeypatch
+):
+    settings, evolution = _evolution_on_custom_look(tmp_path, monkeypatch)
+    await _publish(evolution, base_template="custom:miss")
+    await _publish(evolution, base_template="custom:miss", has_face=False)
+
+    assert _manifest(settings).current_version == 2
+    assert (
+        evolution.look_locked() is True
+    )  # the companion still will not redesign it
+    assert evolution._store.get_agent_state("look_unlocked_for") is None

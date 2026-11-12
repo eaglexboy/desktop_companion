@@ -27,7 +27,9 @@ from pydantic import BaseModel
 
 from brain.app_state import AppState
 from brain.appearance.blender_gen import is_build_running
+from brain.appearance.build_options import build_options
 from brain.appearance.manifest import load_manifest
+from brain.appearance.preview import PreviewBusy, clear_previews
 from brain.appearance.spec import (
     CatalogError,
     LookSpec,
@@ -279,6 +281,9 @@ async def lifespan(app: FastAPI):
     unsubscribe_settings = subscribe_if_running(_on_settings_reloaded)
 
     state.evolution.reconcile_staged_on_boot()
+    clear_previews(
+        state.settings
+    )  # a preview never outlives the process that made it
 
     background = [
         asyncio.create_task(_render_missing_look_thumbnails(state)),
@@ -296,6 +301,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         unsubscribe_settings()
+        state.previews.discard_all()
         for task in background:
             task.cancel()
         await asyncio.gather(*background, return_exceptions=True)
@@ -564,6 +570,59 @@ async def chat(req: ChatRequest):
     state = _state(app)
     utterance_id = await _handle_chat_text(state, req.text, speak=req.speak)
     return {"status": "ok", "utterance_id": utterance_id}
+
+
+@app.get("/appearance/options")
+async def appearance_options():
+    """What the Build page may offer: per usable body, which controls apply and
+    their choices, with the reason when one does not (docs/ADR_BUILD_YOUR_LOOK.md).
+    Read-only; reads the deploy directory and runs nothing."""
+    state = _state(app)
+    return await asyncio.to_thread(build_options, state.settings.deploy_dir)
+
+
+@app.post("/appearance/preview", status_code=202)
+async def appearance_preview(look_spec: LookSpec):
+    """Starts a throwaway build of `look_spec` and a picture of it. Nothing is
+    published and the live look is untouched (docs/ADR_BUILD_YOUR_LOOK.md)."""
+    state = _state(app)
+    try:
+        validate_against_catalogs(look_spec, state.settings.deploy_dir)
+    except CatalogError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    try:
+        preview = state.previews.start(state.settings, look_spec)
+    except PreviewBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    return preview.public()
+
+
+@app.get("/appearance/preview/{preview_id}")
+async def appearance_preview_status(preview_id: str):
+    preview = _state(app).previews.get(preview_id)
+    if preview is None:
+        raise HTTPException(status_code=404, detail="no such preview")
+    return preview.public()
+
+
+@app.get("/appearance/preview/{preview_id}/picture")
+async def appearance_preview_picture(preview_id: str):
+    preview = _state(app).previews.get(preview_id)
+    picture = preview.picture if preview is not None else None
+    if picture is None or not picture.is_file():
+        raise HTTPException(
+            status_code=404, detail="no picture for that preview"
+        )
+    return FileResponse(
+        picture, media_type="image/png", headers={"Cache-Control": "no-store"}
+    )
+
+
+@app.delete("/appearance/preview/{preview_id}")
+async def appearance_preview_discard(preview_id: str):
+    if not _state(app).previews.discard(preview_id):
+        raise HTTPException(status_code=404, detail="no such preview")
+    return {"status": "discarded"}
 
 
 @app.post("/appearance/generate", status_code=202)

@@ -9,6 +9,7 @@ export const TABS = [
   "timeline",
   "looks",
   "animations",
+  "build",
   "chat",
   "logs",
 ];

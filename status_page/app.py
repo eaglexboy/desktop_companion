@@ -1,10 +1,14 @@
-"""Standalone, read-only status page for the Deskmate stack.
+"""The Deskmate Admin app (the status page and the Build page).
 
 A separate process from the brain on purpose: when the brain hangs or
-crashes, this is the thing you need to still be up. It never writes to
-anything -- `state.db` is opened read-only, units are only queried, and logs
-are only read. What lives solely in the brain's memory comes from the brain's
-own GET /api/status, and a failure to reach it is shown, not hidden.
+crashes, this is the thing you need to still be up. Every page but one is
+read-only: `state.db` is opened read-only, units are only queried, and logs
+are only read. The one writing page is Build (docs/ADR_BUILD_YOUR_LOOK.md); its
+routes are the named set under `WRITE_PREFIXES`, they only ask the brain to
+preview or build a look, and the brain validates what they pass on. Nothing
+else here changes anything, and a middleware refuses any other non-GET request.
+What lives solely in the brain's memory comes from the brain's own
+GET /api/status, and a failure to reach it is shown, not hidden.
 
 Run: python -m status_page.app   (from the repo root; see deploy/systemd/deskmate-status.service)
 """
@@ -14,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
 import sqlite3
 import time
@@ -21,11 +26,24 @@ from pathlib import Path
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 
 from brain.appearance.models import animation_matrix
+from brain.appearance.viewer_files import (
+    accessory_file,
+    body_animations,
+    body_file,
+    library_file,
+    outfit_file,
+)
 from brain.config import Settings, get_settings
 
 logger = logging.getLogger("deskmate.status")
@@ -38,11 +56,73 @@ LOG_BACKLOG_LINES = 200
 # cheap 304) on every load, so an edited script or stylesheet is never stale.
 NO_CACHE = {"Cache-Control": "no-cache"}
 
-app = FastAPI(title="Deskmate status", docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(
+    title="Deskmate Admin", docs_url=None, redoc_url=None, openapi_url=None
+)
 
 
 def _settings() -> Settings:
     return get_settings()
+
+
+# Set when the app is told to stop. Uvicorn waits for every open connection before it stops, and
+# the event and log streams never end on their own, so they watch this and finish; without it a
+# restart waits for systemd's timeout and then kills the process.
+_stopping = asyncio.Event()
+
+
+async def _unless_stopping(awaitable):
+    """The awaitable's result, or None (the awaitable is cancelled) if the app is told to stop first."""
+    work = asyncio.ensure_future(awaitable)
+    stop = asyncio.ensure_future(_stopping.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {work, stop}, return_when=asyncio.FIRST_COMPLETED
+        )
+        return work.result() if work in done else None
+    finally:
+        for task in (work, stop):
+            if not task.done():
+                task.cancel()
+
+
+# The pages that write. Every route that changes anything lives under one of these,
+# and nothing else may be called with a method other than GET/HEAD (see `_only_named_writes`).
+WRITE_PREFIXES = ("/api/build/",)
+# A cross-origin page cannot set this header without a CORS preflight, which this app never answers.
+WRITE_HEADER = "x-deskmate-admin"
+MAX_WRITE_BODY = 16_384
+_PREVIEW_ID = re.compile(r"^[0-9a-f]{32}$")
+
+
+@app.middleware("http")
+async def _only_named_writes(request: Request, call_next):
+    """Refuse any method that could change something unless the path is one of the
+    writing pages' routes. A new route cannot become a write by accident."""
+    if request.method not in (
+        "GET",
+        "HEAD",
+    ) and not request.url.path.startswith(WRITE_PREFIXES):
+        return JSONResponse({"detail": "read-only"}, status_code=405)
+    return await call_next(request)
+
+
+async def _write_guard(request: Request) -> None:
+    """The checks every writing route makes: the page's own Origin (a browser always sends
+    one on a POST or DELETE from a page), the custom header a foreign page cannot add, and,
+    for a body, JSON of a small size. The Host check is the middleware below."""
+    host = request.headers.get("host", "")
+    if request.headers.get("origin", "") != f"http://{host}":
+        raise HTTPException(403, "bad origin")
+    if request.headers.get(WRITE_HEADER) != "1":
+        raise HTTPException(403, "missing header")
+    if request.method == "POST":
+        if not request.headers.get("content-type", "").startswith(
+            "application/json"
+        ):
+            raise HTTPException(415, "JSON only")
+        if int(request.headers.get("content-length") or 0) > MAX_WRITE_BODY:
+            raise HTTPException(413, "too large")
 
 
 @app.middleware("http")
@@ -52,7 +132,9 @@ async def _local_host_only(request: Request, call_next):
     rebinding; the Host header is what gives that away."""
     port = _settings().status.port
     allowed = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
-    if request.headers.get("host", "") not in allowed and _settings().status.host in ("127.0.0.1", "localhost"):
+    if request.headers.get(
+        "host", ""
+    ) not in allowed and _settings().status.host in ("127.0.0.1", "localhost"):
         return JSONResponse({"detail": "bad host"}, status_code=403)
     return await call_next(request)
 
@@ -63,7 +145,9 @@ async def _local_host_only(request: Request, call_next):
 async def _run(*args: str, timeout: float = 3.0) -> tuple[int, str]:
     try:
         proc = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
         out, _ = await asyncio.wait_for(proc.communicate(), timeout)
         return proc.returncode or 0, out.decode(errors="replace").strip()
@@ -72,11 +156,24 @@ async def _run(*args: str, timeout: float = 3.0) -> tuple[int, str]:
 
 
 async def _unit_state(unit: str) -> dict:
-    _, active = await _run("systemctl", "--user", "is-active", f"{unit}.service")
-    _, props = await _run(
-        "systemctl", "--user", "show", f"{unit}.service", "-p", "ActiveEnterTimestampMonotonic", "-p", "NRestarts", "-p", "MainPID"
+    _, active = await _run(
+        "systemctl", "--user", "is-active", f"{unit}.service"
     )
-    values = dict(line.split("=", 1) for line in props.splitlines() if "=" in line)
+    _, props = await _run(
+        "systemctl",
+        "--user",
+        "show",
+        f"{unit}.service",
+        "-p",
+        "ActiveEnterTimestampMonotonic",
+        "-p",
+        "NRestarts",
+        "-p",
+        "MainPID",
+    )
+    values = dict(
+        line.split("=", 1) for line in props.splitlines() if "=" in line
+    )
     return {
         "unit": unit,
         "active": active,
@@ -85,8 +182,22 @@ async def _unit_state(unit: str) -> dict:
     }
 
 
-async def _probe(client: httpx.AsyncClient, name: str, url: str, kind: str, enabled: bool = True) -> dict:
-    result = {"name": name, "kind": kind, "url": url, "enabled": enabled, "ok": False, "ms": None, "detail": ""}
+async def _probe(
+    client: httpx.AsyncClient,
+    name: str,
+    url: str,
+    kind: str,
+    enabled: bool = True,
+) -> dict:
+    result = {
+        "name": name,
+        "kind": kind,
+        "url": url,
+        "enabled": enabled,
+        "ok": False,
+        "ms": None,
+        "detail": "",
+    }
     if not enabled:
         result["detail"] = "disabled in config"
         return result
@@ -103,19 +214,45 @@ async def _probe(client: httpx.AsyncClient, name: str, url: str, kind: str, enab
 
 def _probe_targets(settings: Settings) -> list[tuple[str, str, str, bool]]:
     targets = [
-        ("llm: local", settings.llm.local.base_url.rstrip("/") + "/models", "llm", True),
+        (
+            "llm: local",
+            settings.llm.local.base_url.rstrip("/") + "/models",
+            "llm",
+            True,
+        ),
     ]
     classifier = settings.llm.resolved_classifier()
-    targets.append(("llm: classifier", classifier.base_url.rstrip("/") + "/models", "llm", True))
+    targets.append(
+        (
+            "llm: classifier",
+            classifier.base_url.rstrip("/") + "/models",
+            "llm",
+            True,
+        )
+    )
     for name, entry in settings.voice.tts.remote.items():
         path = getattr(entry, "capabilities_endpoint", None) or "/"
-        targets.append((f"tts: {name}", entry.base_url.rstrip("/") + path, "tts", entry.enabled))
+        targets.append(
+            (
+                f"tts: {name}",
+                entry.base_url.rstrip("/") + path,
+                "tts",
+                entry.enabled,
+            )
+        )
     return targets
 
 
 def _db_rows(settings: Settings) -> dict:
     path = settings.personality_db_path
-    out: dict = {"available": False, "interactions": [], "memories": [], "agent_state": {}, "traits": {}, "mood": {}}
+    out: dict = {
+        "available": False,
+        "interactions": [],
+        "memories": [],
+        "agent_state": {},
+        "traits": {},
+        "mood": {},
+    }
     if not path.is_file():
         return out
     try:
@@ -130,15 +267,31 @@ def _db_rows(settings: Settings) -> dict:
                     "FROM interactions i LEFT JOIN reply_raw r ON r.interaction_id = i.id "
                     "ORDER BY i.id DESC LIMIT 40"
                 )
-            except sqlite3.OperationalError:  # a database from before reply_raw existed
+            except (
+                sqlite3.OperationalError
+            ):  # a database from before reply_raw existed
                 rows = conn.execute(
                     "SELECT id, ts, role, text, provider, escalated FROM interactions ORDER BY id DESC LIMIT 40"
                 )
             out["interactions"] = [dict(r) for r in rows][::-1]
-            out["memories"] = [dict(r) for r in conn.execute("SELECT ts, note FROM memories ORDER BY id DESC LIMIT 12")]
-            out["agent_state"] = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM agent_state")}
-            out["traits"] = {r["name"]: r["value"] for r in conn.execute("SELECT name, value FROM traits")}
-            out["mood"] = {r["name"]: r["value"] for r in conn.execute("SELECT name, value FROM mood")}
+            out["memories"] = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT ts, note FROM memories ORDER BY id DESC LIMIT 12"
+                )
+            ]
+            out["agent_state"] = {
+                r["key"]: r["value"]
+                for r in conn.execute("SELECT key, value FROM agent_state")
+            }
+            out["traits"] = {
+                r["name"]: r["value"]
+                for r in conn.execute("SELECT name, value FROM traits")
+            }
+            out["mood"] = {
+                r["name"]: r["value"]
+                for r in conn.execute("SELECT name, value FROM mood")
+            }
             out["available"] = True
         finally:
             conn.close()
@@ -147,7 +300,9 @@ def _db_rows(settings: Settings) -> dict:
     return out
 
 
-BACKUP_STALE_AFTER_S = 36 * 3600.0   # the timer is daily; allow a missed night plus the random delay
+BACKUP_STALE_AFTER_S = (
+    36 * 3600.0
+)  # the timer is daily; allow a missed night plus the random delay
 
 
 async def _backup_state(settings: Settings) -> dict:
@@ -156,19 +311,34 @@ async def _backup_state(settings: Settings) -> dict:
     snapshot, because backup_state.sh moves it into place only after an
     integrity check), plus the timer's state."""
     path = settings.storage.backup_dir
-    out: dict = {"configured": bool(path), "path": path, "last_ts": None, "timer": None, "next": None}
+    out: dict = {
+        "configured": bool(path),
+        "path": path,
+        "last_ts": None,
+        "timer": None,
+        "next": None,
+    }
     if path:
         snapshot = Path(path) / "state.db"
         try:
             out["last_ts"] = snapshot.stat().st_mtime
         except OSError:
             pass
-    _, active = await _run("systemctl", "--user", "is-active", "deskmate-backup.timer")
+    _, active = await _run(
+        "systemctl", "--user", "is-active", "deskmate-backup.timer"
+    )
     out["timer"] = active
     # --timestamp=unix prints "@<epoch seconds>" (empty or "@0" when nothing is scheduled);
     # the default is a locale-formatted date that cannot be parsed reliably.
     _, shown = await _run(
-        "systemctl", "--user", "show", "deskmate-backup.timer", "--timestamp=unix", "-p", "NextElapseUSecRealtime", "--value"
+        "systemctl",
+        "--user",
+        "show",
+        "deskmate-backup.timer",
+        "--timestamp=unix",
+        "-p",
+        "NextElapseUSecRealtime",
+        "--value",
     )
     shown = shown.strip().removeprefix("@")
     if shown.isdigit() and int(shown) > 0:
@@ -182,8 +352,15 @@ async def overview() -> dict:
     settings = _settings()
     brain_base = f"http://{settings.server.host}:{settings.server.port}"
     async with httpx.AsyncClient(timeout=PROBE_TIMEOUT_S) as client:
-        units_task = asyncio.gather(*(_unit_state(u) for u in settings.status.units))
-        probes_task = asyncio.gather(*(_probe(client, *t[:3], enabled=t[3]) for t in _probe_targets(settings)))
+        units_task = asyncio.gather(
+            *(_unit_state(u) for u in settings.status.units)
+        )
+        probes_task = asyncio.gather(
+            *(
+                _probe(client, *t[:3], enabled=t[3])
+                for t in _probe_targets(settings)
+            )
+        )
 
         async def brain_get(path: str):
             try:
@@ -194,7 +371,9 @@ async def overview() -> dict:
                 return {"error": type(exc).__name__}
 
         health, status, skills = await asyncio.gather(
-            brain_get("/health"), brain_get("/api/status"), brain_get("/api/skills")
+            brain_get("/health"),
+            brain_get("/api/status"),
+            brain_get("/api/skills"),
         )
         units, probes = await asyncio.gather(units_task, probes_task)
     db = await asyncio.to_thread(_db_rows, settings)
@@ -202,7 +381,12 @@ async def overview() -> dict:
     return {
         "now": time.time(),
         "units": units,
-        "brain": {"url": brain_base, "health": health, "status": status, "skills": skills},
+        "brain": {
+            "url": brain_base,
+            "health": health,
+            "status": status,
+            "skills": skills,
+        },
         "probes": probes,
         "db": db,
         "backup": backup,
@@ -219,7 +403,13 @@ def _log_sources(settings: Settings) -> dict[str, list[str]]:
     sources: dict[str, list[str]] = {}
     for unit in settings.status.units:
         sources[unit.removeprefix("deskmate-")] = [
-            "journalctl", "--user", "-u", f"{unit}.service", "-o", "short-iso", "--no-pager",
+            "journalctl",
+            "--user",
+            "-u",
+            f"{unit}.service",
+            "-o",
+            "short-iso",
+            "--no-pager",
         ]
     for name, path in settings.status.extra_logs.items():
         sources[name] = ["tail", "-F", "-n", str(LOG_BACKLOG_LINES), path]
@@ -242,19 +432,23 @@ async def stream_logs(source: str, request: Request):
 
     async def events():
         proc = await asyncio.create_subprocess_exec(
-            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
         assert proc.stdout is not None
         try:
             while True:
                 try:
-                    raw = await asyncio.wait_for(proc.stdout.readline(), 15.0)
+                    raw = await asyncio.wait_for(
+                        _unless_stopping(proc.stdout.readline()), 15.0
+                    )
                 except TimeoutError:
                     yield b": keepalive\n\n"
                     if await request.is_disconnected():
                         break
                     continue
-                if not raw:
+                if not raw:  # the log ended, or the app is stopping
                     break
                 yield _sse(raw.decode(errors="replace").rstrip("\n"))
         finally:
@@ -262,7 +456,11 @@ async def stream_logs(source: str, request: Request):
                 proc.terminate()
                 await proc.wait()
 
-    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 # --- the brain's live event stream -------------------------------------------------
@@ -281,14 +479,29 @@ async def proxy_events(request: Request, since: int = 0):
 
     async def relay():
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, read=None)) as client:
-                async with client.stream("GET", url, params={"since": since}, headers=headers) as upstream:
-                    async for chunk in upstream.aiter_raw():
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(5.0, read=None)
+            ) as client:
+                async with client.stream(
+                    "GET", url, params={"since": since}, headers=headers
+                ) as upstream:
+                    chunks = upstream.aiter_raw().__aiter__()
+                    while True:
+                        try:
+                            chunk = await _unless_stopping(chunks.__anext__())
+                        except StopAsyncIteration:
+                            break
+                        if chunk is None:  # the app is stopping
+                            break
                         yield chunk
         except httpx.HTTPError:
             yield b"event: brain-down\ndata: {}\n\n"
 
-    return StreamingResponse(relay(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
+    return StreamingResponse(
+        relay(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 # --- looks -----------------------------------------------------------------------
@@ -311,18 +524,32 @@ def _looks(settings: Settings) -> dict:
                 "version": version,
                 "created_at": entry.get("created_at"),
                 "status": entry.get("status"),
-                "has_picture": (settings.deploy_dir / "looks" / f"look-v{version}.png").is_file(),
-                "kept": (settings.assets_dir / entry.get("glb_filename", "")).is_file(),
+                "has_picture": (
+                    settings.deploy_dir / "looks" / f"look-v{version}.png"
+                ).is_file(),
+                "kept": (
+                    settings.assets_dir / entry.get("glb_filename", "")
+                ).is_file(),
                 "base_template": spec.get("base_template"),
                 "summary": _look_summary(spec),
                 "palette": spec.get("palette"),
             }
         )
     looks.sort(key=lambda look: look["version"], reverse=True)
-    current = next((e for e in manifest.get("versions", []) if e["version"] == manifest.get("current_version")), None)
+    current = next(
+        (
+            e
+            for e in manifest.get("versions", [])
+            if e["version"] == manifest.get("current_version")
+        ),
+        None,
+    )
     return {
         "current": manifest.get("current_version"),
-        "locked": _look_locked(settings, (current or {}).get("look_spec", {}).get("base_template", "")),
+        "locked": _look_locked(
+            settings,
+            (current or {}).get("look_spec", {}).get("base_template", ""),
+        ),
         "looks": looks,
     }
 
@@ -334,9 +561,15 @@ def _look_locked(settings: Settings, base_template: str) -> bool:
     if not base_template.startswith("custom:"):
         return False
     try:
-        conn = sqlite3.connect(f"file:{settings.personality_db_path}?mode=ro", uri=True, timeout=1.0)
+        conn = sqlite3.connect(
+            f"file:{settings.personality_db_path}?mode=ro",
+            uri=True,
+            timeout=1.0,
+        )
         try:
-            row = conn.execute("SELECT value FROM agent_state WHERE key = 'look_unlocked_for'").fetchone()
+            row = conn.execute(
+                "SELECT value FROM agent_state WHERE key = 'look_unlocked_for'"
+            ).fetchone()
         finally:
             conn.close()
     except sqlite3.Error:
@@ -348,9 +581,15 @@ def _look_summary(spec: dict) -> str:
     """A short human line: template, outfit, footwear and worn accessories.
     Tolerant of missing fields, since this is display only."""
     wardrobe = spec.get("wardrobe") or {}
-    parts = [spec.get("base_template"), wardrobe.get("outfit"), wardrobe.get("footwear")]
+    parts = [
+        spec.get("base_template"),
+        wardrobe.get("outfit"),
+        wardrobe.get("footwear"),
+    ]
     parts.extend((spec.get("accessories") or {}).values())
-    return ", ".join(str(p).replace("_", " ") for p in parts if p and p != "none")
+    return ", ".join(
+        str(p).replace("_", " ") for p in parts if p and p != "none"
+    )
 
 
 @app.get("/api/looks")
@@ -376,6 +615,189 @@ async def look_picture(version: int):
     return FileResponse(path, media_type="image/png", headers=NO_CACHE)
 
 
+# --- build (the one writing page; docs/ADR_BUILD_YOUR_LOOK.md) ---------------------
+
+GLB_TYPE = "model/gltf-binary"
+BUILD_TIMEOUT_S = (
+    10.0  # a call to the brain; the build itself runs there, in the background
+)
+
+
+def _brain_base(settings: Settings) -> str:
+    return f"http://{settings.server.host}:{settings.server.port}"
+
+
+async def _brain(
+    method: str, path: str, body: dict | None = None
+) -> httpx.Response:
+    """One call to the brain, with its failure turned into an error the page can show."""
+    try:
+        async with httpx.AsyncClient(timeout=BUILD_TIMEOUT_S) as client:
+            return await client.request(
+                method, _brain_base(_settings()) + path, json=body
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            502, f"the brain is not reachable ({type(exc).__name__})"
+        ) from None
+
+
+def _relay(response: httpx.Response) -> JSONResponse:
+    """The brain's answer as it is, including its reason for a 4xx (a spec it refused)."""
+    try:
+        content = response.json()
+    except ValueError:
+        content = {"detail": response.text[:300]}
+    return JSONResponse(
+        content,
+        status_code=response.status_code,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+async def _json_body(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(400, "not JSON") from None
+    if not isinstance(body, dict):
+        raise HTTPException(400, "a JSON object is expected")
+    return body
+
+
+@app.get("/api/build/options")
+async def build_options_route() -> JSONResponse:
+    """What each body can use, from the brain (read-only there too)."""
+    return _relay(await _brain("GET", "/appearance/options"))
+
+
+def _look_spec(settings: Settings, version: int | None) -> dict | None:
+    try:
+        manifest = json.loads(
+            (settings.deploy_dir / "manifest.json").read_text()
+        )
+    except (OSError, ValueError):
+        return None
+    wanted = manifest.get("current_version") if version is None else version
+    for entry in manifest.get("versions", []):
+        if entry.get("version") == wanted:
+            return {"version": wanted, "look_spec": entry.get("look_spec")}
+    return None
+
+
+@app.get("/api/build/spec")
+async def build_spec(version: int | None = None) -> dict:
+    """The stored spec of a version (the current one by default), for Build's "start from"."""
+    found = await asyncio.to_thread(_look_spec, _settings(), version)
+    if found is None:
+        raise HTTPException(404, "no such version")
+    return found
+
+
+@app.get("/api/build/animations")
+async def build_animations(body: str) -> dict:
+    """The clips the viewer can play for a body, with the roles each fills."""
+    return await asyncio.to_thread(
+        body_animations, _settings().deploy_dir, body
+    )
+
+
+def _model_response(path: Path | None) -> FileResponse:
+    if path is None or not path.is_file():
+        raise HTTPException(404, "no such model")
+    return FileResponse(path, media_type=GLB_TYPE, headers=NO_CACHE)
+
+
+@app.get("/api/build/model/body")
+async def build_model_body(body: str) -> FileResponse:
+    """A body's .glb for the viewer. Named by id; never a path (see viewer_files)."""
+    return _model_response(
+        await asyncio.to_thread(body_file, _settings().deploy_dir, body)
+    )
+
+
+@app.get("/api/build/model/outfit")
+async def build_model_outfit(body: str, outfit: str) -> FileResponse:
+    return _model_response(
+        await asyncio.to_thread(
+            outfit_file, _settings().deploy_dir, body, outfit
+        )
+    )
+
+
+@app.get("/api/build/model/library")
+async def build_model_library(body: str, library: str) -> FileResponse:
+    return _model_response(
+        await asyncio.to_thread(
+            library_file, _settings().deploy_dir, body, library
+        )
+    )
+
+
+@app.get("/api/build/model/accessory")
+async def build_model_accessory(socket: str, item: str) -> FileResponse:
+    """An accessory that is a model file, for the viewer."""
+    return _model_response(
+        await asyncio.to_thread(
+            accessory_file, _settings().deploy_dir, socket, item
+        )
+    )
+
+
+@app.post("/api/build/preview", dependencies=[Depends(_write_guard)])
+async def build_preview_start(request: Request) -> JSONResponse:
+    """Ask the brain for a throwaway build of a spec. Nothing is published."""
+    return _relay(
+        await _brain("POST", "/appearance/preview", await _json_body(request))
+    )
+
+
+def _preview_id(preview_id: str) -> str:
+    if not _PREVIEW_ID.match(preview_id):
+        raise HTTPException(404, "no such preview")
+    return preview_id
+
+
+@app.get("/api/build/preview/{preview_id}")
+async def build_preview_status(preview_id: str) -> JSONResponse:
+    return _relay(
+        await _brain("GET", f"/appearance/preview/{_preview_id(preview_id)}")
+    )
+
+
+@app.get("/api/build/preview/{preview_id}/picture")
+async def build_preview_picture(preview_id: str) -> Response:
+    response = await _brain(
+        "GET", f"/appearance/preview/{_preview_id(preview_id)}/picture"
+    )
+    if response.status_code != 200:
+        raise HTTPException(404, "no picture for that preview")
+    return Response(
+        response.content,
+        media_type="image/png",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.delete(
+    "/api/build/preview/{preview_id}", dependencies=[Depends(_write_guard)]
+)
+async def build_preview_discard(preview_id: str) -> JSONResponse:
+    return _relay(
+        await _brain("DELETE", f"/appearance/preview/{_preview_id(preview_id)}")
+    )
+
+
+@app.post("/api/build/apply", dependencies=[Depends(_write_guard)])
+async def build_apply(request: Request) -> JSONResponse:
+    """Make a spec the companion's next look: the brain's own generate path, so it is a
+    normal new version. The brain validates the spec; the imported-look lock is not a
+    reason to refuse (the user is acting directly)."""
+    return _relay(
+        await _brain("POST", "/appearance/generate", await _json_body(request))
+    )
+
+
 # --- mood / trait history ----------------------------------------------------------
 
 MAX_POINTS_PER_SERIES = 600
@@ -389,7 +811,8 @@ def _history(settings: Settings, kind: str, hours: float) -> dict:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1.0)
         try:
             rows = conn.execute(
-                "SELECT ts, name, value FROM personality_history WHERE kind = ? AND ts >= ? ORDER BY ts", (kind, since)
+                "SELECT ts, name, value FROM personality_history WHERE kind = ? AND ts >= ? ORDER BY ts",
+                (kind, since),
             ).fetchall()
             # The newest point *before* the window anchors the left edge so a
             # quiet stretch still draws a line instead of nothing.
@@ -409,7 +832,9 @@ def _history(settings: Settings, kind: str, hours: float) -> dict:
     for name, points in series.items():
         if len(points) > MAX_POINTS_PER_SERIES:
             step = len(points) / MAX_POINTS_PER_SERIES
-            series[name] = [points[int(i * step)] for i in range(MAX_POINTS_PER_SERIES)] + [points[-1]]
+            series[name] = [
+                points[int(i * step)] for i in range(MAX_POINTS_PER_SERIES)
+            ] + [points[-1]]
     return {"kind": kind, "since": since, "now": time.time(), "series": series}
 
 
@@ -417,9 +842,9 @@ def _history(settings: Settings, kind: str, hours: float) -> dict:
 async def history(kind: str = "mood", hours: float = 24.0) -> dict:
     if kind not in ("mood", "traits"):
         raise HTTPException(400, "kind must be mood or traits")
-    return await asyncio.to_thread(_history, _settings(), kind, min(max(hours, 0.1), 24 * 30))
-
-
+    return await asyncio.to_thread(
+        _history, _settings(), kind, min(max(hours, 0.1), 24 * 30)
+    )
 
 
 class _RevalidatingStaticFiles(StaticFiles):
@@ -431,18 +856,36 @@ class _RevalidatingStaticFiles(StaticFiles):
 
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
-    return HTMLResponse((STATIC_DIR / "index.html").read_text(), headers=NO_CACHE)
+    return HTMLResponse(
+        (STATIC_DIR / "index.html").read_text(), headers=NO_CACHE
+    )
 
 
 # css/ and js/ (ES modules). Mounted last so it never shadows an /api route; the
 # Host-header middleware above covers it too.
-app.mount("/static", _RevalidatingStaticFiles(directory=STATIC_DIR), name="static")
+app.mount(
+    "/static", _RevalidatingStaticFiles(directory=STATIC_DIR), name="static"
+)
 
 
 def main() -> None:
     settings = _settings()
     logging.basicConfig(level=logging.INFO)
-    uvicorn.run(app, host=settings.status.host, port=settings.status.port, log_level="warning")
+
+    class _Server(uvicorn.Server):
+        async def shutdown(self, sockets=None) -> None:
+            _stopping.set()  # lets the open streams finish, so that uvicorn can stop at once
+            await super().shutdown(sockets=sockets)
+
+    _Server(
+        uvicorn.Config(
+            app,
+            host=settings.status.host,
+            port=settings.status.port,
+            log_level="warning",
+            timeout_graceful_shutdown=5,  # whatever is still open after this is closed
+        )
+    ).run()
 
 
 if __name__ == "__main__":
