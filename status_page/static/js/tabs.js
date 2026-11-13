@@ -10,6 +10,7 @@ export const TABS = [
   "looks",
   "animations",
   "build",
+  "settings",
   "chat",
   "logs",
 ];

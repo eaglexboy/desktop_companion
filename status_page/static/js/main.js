@@ -10,6 +10,7 @@ import { initTimeline } from "./timeline.js";
 import { initLooks } from "./looks.js";
 import { initAnimations } from "./animations.js";
 import { initBuild } from "./build.js";
+import { initSettings } from "./settings.js";
 import { initLogs } from "./logs.js";
 import { connectStream } from "./stream.js";
 
@@ -22,6 +23,7 @@ initLogs();
 initLooks();
 initAnimations();
 initBuild();
+initSettings();
 initTabs(); // after the listeners above, so the first "tab" event reaches them
 initOverview(); // starts polling; the first result fans out to every panel
 connectStream();

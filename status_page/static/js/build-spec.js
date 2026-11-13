@@ -134,7 +134,10 @@ const noAccessories = () =>
  */
 export function fitToBody(spec, body) {
   const { controls } = body;
-  /** @param {{ available: boolean, choices: string[] }} control @param {string | null | undefined} value */
+  /**
+   * @param {{ available: boolean, choices: string[] }} control
+   * @param {string | null | undefined} value
+   */
   const offered = (control, value) =>
     !!value && control.available && control.choices.includes(value);
   const accessories = noAccessories();

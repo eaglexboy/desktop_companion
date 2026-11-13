@@ -6,6 +6,7 @@ import, placement and binding.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import bpy  # pyright: ignore[reportMissingImports]
@@ -69,6 +70,7 @@ def build_socket_accessory(
     palette: dict,
     deploy_dir: Path,
     frame: dict | None = None,
+    placement: dict | None = None,
 ):
     """Discovers a pre-modeled asset under <deploy_dir>/assets/wardrobe/<socket>/<item>.glb;
     falls back to a parametric model of the named item if absent (keeps
@@ -80,7 +82,16 @@ def build_socket_accessory(
     the socket is on this body, "k": how much smaller than the procedural
     figure its head/hands are}. A model asset is placed at the location (its
     origin is the attach point) scaled by its sidecar's `scale`; a parametric
-    item is built where the procedural bodies carry it and scaled to fit."""
+    item is built where the procedural bodies carry it and scaled to fit.
+
+    `placement` is this body's own correction (`blender/model_config.placement`), layered over the
+    item's sidecar: offset added, scale multiplied, rotation (degrees) added, for either kind.
+    """
+    placement = placement or {
+        "offset": (0, 0, 0),
+        "scale": 1.0,
+        "rotation": (0, 0, 0),
+    }
     location = (
         tuple(frame["location"])
         if frame
@@ -95,13 +106,22 @@ def build_socket_accessory(
         meta = _accessory_sidecar(asset_path)
         meshes = _import_accessory_meshes(asset_path)
         tint_hair(meshes, palette.get("hairstyle", "#ffffff"), flat=True)
-        scale = _sidecar_number(meta.get("scale"), 1.0)
+        scale = _sidecar_number(meta.get("scale"), 1.0) * placement["scale"]
         if meta.get("units") == "body" and frame:
             # authored at the size of the body's own source model (a hairstyle from the same pack),
             # which the build then scales to its standard height: scale it with the body
             scale *= frame.get("body_scale", 1.0)
-        offset = mathutils.Vector(_sidecar_triple(meta.get("offset")))
-        rotation = mathutils.Euler(_sidecar_triple(meta.get("rotation")))
+        offset = mathutils.Vector(
+            _sidecar_triple(meta.get("offset"))
+        ) + mathutils.Vector(placement["offset"])
+        rotation = mathutils.Euler(
+            tuple(
+                a + math.radians(b)
+                for a, b in zip(
+                    _sidecar_triple(meta.get("rotation")), placement["rotation"]
+                )
+            )
+        )
         matrix = (
             mathutils.Matrix.Translation(mathutils.Vector(location) + offset)
             @ rotation.to_matrix().to_4x4()
@@ -116,6 +136,25 @@ def build_socket_accessory(
     built = _assemble(f"Accessory_{socket_name}_{item}", parts)
     if frame and frame.get("k", 1.0) != 1.0:
         _bake_into_world(built, _scaled_about(location, frame["k"]))
+    if (
+        placement["scale"] != 1.0
+        or any(placement["offset"])
+        or any(placement["rotation"])
+    ):
+        loc = mathutils.Vector(location)
+        _bake_into_world(
+            built,
+            mathutils.Matrix.Translation(
+                loc + mathutils.Vector(placement["offset"])
+            )
+            @ mathutils.Euler(
+                tuple(math.radians(a) for a in placement["rotation"])
+            )
+            .to_matrix()
+            .to_4x4()
+            @ mathutils.Matrix.Scale(placement["scale"], 4)
+            @ mathutils.Matrix.Translation(-loc),
+        )
     return [built]
 
 

@@ -21,6 +21,7 @@ def _deploy(root: Path) -> Path:
         "assets/custom_templates/hero.glb": b"glb-hero",
         "assets/custom_templates/hero.caps.json": b"{}",
         "assets/custom_templates/hero.rig.json": b'{"retargeted": true}',
+        "assets/custom_templates/hero.config.json": b'{"format": 1, "pose": {"face_yaw": 90}}',
         "assets/custom_templates/hero.credits.json": json.dumps(
             {
                 "title": "Hero",
@@ -62,14 +63,18 @@ def _rebuild(source: Path, target: Path, edit) -> None:
     """Copies a bundle, letting `edit(name, data, manifest)` change members and the manifest."""
     with zipfile.ZipFile(source) as src, zipfile.ZipFile(target, "w") as out:
         manifest = json.loads(src.read(bundle.MANIFEST))
-        members = {n: src.read(n) for n in src.namelist() if n != bundle.MANIFEST}
+        members = {
+            n: src.read(n) for n in src.namelist() if n != bundle.MANIFEST
+        }
         members = edit(members, manifest) or members
         for name, data in members.items():
             out.writestr(name, data)
         out.writestr(bundle.MANIFEST, json.dumps(manifest))
 
 
-def test_a_bundle_holds_the_models_and_their_sidecars_and_nothing_else(tmp_path):
+def test_a_bundle_holds_the_models_and_their_sidecars_and_nothing_else(
+    tmp_path,
+):
     deploy = _deploy(tmp_path / "deploy")
     report = bundle.export_bundle(deploy, tmp_path / "models.zip")
 
@@ -78,6 +83,7 @@ def test_a_bundle_holds_the_models_and_their_sidecars_and_nothing_else(tmp_path)
         "assets/base_templates/standard_humanoid_female.glb",
         "assets/custom_templates/hero.credits.json",
         "assets/custom_templates/hero.rig.json",
+        "assets/custom_templates/hero.config.json",  # the model's settings travel with it
         "assets/outfit_models/standard_humanoid_female/ranger.glb",
         "assets/wardrobe/socket_head_top/crown.json",
         "assets/animation_library/Pack.glb",
@@ -90,19 +96,27 @@ def test_a_bundle_holds_the_models_and_their_sidecars_and_nothing_else(tmp_path)
         or n in ("state.db", "manifest.json", "assets/look-v1.glb")
         for n in names
     )
-    assert "assets/custom_templates/held.hold" not in names  # state, not a model
+    assert (
+        "assets/custom_templates/held.hold" not in names
+    )  # state, not a model
     assert "assets/custom_templates/held.hold (state, not a model)" in " ".join(
         report.skipped
     ) or any("held.hold" in s for s in report.skipped)
-    assert report.models["bodies"] == ["held", "hero"] and report.models["outfits"] == [
-        "standard_humanoid_female/ranger"
-    ]
+    assert report.models["bodies"] == ["held", "hero"] and report.models[
+        "outfits"
+    ] == ["standard_humanoid_female/ranger"]
     with zipfile.ZipFile(tmp_path / "models.zip") as z:
         manifest = json.loads(z.read(bundle.MANIFEST))
         credits = z.read(bundle.CREDITS).decode()
-    assert manifest["format"] == bundle.FORMAT and manifest["derived_included"] is True
+    assert (
+        manifest["format"] == bundle.FORMAT
+        and manifest["derived_included"] is True
+    )
     entry = manifest["files"]["assets/custom_templates/hero.glb"]
-    assert entry == {"sha256": hashlib.sha256(b"glb-hero").hexdigest(), "size": 8}
+    assert entry == {
+        "sha256": hashlib.sha256(b"glb-hero").hexdigest(),
+        "size": 8,
+    }
     assert "Hero by Someone" in credits and "non-commercial use only" in credits
 
 
@@ -115,7 +129,9 @@ def test_the_derived_libraries_can_be_left_out(tmp_path):
     )
     fresh = tmp_path / "fresh"
     report = bundle.import_bundle(tmp_path / "slim.zip", fresh)
-    assert report.derived_missing == ["hero"]  # the converted body has none: it says so
+    assert report.derived_missing == [
+        "hero"
+    ]  # the converted body has none: it says so
 
 
 def test_a_bundle_imported_into_an_empty_install_gives_the_same_files(tmp_path):
@@ -128,7 +144,7 @@ def test_a_bundle_imported_into_an_empty_install_gives_the_same_files(tmp_path):
     assert (
         report.conflicts == []
         and report.derived_missing == []
-        and len(report.added) == 12
+        and len(report.added) == 13
     )
     for name in report.manifest["files"]:
         assert (fresh / name).read_bytes() == (deploy / name).read_bytes()
@@ -140,7 +156,7 @@ def test_a_bundle_imported_into_an_empty_install_gives_the_same_files(tmp_path):
     )  # what the licences ask is told on import
     again = bundle.import_bundle(tmp_path / "models.zip", fresh)
     assert (
-        again.added == [] and len(again.unchanged) == 12
+        again.added == [] and len(again.unchanged) == 13
     )  # a second import changes nothing
 
 
@@ -149,7 +165,9 @@ def test_a_model_already_there_is_kept_unless_told_to_replace_it(tmp_path):
     bundle.export_bundle(deploy, tmp_path / "models.zip")
     fresh = tmp_path / "fresh"
     (fresh / "assets" / "custom_templates").mkdir(parents=True)
-    (fresh / "assets" / "custom_templates" / "hero.glb").write_bytes(b"my own hero")
+    (fresh / "assets" / "custom_templates" / "hero.glb").write_bytes(
+        b"my own hero"
+    )
 
     kept = bundle.import_bundle(tmp_path / "models.zip", fresh)
     assert kept.conflicts == ["assets/custom_templates/hero.glb"]
@@ -157,7 +175,9 @@ def test_a_model_already_there_is_kept_unless_told_to_replace_it(tmp_path):
         fresh / "assets" / "custom_templates" / "hero.glb"
     ).read_bytes() == b"my own hero"
 
-    replaced = bundle.import_bundle(tmp_path / "models.zip", fresh, replace=True)
+    replaced = bundle.import_bundle(
+        tmp_path / "models.zip", fresh, replace=True
+    )
     assert (
         replaced.replaced == ["assets/custom_templates/hero.glb"]
         and replaced.conflicts == []
@@ -184,7 +204,7 @@ def test_a_dry_run_checks_the_bundle_and_writes_nothing(tmp_path):
     bundle.export_bundle(deploy, tmp_path / "models.zip")
     fresh = tmp_path / "fresh"
     report = bundle.import_bundle(tmp_path / "models.zip", fresh, dry_run=True)
-    assert len(report.added) == 12 and not fresh.exists()
+    assert len(report.added) == 13 and not fresh.exists()
 
 
 def test_names_windows_cannot_keep_stop_an_export(tmp_path):
@@ -202,7 +222,9 @@ def test_names_windows_cannot_keep_stop_an_export(tmp_path):
         bundle.export_bundle(deploy, tmp_path / "b.zip")
     (deploy / "assets" / "custom_templates" / "HERO.glb").unlink()
 
-    (deploy / "assets" / "custom_templates" / ("x" * 160 + ".glb")).write_bytes(b"x")
+    (deploy / "assets" / "custom_templates" / ("x" * 160 + ".glb")).write_bytes(
+        b"x"
+    )
     with pytest.raises(bundle.BundleError, match="too long"):
         bundle.export_bundle(deploy, tmp_path / "c.zip")
 
@@ -221,7 +243,9 @@ def test_a_changed_catalog_is_reported_not_exported(tmp_path):
     seed = tmp_path / "seed"
     seed.mkdir()
     (seed / "templates_catalog.json").write_text('{"different": 1}')
-    report = bundle.export_bundle(deploy, tmp_path / "models.zip", catalogs_seed=seed)
+    report = bundle.export_bundle(
+        deploy, tmp_path / "models.zip", catalogs_seed=seed
+    )
     assert any("templates_catalog.json differs" in w for w in report.warnings)
 
 
@@ -233,7 +257,9 @@ def _bundle(tmp_path: Path) -> Path:
     return tmp_path / "good.zip"
 
 
-def test_a_file_that_was_altered_is_found_by_its_hash_and_nothing_is_written(tmp_path):
+def test_a_file_that_was_altered_is_found_by_its_hash_and_nothing_is_written(
+    tmp_path,
+):
     good = _bundle(tmp_path)
     _rebuild(
         good,
@@ -248,7 +274,9 @@ def test_a_file_that_was_altered_is_found_by_its_hash_and_nothing_is_written(tmp
         bundle.import_bundle(tmp_path / "bad.zip", fresh)
     assert not list(fresh.rglob("*.glb"))  # not even the files before it
     with pytest.raises(bundle.BundleError, match="do not match the hash"):
-        bundle.import_bundle(tmp_path / "bad.zip", tmp_path / "other", dry_run=True)
+        bundle.import_bundle(
+            tmp_path / "bad.zip", tmp_path / "other", dry_run=True
+        )
 
 
 @pytest.mark.parametrize(
@@ -302,7 +330,9 @@ def test_a_file_the_manifest_lists_but_the_bundle_lacks_is_refused(tmp_path):
         good,
         tmp_path / "short.zip",
         lambda members, manifest: {
-            k: v for k, v in members.items() if k != "assets/custom_templates/hero.glb"
+            k: v
+            for k, v in members.items()
+            if k != "assets/custom_templates/hero.glb"
         },
     )
     with pytest.raises(bundle.BundleError, match="not in the bundle"):
@@ -329,7 +359,9 @@ def test_a_bundle_of_a_newer_format_or_no_bundle_at_all_is_refused(tmp_path):
         bundle.import_bundle(tmp_path / "junk.zip", tmp_path / "fresh")
 
 
-def test_a_bundle_that_unpacks_to_far_too_much_is_refused(tmp_path, monkeypatch):
+def test_a_bundle_that_unpacks_to_far_too_much_is_refused(
+    tmp_path, monkeypatch
+):
     good = _bundle(tmp_path)
     monkeypatch.setattr(bundle, "MAX_UNPACKED_BYTES", 10)
     with pytest.raises(bundle.BundleError, match="GB allowed"):
@@ -397,7 +429,9 @@ def test_an_install_with_no_looks_starts_with_the_look_a_bundle_carries_as_versi
     from brain.appearance.manifest import load_manifest
 
     deploy = _with_looks(_deploy(tmp_path / "deploy"))
-    report = bundle.export_bundle(deploy, tmp_path / "models.zip", include_look=True)
+    report = bundle.export_bundle(
+        deploy, tmp_path / "models.zip", include_look=True
+    )
     assert report.look == 2
     fresh = tmp_path / "fresh"
 
@@ -426,7 +460,9 @@ def test_an_install_with_no_looks_starts_with_the_look_a_bundle_carries_as_versi
     assert (
         fresh / "assets" / "look-v1.glb"
     ).read_bytes() == b"look two"  # where a publish puts it, in both places
-    assert (fresh / "data" / "current" / "look-v1.glb").read_bytes() == b"look two"
+    assert (
+        fresh / "data" / "current" / "look-v1.glb"
+    ).read_bytes() == b"look two"
     assert (fresh / "looks" / "look-v1.png").read_bytes() == b"picture"
     assert not (
         fresh / "look"
@@ -434,7 +470,7 @@ def test_an_install_with_no_looks_starts_with_the_look_a_bundle_carries_as_versi
     assert (
         fresh / "assets" / "custom_templates" / "hero.glb"
     ).read_bytes() == b"glb-hero"  # and the models it needs are there
-    assert len(imported.added) == 12  # the look is not counted as a model
+    assert len(imported.added) == 13  # the look is not counted as a model
 
 
 def test_an_install_that_already_has_looks_is_left_alone(tmp_path):
@@ -446,12 +482,15 @@ def test_an_install_that_already_has_looks_is_left_alone(tmp_path):
     imported = bundle.import_bundle(tmp_path / "models.zip", other)
 
     assert (
-        "not used" in imported.look and (other / "manifest.json").read_bytes() == before
+        "not used" in imported.look
+        and (other / "manifest.json").read_bytes() == before
     )
     assert not (other / "data").exists()
 
 
-def test_a_dry_run_says_what_would_happen_to_the_look_and_writes_nothing(tmp_path):
+def test_a_dry_run_says_what_would_happen_to_the_look_and_writes_nothing(
+    tmp_path,
+):
     deploy = _with_looks(_deploy(tmp_path / "deploy"))
     bundle.export_bundle(deploy, tmp_path / "models.zip", include_look=True)
     fresh = tmp_path / "fresh"
@@ -462,13 +501,18 @@ def test_a_dry_run_says_what_would_happen_to_the_look_and_writes_nothing(tmp_pat
 def test_a_bundle_without_a_look_has_none_to_set_up(tmp_path):
     deploy = _with_looks(_deploy(tmp_path / "deploy"))
     bundle.export_bundle(deploy, tmp_path / "models.zip")
-    assert bundle.import_bundle(tmp_path / "models.zip", tmp_path / "fresh").look == ""
+    assert (
+        bundle.import_bundle(tmp_path / "models.zip", tmp_path / "fresh").look
+        == ""
+    )
     assert not (tmp_path / "fresh" / "manifest.json").exists()
 
 
 def test_a_look_that_cannot_be_carried_stops_the_export(tmp_path):
     deploy = _deploy(tmp_path / "deploy")
-    (deploy / "manifest.json").unlink()  # (the fixture's stands for a state file)
+    (
+        deploy / "manifest.json"
+    ).unlink()  # (the fixture's stands for a state file)
     with pytest.raises(bundle.BundleError, match="no looks yet"):
         bundle.export_bundle(deploy, tmp_path / "a.zip", include_look=True)
     _with_looks(deploy)
@@ -501,7 +545,9 @@ def test_a_look_whose_file_is_not_the_one_its_record_describes_is_refused_and_no
 
     _rebuild(tmp_path / "models.zip", tmp_path / "swapped.zip", swap)
     fresh = tmp_path / "fresh"
-    with pytest.raises(bundle.BundleError, match="not the one its record describes"):
+    with pytest.raises(
+        bundle.BundleError, match="not the one its record describes"
+    ):
         bundle.import_bundle(tmp_path / "swapped.zip", fresh)
     assert not fresh.exists()
 

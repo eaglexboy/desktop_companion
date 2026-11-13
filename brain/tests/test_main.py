@@ -1219,3 +1219,395 @@ def test_preview_runs_without_publishing_and_serves_its_picture(
     assert c.get(f"/appearance/preview/{preview_id}").status_code == 404
     assert c.get(f"/appearance/preview/{preview_id}/picture").status_code == 404
     assert c.delete(f"/appearance/preview/{preview_id}").status_code == 404
+
+
+# --- Model settings (docs/ADR_MODEL_SETTINGS_PAGE.md) ---------------------------------------------
+
+
+def _install_toy(state, name: str = "toy") -> Path:
+    folder = state.settings.deploy_dir / "assets" / "custom_templates"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{name}.glb").write_bytes(b"glTF")
+    return folder / f"{name}.glb"
+
+
+def test_model_settings_list_describe_save_and_remove(client):
+    c, state = client
+    model = _install_toy(state)
+    (model.parent / "held.glb").write_bytes(b"glTF")
+    (model.parent / "held.hold").write_text("licence unchecked\n")
+
+    listed = {
+        m["id"]: m
+        for m in c.get("/appearance/model-settings/models").json()["models"]
+    }
+    assert (
+        listed["custom:toy"]["held"] is None
+        and listed["custom:held"]["held"] == "licence unchecked"
+    )
+
+    info = c.get(
+        "/appearance/model-settings", params={"body": "custom:toy"}
+    ).json()
+    assert (
+        info["settings"] == {"format": 1}
+        and info["choices"]["has_rig"] is False
+    )
+    assert "socket_neck" in info["choices"]["sockets"]
+
+    doc = {
+        "format": 1,
+        "accessories": {"sockets": {"socket_neck": False}},
+        "pose": {"face_yaw": 90},
+    }
+    assert c.post(
+        "/appearance/model-settings/validate",
+        json={"body": "custom:toy", "settings": doc},
+    ).json()["ok"]
+    assert (
+        c.put(
+            "/appearance/model-settings",
+            json={"body": "custom:toy", "settings": doc},
+        ).status_code
+        == 200
+    )
+    saved = json.loads((model.parent / "toy.config.json").read_text())
+    assert saved == doc
+    again = c.get(
+        "/appearance/model-settings", params={"body": "custom:toy"}
+    ).json()
+    assert again["settings"] == doc and again["stale"] == []
+    assert listed["custom:toy"]["customised"] is False
+    after = {
+        m["id"]: m
+        for m in c.get("/appearance/model-settings/models").json()["models"]
+    }
+    assert after["custom:toy"]["customised"] is True
+
+    bad = c.put(
+        "/appearance/model-settings",
+        json={
+            "body": "custom:toy",
+            "settings": {"format": 1, "pose": {"arm_spread": 99}},
+        },
+    )
+    assert bad.status_code == 422 and bad.json()["detail"]["errors"]
+    assert (
+        json.loads((model.parent / "toy.config.json").read_text()) == doc
+    )  # unchanged
+
+    # a stale entry is shown, then removed
+    stale = {
+        "format": 1,
+        "animations": {"clips": {"Gone": False}},
+        "pose": {"face_yaw": 90},
+    }
+    (model.parent / "toy.config.json").write_text(json.dumps(stale))
+    stale["accessories"] = {"sockets": {"socket_nowhere": False}}
+    (model.parent / "toy.config.json").write_text(json.dumps(stale))
+    shown = c.get(
+        "/appearance/model-settings", params={"body": "custom:toy"}
+    ).json()
+    assert any("socket_nowhere" in s for s in shown["stale"])
+    assert (
+        c.delete(
+            "/appearance/model-settings/stale", params={"body": "custom:toy"}
+        ).status_code
+        == 200
+    )
+    cleaned = json.loads((model.parent / "toy.config.json").read_text())
+    assert not cleaned.get("accessories", {}).get("sockets")
+    assert cleaned["pose"] == {"face_yaw": 90}
+
+
+def test_model_settings_refuse_ids_that_are_not_installed_bodies(client):
+    c, _state = client
+    for body in (
+        "custom:missing",
+        "../etc/passwd",
+        "custom:../x",
+        "primitive_blob",
+        "",
+    ):
+        assert (
+            c.get(
+                "/appearance/model-settings", params={"body": body}
+            ).status_code
+            == 422
+        ), body
+        assert (
+            c.put(
+                "/appearance/model-settings",
+                json={"body": body, "settings": {"format": 1}},
+            ).status_code
+            == 422
+        ), body
+
+
+def test_model_settings_hold_credits_and_face(client):
+    c, state = client
+    model = _install_toy(state)
+    assert (
+        c.put(
+            "/appearance/model-settings/hold",
+            json={"body": "custom:toy", "reason": "check licence"},
+        ).status_code
+        == 200
+    )
+    assert (model.parent / "toy.hold").read_text().strip() == "check licence"
+    assert (
+        c.put(
+            "/appearance/model-settings/hold", json={"body": "custom:toy"}
+        ).status_code
+        == 200
+    )
+    assert not (model.parent / "toy.hold").exists()
+    assert (
+        c.put(
+            "/appearance/model-settings/hold",
+            json={"body": "custom:toy", "reason": "a\nb"},
+        ).status_code
+        == 422
+    )
+
+    done = c.put(
+        "/appearance/model-settings/credits",
+        json={
+            "body": "custom:toy",
+            "credits": {
+                "title": "Toy",
+                "author": "A",
+                "license": "CC-BY-NC-4.0",
+            },
+        },
+    )
+    assert done.json()["credits"]["title"] == "Toy"
+    info = c.get(
+        "/appearance/model-settings", params={"body": "custom:toy"}
+    ).json()
+    assert info["licence_asks"] == [
+        "credit the author",
+        "non-commercial use only",
+    ]
+    assert (
+        c.put(
+            "/appearance/model-settings/credits",
+            json={"body": "custom:toy", "credits": {"title": 3}},
+        ).status_code
+        == 422
+    )
+
+    assert (
+        c.put(
+            "/appearance/model-settings/face",
+            json={"body": "custom:toy", "face": {"mouth": {"x": 0.5}}},
+        ).status_code
+        == 422
+    )  # none to edit
+    (model.parent / "toy.face.json").write_text(
+        json.dumps(
+            {
+                "eye_l": {"x": 0.4, "z": 0.8, "w": 0.1, "h": 0.1},
+                "eye_r": {"x": 0.6, "z": 0.8, "w": 0.1, "h": 0.1},
+                "mouth": {"x": 0.5, "z": 0.7, "w": 0.2, "h": 0.05},
+                "oval": True,
+            }
+        )
+    )
+    ok = c.put(
+        "/appearance/model-settings/face",
+        json={"body": "custom:toy", "face": {"mouth": {"z": 0.65}}},
+    ).json()["face"]
+    assert (
+        ok["mouth"]["z"] == 0.65
+        and ok["mouth"]["x"] == 0.5
+        and ok["oval"] is True
+    )
+    assert (
+        c.put(
+            "/appearance/model-settings/face",
+            json={"body": "custom:toy", "face": {"mouth": {"z": 3}}},
+        ).status_code
+        == 422
+    )
+    assert (
+        c.put(
+            "/appearance/model-settings/face",
+            json={"body": "custom:toy", "face": {"nose": {"x": 0.1}}},
+        ).status_code
+        == 422
+    )
+
+
+def test_the_alignment_sheet_builds_with_unsaved_settings_and_saves_nothing(
+    client, monkeypatch
+):
+    from brain.appearance import blender_gen
+    from brain.appearance import preview as preview_mod
+
+    c, state = client
+    model = _install_toy(state)
+    seen: dict = {}
+
+    async def run_blender(
+        settings, spec_path, out_glb, build_dir, settings_override=None
+    ):
+        seen["spec"] = json.loads(spec_path.read_text())
+        seen["override"] = (
+            json.loads(settings_override.read_text())
+            if settings_override
+            else None
+        )
+        out_glb.write_bytes(b"glTF")
+        return {"status": "ok"}
+
+    async def render(settings, glb, target, label):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"\x89PNG")
+        return target
+
+    monkeypatch.setattr(blender_gen, "_run_blender", run_blender)
+    monkeypatch.setattr(
+        blender_gen, "_verify_build_output", lambda *a, **k: None
+    )
+    monkeypatch.setattr(preview_mod, "render_picture", render)
+
+    doc = {
+        "format": 1,
+        "accessories": {
+            "placement": {"socket_waist": {"pouch": {"scale": 0.5}}}
+        },
+    }
+    started = c.post(
+        "/appearance/model-settings/alignment",
+        json={"body": "custom:toy", "settings": doc},
+    )
+    assert started.status_code == 202
+    info: dict = {}
+    for _ in range(200):
+        info = c.get(f"/appearance/preview/{started.json()['id']}").json()
+        if info["state"] in ("ready", "failed"):
+            break
+        time.sleep(0.01)
+    assert info["state"] == "ready"
+    assert seen["override"] == doc
+    assert (
+        seen["spec"]["accessories"]["socket_waist"] == "pouch"
+    )  # the placed item is the one shown
+    assert len([v for v in seen["spec"]["accessories"].values() if v]) >= 6
+    assert not (model.parent / "toy.config.json").exists()
+    assert not (state.settings.deploy_dir / "manifest.json").exists()
+
+    bad = c.post(
+        "/appearance/model-settings/alignment",
+        json={
+            "body": "custom:toy",
+            "settings": {"format": 1, "pose": {"arm_spread": 99}},
+        },
+    )
+    assert bad.status_code == 422
+
+
+def test_rebuild_is_offered_only_for_the_model_the_current_look_is_on(
+    client, monkeypatch
+):
+    c, state = client
+    _install_toy(state)
+    assert (
+        c.post(
+            "/appearance/model-settings/rebuild", json={"body": "custom:toy"}
+        ).status_code
+        == 422
+    )  # no look yet
+    scheduled = []
+    monkeypatch.setattr(
+        state.evolution, "schedule_generate_from_full_spec", scheduled.append
+    )
+    spec = _valid_look_spec_payload() | {"base_template": "custom:toy"}
+    build_json = {
+        "glb_filename": "look-v1.glb",
+        "sha256": "a" * 64,
+        "created_at": 1.0,
+        "status": "ok",
+        "seed": 42,
+        "evaluated_triangles": 100,
+        "size_bytes": 20,
+        "has_face": True,
+        "speech_indicator_mode": "viseme_shapekeys",
+        "capabilities": {
+            "has_head": True,
+            "has_arms": False,
+            "has_legs": False,
+            "has_face": True,
+        },
+        "viseme_shape_keys": [],
+        "animation_clips": [],
+        "bounds": {"height_m": 1, "width_m": 1, "depth_m": 1},
+        "warnings": [],
+    }
+    save_manifest(
+        state.settings.deploy_dir, append_version(None, build_json, spec)
+    )
+    done = c.post(
+        "/appearance/model-settings/rebuild", json={"body": "custom:toy"}
+    )
+    assert (
+        done.status_code == 202
+        and scheduled
+        and scheduled[0].base_template == "custom:toy"
+    )
+    _install_toy(state, "other")
+    assert (
+        c.post(
+            "/appearance/model-settings/rebuild", json={"body": "custom:other"}
+        ).status_code
+        == 422
+    )
+
+
+def test_the_alignment_sheet_can_render_chosen_items_only(client):
+    from brain.appearance import model_settings
+
+    c, state = client
+    _install_toy(state)
+    deploy = state.settings.deploy_dir
+
+    everything = model_settings.alignment_spec(
+        deploy, "custom:toy", {"format": 1}
+    )
+    worn = {k: v for k, v in everything.accessories.model_dump().items() if v}
+    assert len(worn) >= 6
+
+    only = model_settings.alignment_spec(
+        deploy,
+        "custom:toy",
+        {"format": 1},
+        {socket: None for socket in worn if socket != "socket_waist"},
+    )
+    assert {k: v for k, v in only.accessories.model_dump().items() if v} == {
+        "socket_waist": worn["socket_waist"]
+    }
+
+    # an unmentioned socket keeps its default; an unknown socket or item is refused
+    kept = model_settings.alignment_spec(
+        deploy, "custom:toy", {"format": 1}, {"socket_waist": None}
+    )
+    assert (
+        kept.accessories.socket_waist is None
+        and kept.accessories.socket_neck == worn.get("socket_neck")
+    )
+    for bad in ({"socket_nowhere": None}, {"socket_waist": "no-such-item"}):
+        with pytest.raises(model_settings.SettingsError):
+            model_settings.alignment_spec(
+                deploy, "custom:toy", {"format": 1}, bad
+            )
+
+    refused = c.post(
+        "/appearance/model-settings/alignment",
+        json={
+            "body": "custom:toy",
+            "settings": {"format": 1},
+            "items": {"socket_waist": "no-such-item"},
+        },
+    )
+    assert refused.status_code == 422

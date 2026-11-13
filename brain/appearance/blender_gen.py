@@ -46,7 +46,9 @@ from brain.config import Settings
 
 logger = logging.getLogger("deskmate.appearance")
 
-GENERATOR_SCRIPT = Path(__file__).resolve().parents[2] / "blender" / "generator.py"
+GENERATOR_SCRIPT = (
+    Path(__file__).resolve().parents[2] / "blender" / "generator.py"
+)
 BUILD_TIMEOUT_S = 160.0
 GLTF_MAGIC = b"glTF"
 
@@ -75,7 +77,9 @@ class CompileResult:
     outcome: Literal["published", "staged"]
     version: int
     glb_path: Path
-    manifest: AssetManifest | None  # None when staged -- manifest.json is untouched
+    manifest: (
+        AssetManifest | None
+    )  # None when staged -- manifest.json is untouched
 
 
 def _clean_blender_env() -> dict[str, str]:
@@ -106,7 +110,11 @@ def _discard_scratch(build_dir: Path) -> None:
 
 
 async def _run_blender(
-    settings: Settings, spec_path: Path, out_glb: Path, build_dir: Path
+    settings: Settings,
+    spec_path: Path,
+    out_glb: Path,
+    build_dir: Path,
+    settings_override: Path | None = None,
 ) -> dict:
     """Runs blender headless, enforces the 160s timeout (SIGKILL + scratch
     discard on expiry), and parses the DESKMATE_BUILD_OK/FAIL stdout
@@ -126,6 +134,10 @@ async def _run_blender(
         "--deploy-dir",
         str(settings.deploy_dir),
     ]
+    if (
+        settings_override is not None
+    ):  # a model's settings that are not saved (a preview only)
+        args += ["--settings-override", str(settings_override)]
     logger.info("running blender headless: %s", " ".join(args))
     proc = await asyncio.create_subprocess_exec(
         *args,
@@ -181,7 +193,9 @@ async def _run_blender(
     return build_json
 
 
-def _verify_build_output(out_glb: Path, build_json: dict, has_face: bool) -> None:
+def _verify_build_output(
+    out_glb: Path, build_json: dict, has_face: bool
+) -> None:
     """Ground-truth verification: glTF binary magic bytes, all 9 canonical
     viseme shape keys if has_face, and the core clips (idle_*, move, think)."""
     if not out_glb.is_file():
@@ -203,9 +217,13 @@ def _verify_build_output(out_glb: Path, build_json: dict, has_face: bool) -> Non
                 f"build.json is missing viseme shape keys: {sorted(missing)}"
             )
 
-    clip_names = {clip["name"] for clip in build_json.get("animation_clips", [])}
+    clip_names = {
+        clip["name"] for clip in build_json.get("animation_clips", [])
+    }
     if not any(name.startswith("idle_") for name in clip_names):
-        raise GenerationError(f"build.json has no idle_* clips: {sorted(clip_names)}")
+        raise GenerationError(
+            f"build.json has no idle_* clips: {sorted(clip_names)}"
+        )
     for required in ("move", "think"):
         if required not in clip_names:
             raise GenerationError(
@@ -252,7 +270,9 @@ def _prune_old_versions(settings: Settings, manifest: AssetManifest) -> None:
     confirm it actually swapped to the new asset first -- a simpler policy
     than gating pruning on that round-trip."""
     keep = settings.appearance.keep_recent_versions
-    sorted_versions = sorted((v.version for v in manifest.versions), reverse=True)
+    sorted_versions = sorted(
+        (v.version for v in manifest.versions), reverse=True
+    )
     for old_version in sorted_versions[keep:]:
         for directory in (settings.assets_dir, settings.current_dir):
             (directory / _glb_filename(old_version)).unlink(missing_ok=True)
@@ -272,7 +292,9 @@ def _stage_version(
     filename = _glb_filename(version)
     atomic_write(settings.staged_dir / filename, out_glb.read_bytes())
     meta = {"build_json": build_json, "look_spec": look_spec_dict}
-    atomic_write(settings.staged_dir / f"look-v{version}.meta.json", json.dumps(meta))
+    atomic_write(
+        settings.staged_dir / f"look-v{version}.meta.json", json.dumps(meta)
+    )
     return CompileResult(
         outcome="staged",
         version=version,
@@ -298,7 +320,9 @@ async def compile_and_publish(
         if on_status:
             on_status("rebuilding")
         settings.ensure_dirs()
-        build_dir = settings.blender_build_dir / f"look-{int(time.time() * 1000)}"
+        build_dir = (
+            settings.blender_build_dir / f"look-{int(time.time() * 1000)}"
+        )
         build_dir.mkdir(parents=True, exist_ok=True)
         spec_path = build_dir / "spec.json"
         look_spec_dict = look_spec.model_dump(mode="json")
@@ -306,11 +330,15 @@ async def compile_and_publish(
         out_glb = build_dir / "look.glb"
 
         try:
-            build_json = await _run_blender(settings, spec_path, out_glb, build_dir)
+            build_json = await _run_blender(
+                settings, spec_path, out_glb, build_dir
+            )
             # the build's own has_face is authoritative: an imported model without
             # visemes is built faceless even if the spec asked for a face
             _verify_build_output(
-                out_glb, build_json, build_json.get("has_face", look_spec.has_face)
+                out_glb,
+                build_json,
+                build_json.get("has_face", look_spec.has_face),
             )
 
             moved = hoist_skinned_meshes(out_glb)
@@ -323,7 +351,11 @@ async def compile_and_publish(
             existing_manifest = load_manifest(settings.deploy_dir)
             if is_user_present():
                 result = _publish_version(
-                    settings, out_glb, build_json, look_spec_dict, existing_manifest
+                    settings,
+                    out_glb,
+                    build_json,
+                    look_spec_dict,
+                    existing_manifest,
                 )
             else:
                 next_version = (
@@ -366,7 +398,11 @@ def reveal_staged(settings: Settings, version: int) -> CompileResult:
     meta = json.loads(meta_path.read_text())
     existing_manifest = load_manifest(settings.deploy_dir)
     result = _publish_version(
-        settings, staged_glb, meta["build_json"], meta["look_spec"], existing_manifest
+        settings,
+        staged_glb,
+        meta["build_json"],
+        meta["look_spec"],
+        existing_manifest,
     )
     staged_glb.unlink(missing_ok=True)
     meta_path.unlink(missing_ok=True)

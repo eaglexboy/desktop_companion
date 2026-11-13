@@ -285,6 +285,81 @@ def merge_picks(plan: dict, picks: dict[str, str], source) -> dict:
     return plan
 
 
+def _fill_role(
+    plan: dict,
+    role: str,
+    chosen: list[str],
+    clips_of: dict[Path, set[str]],
+    warnings: list[str],
+) -> None:
+    """Puts `chosen` clips into `plan` as `role` (the first its own, the rest `<role>.alt<N>`), each
+    with the variants and mirrors its library has."""
+    n = 0
+    for clip in chosen:
+        source = next(
+            (p for p, names in clips_of.items() if clip in names), None
+        )
+        if source is None:
+            warnings.append(
+                f"model settings: clip '{clip}' for '{role}' is no longer available"
+            )
+            continue
+        key = role if n == 0 else f"{role}.alt{n}"
+        n += 1
+        plan[key] = (source, clip)
+        names = clips_of[source]
+        for variant, suffix in VARIANT_SUFFIXES.items():
+            if clip + suffix in names:
+                plan[f"{key}.{variant}"] = (source, clip + suffix)
+        for sub_key, (_, name) in [
+            (k, v)
+            for k, v in plan.items()
+            if k == key or k.startswith(key + ".")
+        ]:
+            if name + MIRROR_SUFFIX in names:
+                plan[f"{sub_key}.mirror"] = (source, name + MIRROR_SUFFIX)
+
+
+def plan_libraries(
+    fitting: dict[Path, set[str]],
+    animations: dict | None = None,
+    warnings: list[str] | None = None,
+) -> dict[str, tuple[Path, str]]:
+    """{key: (library file, clip)} for the libraries that fit a body (`fitting`: file -> its clips, in
+    the order they are tried). `animations` is the `animations` section of the body's settings
+    (`blender/model_config.py`): libraries and clips switched off are not offered to the roles,
+    then a role with a list of clips is filled with exactly those and a role set to null is empty.
+    Entries that name something not there are skipped with a warning; settings never fail a build.
+    """
+    animations = animations or {}
+    warnings = warnings if warnings is not None else []
+    libs_off = {
+        n for n, on in animations.get("libraries", {}).items() if on is False
+    }
+    clips_off = {
+        n for n, on in animations.get("clips", {}).items() if on is False
+    }
+    clips_of = {
+        path: {c for c in names if c not in clips_off}
+        for path, names in fitting.items()
+        if path.stem not in libs_off
+    }
+    plan: dict[str, tuple[Path, str]] = {}
+    for path, names in clips_of.items():
+        # roles with options take this library's clips as more of them; the others stay with the
+        # first library that fills them (a sit set is all from one library)
+        held = {
+            key for key in plan if key.split(".")[0] not in library_extras()
+        }
+        merge_picks(plan, pick_clips(names, held), path)
+    for role, chosen in animations.get("roles", {}).items():
+        for key in [k for k in plan if k.split(".")[0] == role]:
+            del plan[key]
+        if chosen:
+            _fill_role(plan, role, list(chosen), clips_of, warnings)
+    return plan
+
+
 def library_support(bone_names: set[str], library: Path) -> dict[str, str]:
     """What `library` gives a body with these bones: {role: clip}, empty if it does not fit."""
     try:

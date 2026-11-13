@@ -1,6 +1,6 @@
 # Architecture Decision Record: Per-Model Settings Page
 
-* **Status:** Proposed. **Not implemented.**
+* **Status:** Accepted. **Implemented**, except what is listed under *Not done* at the end of section 5.
 * **Date:** 2026-11-11
 * **Deciders:** Architecture & Core Engineering Team
 * **Related:** [ADR_BUILD_YOUR_LOOK.md](ADR_BUILD_YOUR_LOOK.md) (the Admin app, its writing rules and the 3D viewer this page reuses), [ADR_MODEL_IMPORT_PAGE.md](ADR_MODEL_IMPORT_PAGE.md) (the page that brings models in; this one tunes them), [ADR_ACCESSORY_MODELS.md](ADR_ACCESSORY_MODELS.md) (sidecars, animation libraries, pack profiles, roles; Quaternius is the supported source), [ADR_IMPORTED_LOOK_LOCK.md](ADR_IMPORTED_LOOK_LOCK.md), [ADR_REMOTE_MODEL_PROCESSING.md](ADR_REMOTE_MODEL_PROCESSING.md) (what a job reads), [ADR_MULTI_USER.md](ADR_MULTI_USER.md), [SPEC_BLENDER.md](SPEC_BLENDER.md), [SPEC_OVERLAY.md](SPEC_OVERLAY.md) (what each role does)
@@ -37,7 +37,7 @@ The Build page ([ADR_BUILD_YOUR_LOOK.md](ADR_BUILD_YOUR_LOOK.md)) chooses a look
       "animations": {
         "libraries": { "<library>": false },
         "clips": { "<clip>": false },
-        "roles": { "idle": ["<clip>", "<clip>"], "dance": null }
+        "roles": { "idle": ["<clip>", "<clip>"], "workout": null }
       },
       "accessories": {
         "sockets": { "socket_neck": false },
@@ -97,6 +97,8 @@ The Build page ([ADR_BUILD_YOUR_LOOK.md](ADR_BUILD_YOUR_LOOK.md)) chooses a look
 7. **Admin write routes.** The new prefix in `WRITE_PREFIXES`, the guards, tests that nothing else became writable.
 8. **The page.** The model list, the four sections, the role editor with the viewer, placement with numbers and dragging, the alignment sheet, Save, Rebuild. Rem lengths only.
 9. **Documentation.** SPEC_STATUS_PAGE, SPEC_BRAIN, SPEC_BLENDER (the file and the layering), ADR_ACCESSORY_MODELS (the file beside the other sidecars).
+
+**Not done.** Dragging a model-file accessory in the viewer (open question 5): placement is by numbers, with the item drawn live (a rotation shows only on the alignment sheet). The worker's `required_files` (step 5) does not exist yet because the worker does not; `<model>.config.json` is in the bundle like the other `.json` sidecars (a test pins it) and is removed with its body. The validator checks that libraries and clips exist, not that a library fits the rig: only fitting libraries are offered. The roles of a paired set (sleep, floor sit) can be overridden one by one, so the user keeps them in step. The Models import page does not exist yet, so Model settings is the second writing page after Build.
 
 ## 6. Open questions
 

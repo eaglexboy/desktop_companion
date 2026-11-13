@@ -13,6 +13,7 @@ at a time.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 import time
@@ -87,20 +88,36 @@ class PreviewStore:
             (p for p in self._items.values() if p.state in _ACTIVE), None
         )
 
-    def start(self, settings: Settings, spec: LookSpec) -> Preview:
+    def start(
+        self,
+        settings: Settings,
+        spec: LookSpec,
+        settings_override: dict | None = None,
+        summary: str | None = None,
+    ) -> Preview:
         """Queues a preview of `spec` (already validated against the catalogs).
-        Raises `PreviewBusy` while another is queued or running."""
+        `settings_override` is a model's settings that are not saved yet, used by this build only
+        (the Model settings page's alignment sheet). Raises `PreviewBusy` while another is queued or running.
+        """
         if self.active() is not None:
             raise PreviewBusy("a preview is already being made")
-        preview = Preview(id=uuid.uuid4().hex, summary=look_summary(spec))
+        preview = Preview(
+            id=uuid.uuid4().hex, summary=summary or look_summary(spec)
+        )
         self._items[preview.id] = preview
-        task = asyncio.create_task(self._run(settings, preview, spec))
+        task = asyncio.create_task(
+            self._run(settings, preview, spec, settings_override)
+        )
         self._tasks[preview.id] = task
         task.add_done_callback(lambda _t: self._tasks.pop(preview.id, None))
         return preview
 
     async def _run(
-        self, settings: Settings, preview: Preview, spec: LookSpec
+        self,
+        settings: Settings,
+        preview: Preview,
+        spec: LookSpec,
+        settings_override: dict | None = None,
     ) -> None:
         build_dir = settings.blender_build_dir / f"preview-{preview.id}"
         try:
@@ -111,8 +128,17 @@ class PreviewStore:
                 spec_path = build_dir / "spec.json"
                 spec_path.write_text(spec.model_dump_json())
                 out_glb = build_dir / "look.glb"
+                override_path = None
+                if settings_override is not None:
+                    override_path = build_dir / "settings-override.json"
+                    override_path.write_text(json.dumps(settings_override))
+                extra = (
+                    {"settings_override": override_path}
+                    if override_path
+                    else {}
+                )
                 build_json = await blender_gen._run_blender(
-                    settings, spec_path, out_glb, build_dir
+                    settings, spec_path, out_glb, build_dir, **extra
                 )
                 blender_gen._verify_build_output(
                     out_glb,

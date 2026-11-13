@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from brain.app_state import AppState
+from brain.appearance import model_settings
 from brain.appearance.blender_gen import is_build_running
 from brain.appearance.build_options import build_options
 from brain.appearance.manifest import load_manifest
@@ -579,6 +580,182 @@ async def appearance_options():
     Read-only; reads the deploy directory and runs nothing."""
     state = _state(app)
     return await asyncio.to_thread(build_options, state.settings.deploy_dir)
+
+
+# --- Model settings (docs/ADR_MODEL_SETTINGS_PAGE.md) -------------------------------------------
+# A body is named by id and the model_settings module turns it into files; no path comes in.
+
+
+class ModelSettingsRequest(BaseModel):
+    body: str
+    settings: dict | None = None
+    reason: str | None = None
+    credits: dict | None = None
+    face: dict | None = None
+    # alignment sheet only: socket -> the item to render there, or null for nothing
+    items: dict[str, str | None] | None = None
+
+
+def _settings_error(exc: model_settings.SettingsError) -> HTTPException:
+    return HTTPException(status_code=422, detail=str(exc))
+
+
+def _report(report) -> dict:
+    return {"errors": report.errors, "stale": report.stale, "ok": report.ok}
+
+
+@app.get("/appearance/model-settings/models")
+async def model_settings_models():
+    """The installed bodies, held ones marked, for the Model settings page's list."""
+    deploy = _state(app).settings.deploy_dir
+    return {
+        "models": await asyncio.to_thread(model_settings.list_models, deploy)
+    }
+
+
+@app.get("/appearance/model-settings")
+async def model_settings_get(body: str):
+    deploy = _state(app).settings.deploy_dir
+    try:
+        return await asyncio.to_thread(model_settings.describe, deploy, body)
+    except model_settings.SettingsError as exc:
+        raise _settings_error(exc) from None
+
+
+@app.post("/appearance/model-settings/validate")
+async def model_settings_validate(req: ModelSettingsRequest):
+    deploy = _state(app).settings.deploy_dir
+    try:
+        report = await asyncio.to_thread(
+            model_settings.validate, deploy, req.body, req.settings
+        )
+    except model_settings.SettingsError as exc:
+        raise _settings_error(exc) from None
+    return _report(report)
+
+
+@app.put("/appearance/model-settings")
+async def model_settings_save(req: ModelSettingsRequest):
+    """Validate and save a body's settings. Applies from the next build of a look on it."""
+    deploy = _state(app).settings.deploy_dir
+    try:
+        report = await asyncio.to_thread(
+            model_settings.save, deploy, req.body, req.settings
+        )
+    except model_settings.SettingsError as exc:
+        raise _settings_error(exc) from None
+    if not report.ok:
+        raise HTTPException(status_code=422, detail=_report(report))
+    return _report(report)
+
+
+@app.delete("/appearance/model-settings/stale")
+async def model_settings_remove_stale(body: str):
+    deploy = _state(app).settings.deploy_dir
+    try:
+        report = await asyncio.to_thread(
+            model_settings.remove_stale, deploy, body
+        )
+    except model_settings.SettingsError as exc:
+        raise _settings_error(exc) from None
+    if not report.ok:
+        raise HTTPException(status_code=422, detail=_report(report))
+    return _report(report)
+
+
+@app.put("/appearance/model-settings/hold")
+async def model_settings_hold(req: ModelSettingsRequest):
+    """Hold a custom model back with `reason`, or release it (no reason)."""
+    deploy = _state(app).settings.deploy_dir
+    try:
+        await asyncio.to_thread(
+            model_settings.set_availability, deploy, req.body, req.reason
+        )
+    except model_settings.SettingsError as exc:
+        raise _settings_error(exc) from None
+    return {"status": "held" if req.reason else "released"}
+
+
+@app.put("/appearance/model-settings/credits")
+async def model_settings_credits(req: ModelSettingsRequest):
+    deploy = _state(app).settings.deploy_dir
+    try:
+        saved = await asyncio.to_thread(
+            model_settings.save_credits, deploy, req.body, req.credits
+        )
+    except model_settings.SettingsError as exc:
+        raise _settings_error(exc) from None
+    return {"credits": saved}
+
+
+@app.put("/appearance/model-settings/face")
+async def model_settings_face(req: ModelSettingsRequest):
+    deploy = _state(app).settings.deploy_dir
+    try:
+        saved = await asyncio.to_thread(
+            model_settings.save_face, deploy, req.body, req.face
+        )
+    except model_settings.SettingsError as exc:
+        raise _settings_error(exc) from None
+    return {"face": saved}
+
+
+@app.post("/appearance/model-settings/alignment", status_code=202)
+async def model_settings_alignment(req: ModelSettingsRequest):
+    """A throwaway build of the body with one item in every socket it carries, using `settings`
+    (not saved), rendered to a picture. Read it with the ordinary /appearance/preview routes.
+    """
+    state = _state(app)
+    deploy = state.settings.deploy_dir
+    try:
+        spec = await asyncio.to_thread(
+            model_settings.alignment_spec,
+            deploy,
+            req.body,
+            req.settings or {},
+            req.items,
+        )
+        report = await asyncio.to_thread(
+            model_settings.validate,
+            deploy,
+            req.body,
+            req.settings or {"format": 1},
+        )
+    except model_settings.SettingsError as exc:
+        raise _settings_error(exc) from None
+    if not report.ok:
+        raise HTTPException(status_code=422, detail=_report(report))
+    try:
+        preview = state.previews.start(
+            state.settings,
+            spec,
+            settings_override=req.settings or {"format": 1},
+            summary=f"alignment sheet for {req.body}",
+        )
+    except PreviewBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    return preview.public()
+
+
+@app.post("/appearance/model-settings/rebuild", status_code=202)
+async def model_settings_rebuild(req: ModelSettingsRequest):
+    """Rebuild the current look so a saved change reaches it: the same call Apply makes, a new
+    version (docs/ADR_LOOK_HISTORY.md). Refused unless the current look is on this body.
+    """
+    state = _state(app)
+    deploy = state.settings.deploy_dir
+    try:
+        current = await asyncio.to_thread(
+            model_settings.current_look_spec, deploy, req.body
+        )
+    except model_settings.SettingsError as exc:
+        raise _settings_error(exc) from None
+    try:
+        validate_against_catalogs(current, deploy)
+    except CatalogError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    state.evolution.schedule_generate_from_full_spec(current)
+    return {"status": "building", "task": "appearance_generation"}
 
 
 @app.post("/appearance/preview", status_code=202)

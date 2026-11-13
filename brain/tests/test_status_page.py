@@ -8,6 +8,7 @@ import struct
 
 import httpx
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from brain.config import Settings
@@ -735,6 +736,22 @@ def test_the_import_map_points_at_files_that_are_served(settings):
     )  # shipped with the code
 
 
+def test_the_navigation_is_a_sidebar_of_named_groups_and_every_page_is_in_one(
+    settings,
+):
+    import re
+
+    html = _client().get("/").text
+    side = html[html.index('id="nav"') : html.index("</aside>")]
+    groups = re.findall(r'class="group-name"[^>]*>([^<]+)<', side)
+    assert groups == ["Overview", "Companion", "Appearance", "Models"]
+    tabs = re.findall(r'data-tab="([a-z]+)"', side)
+    panels = re.findall(r'class="tab" id="tab-([a-z]+)"', html)
+    assert sorted(tabs) == sorted(
+        panels
+    )  # a page that is not in the menu cannot be reached
+
+
 def test_the_build_page_is_in_the_navigation(settings):
     from pathlib import Path
 
@@ -1065,3 +1082,122 @@ def test_the_interface_javascript_passes_the_type_checker():
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# --- the Model settings page: the second writing page (docs/ADR_MODEL_SETTINGS_PAGE.md) -------------
+
+
+def test_model_settings_routes_relay_to_the_brain(settings, brain):
+    client = _client()
+    body = {"body": "custom:toy", "settings": {"format": 1}}
+    for method, path, target in (
+        (
+            "POST",
+            "/api/model-settings/validate",
+            "/appearance/model-settings/validate",
+        ),
+        ("PUT", "/api/model-settings/save", "/appearance/model-settings"),
+        ("PUT", "/api/model-settings/hold", "/appearance/model-settings/hold"),
+        (
+            "PUT",
+            "/api/model-settings/credits",
+            "/appearance/model-settings/credits",
+        ),
+        ("PUT", "/api/model-settings/face", "/appearance/model-settings/face"),
+        (
+            "POST",
+            "/api/model-settings/alignment",
+            "/appearance/model-settings/alignment",
+        ),
+        (
+            "POST",
+            "/api/model-settings/rebuild",
+            "/appearance/model-settings/rebuild",
+        ),
+    ):
+        brain.calls.clear()
+        r = client.request(method, path, json=body, headers=WRITE_HEADERS)
+        assert r.status_code == 202, (path, r.text)
+        assert brain.calls == [(method, target, body)]
+    brain.calls.clear()
+    assert (
+        client.delete(
+            "/api/model-settings/stale?body=custom%3Atoy", headers=WRITE_HEADERS
+        ).status_code
+        == 202
+    )
+    assert brain.calls == [
+        ("DELETE", "/appearance/model-settings/stale?body=custom%3Atoy", None)
+    ]
+    brain.calls.clear()
+    client.get("/api/model-settings/get?body=custom:a%26b")
+    assert brain.calls == [
+        ("GET", "/appearance/model-settings?body=custom%3Aa%26b", None)
+    ]
+
+
+def test_model_settings_writes_need_the_guards_and_fit_the_size_limit(
+    settings, brain
+):
+    client = _client()
+    no_header = {
+        k: v for k, v in WRITE_HEADERS.items() if k != "x-deskmate-admin"
+    }
+    foreign = {**WRITE_HEADERS, "origin": "http://evil.example"}
+    for headers in (no_header, foreign):
+        assert (
+            client.put(
+                "/api/model-settings/save", json={"body": "x"}, headers=headers
+            ).status_code
+            == 403
+        )
+    assert (
+        client.put(
+            "/api/model-settings/save",
+            content=b"x",
+            headers={**WRITE_HEADERS, "content-type": "text/plain"},
+        ).status_code
+        == 415
+    )
+    # bigger than a Build body is fine here, bigger than a settings file is not
+    big = (
+        b'{"body": "custom:toy", "settings": {"format": 1}, "pad": "'
+        + b"a" * 30_000
+        + b'"}'
+    )
+    assert (
+        client.put(
+            "/api/model-settings/save", content=big, headers=WRITE_HEADERS
+        ).status_code
+        == 202
+    )
+    huge = b"{" + b" " * 70_000 + b"}"
+    assert (
+        client.put(
+            "/api/model-settings/save", content=huge, headers=WRITE_HEADERS
+        ).status_code
+        == 413
+    )
+    assert (
+        client.put(
+            "/api/model-settings/save", content=b"[1]", headers=WRITE_HEADERS
+        ).status_code
+        == 400
+    )
+
+
+def test_nothing_outside_the_two_writing_pages_can_change_anything(settings):
+    for route in status_app.app.routes:
+        if isinstance(route, APIRoute) and (route.methods or set()) - {
+            "GET",
+            "HEAD",
+        }:
+            assert route.path.startswith(
+                ("/api/build/", "/api/model-settings/")
+            ), route.path
+    assert (
+        _client()
+        .put("/api/model-settings", json={}, headers=WRITE_HEADERS)
+        .status_code
+        == 405
+    )

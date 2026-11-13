@@ -9,12 +9,13 @@ import json
 import shutil
 import tempfile
 from pathlib import Path
+
+from blender import model_config
 from blender.animation_library import (
     rig_sidecar,
 )
-from brain.appearance.model_animations import retarget_all_libraries
-
 from brain.appearance import models as core
+from brain.appearance.model_animations import retarget_all_libraries
 
 
 def convert_mixamo_body(
@@ -191,12 +192,8 @@ def rig_body(
         )
     if yaw is None:
         try:
-            yaw = float(
-                json.loads(
-                    source.with_name(f"{source.stem}.pose.json").read_text()
-                ).get("face_yaw", 0.0)
-            )
-        except (OSError, ValueError, AttributeError, TypeError):
+            yaw = float(model_config.pose(source).get("face_yaw", 0.0))
+        except (ValueError, TypeError):
             yaw = 0.0
     with tempfile.TemporaryDirectory(prefix="deskmate-rig-") as scratch:
         rigged = rig_parts_body(
