@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="/static/css/looks.css">
   <link rel="stylesheet" href="/static/css/animations.css">
   <link rel="stylesheet" href="/static/css/build.css">
+  <link rel="stylesheet" href="/static/css/settings.css">
   <script type="importmap">
     { "imports": { "three": "/static/vendor/three/build/three.module.js", "three/addons/": "/static/vendor/three/examples/jsm/" } }
   </script>
@@ -24,224 +25,356 @@
 <body>
   <header>
     <h1>Deskmate Admin</h1>
-    <nav role="tablist" id="nav">
-      <button role="tab" data-tab="overview">Overview</button>
-      <button role="tab" data-tab="thinking">Thinking</button>
-      <button role="tab" data-tab="skills">Skills</button>
-      <button role="tab" data-tab="timeline">Mood timeline</button>
-      <button role="tab" data-tab="looks">Looks</button>
-      <button role="tab" data-tab="animations">Animations</button>
-      <button role="tab" data-tab="build">Build</button>
-      <button role="tab" data-tab="chat">Chat &amp; memory</button>
-      <button role="tab" data-tab="logs">Logs</button>
-    </nav>
     <span class="live"><span class="dot" id="livedot"></span><span id="livetxt">connecting…</span></span>
     <span class="updated" id="updated">loading…</span>
     <button id="theme" title="Toggle light/dark">Theme</button>
   </header>
-  <main>
-    <div class="banner" id="banner"></div>
-
-    <div class="tab" id="tab-overview">
-      <section>
-        <h2>Services</h2>
-        <div id="units"></div>
-      </section>
-      <section>
-        <h2>Endpoints</h2>
-        <div id="probes"></div>
-      </section>
-      <section>
-        <h2>Companion</h2>
-        <dl class="kv" id="companion"></dl>
-      </section>
-      <section>
-        <h2>Feeling now</h2>
-        <p class="feeling"><span id="feeling">—</span></p>
-        <div class="bars" id="mood"></div>
-      </section>
-      <section>
-        <h2>Traits</h2>
-        <div class="bars" id="traits"></div>
-      </section>
-      <section>
-        <h2>Backup</h2>
-        <dl class="kv" id="backup"></dl>
-        <p class="backup-next" id="backupNext"></p>
-      </section>
-      <section>
-        <h2>Placement</h2>
-        <img class="placement-pic" id="placementPic" alt="" hidden>
-        <dl class="kv" id="placement"></dl>
-      </section>
-    </div>
-
-    <div class="tab" id="tab-thinking">
-      <section class="wide">
-        <h2>What it is thinking <span class="sp"></span>
-          <button id="showMinor" aria-pressed="false" title="Show placement moves and background work">Background
-            events</button>
-          <button id="clearFeed">Clear</button>
-        </h2>
-        <p class="reasoning-note" id="reasoningNote">Waiting for the first model call…</p>
-        <div id="feed">
-          <div class="empty">Nothing yet. Say something to the companion and each step shows up here as it happens.
-          </div>
+  <div class="shell">
+    <aside class="side">
+      <nav role="tablist" aria-orientation="vertical" id="nav" aria-label="Pages">
+        <div class="group" role="group" aria-labelledby="g-overview">
+          <div class="group-name" id="g-overview">Overview</div>
+          <button role="tab" data-tab="overview">Overview</button>
+          <button role="tab" data-tab="logs">Logs</button>
         </div>
-      </section>
-    </div>
+        <div class="group" role="group" aria-labelledby="g-companion">
+          <div class="group-name" id="g-companion">Companion</div>
+          <button role="tab" data-tab="thinking">Thinking</button>
+          <button role="tab" data-tab="timeline">Mood timeline</button>
+          <button role="tab" data-tab="chat">Chat &amp; memory</button>
+          <button role="tab" data-tab="skills">Skills</button>
+        </div>
+        <div class="group" role="group" aria-labelledby="g-appearance">
+          <div class="group-name" id="g-appearance">Appearance</div>
+          <button role="tab" data-tab="looks">Looks</button>
+          <button role="tab" data-tab="build">Build</button>
+          <button role="tab" data-tab="animations">Animations</button>
+        </div>
+        <div class="group" role="group" aria-labelledby="g-models">
+          <div class="group-name" id="g-models">Models</div>
+          <button role="tab" data-tab="settings">Model settings</button>
+        </div>
+      </nav>
+    </aside>
+    <main>
+      <div class="banner" id="banner"></div>
 
-    <div class="tab" id="tab-skills">
-      <section class="wide">
-        <h2>Skills <span class="sp"></span><span class="muted" id="skillsSummary"></span></h2>
-        <div id="skillsTable">
-          <div class="empty">Loading…</div>
-        </div>
-      </section>
-      <section class="wide">
-        <h2>Installed Agent Skills <span class="sp"></span><span class="muted" id="installedSummary"></span></h2>
-        <p class="reasoning-note">Third-party <code>SKILL.md</code> skills installed with
-          <code>python -m brain.skills.importer</code>. They are checked and catalogued but <b>not run</b>, and even an enabled skill is
-          not put in the prompt yet: that needs the agent runtime and sandbox still to come. This page is read-only; change a skill with
-          <code>python -m brain.skills.manage enable|disable|pin|unpin &lt;skill&gt;</code>.</p>
-        <div id="installedTable">
-          <div class="empty">Loading…</div>
-        </div>
-      </section>
-      <section class="wide">
-        <h2>Recent activity (this page session)</h2>
-        <div id="skillActivity">
-          <div class="empty">No skill has run since you opened this page.</div>
-        </div>
-      </section>
-      <section class="wide">
-        <h2>What the model is told</h2>
-        <p class="reasoning-note">This block is appended to the system prompt on every message. It is the only way the
-          companion knows what it can do.</p>
-        <pre id="skillPrompt" class="mono boxed"></pre>
-      </section>
-    </div>
+      <div class="tab" id="tab-overview">
+        <section>
+          <h2>Services</h2>
+          <div id="units"></div>
+        </section>
+        <section>
+          <h2>Endpoints</h2>
+          <div id="probes"></div>
+        </section>
+        <section>
+          <h2>Companion</h2>
+          <dl class="kv" id="companion"></dl>
+        </section>
+        <section>
+          <h2>Feeling now</h2>
+          <p class="feeling"><span id="feeling">—</span></p>
+          <div class="bars" id="mood"></div>
+        </section>
+        <section>
+          <h2>Traits</h2>
+          <div class="bars" id="traits"></div>
+        </section>
+        <section>
+          <h2>Backup</h2>
+          <dl class="kv" id="backup"></dl>
+          <p class="backup-next" id="backupNext"></p>
+        </section>
+        <section>
+          <h2>Placement</h2>
+          <img class="placement-pic" id="placementPic" alt="" hidden>
+          <dl class="kv" id="placement"></dl>
+        </section>
+      </div>
 
-    <div class="tab" id="tab-timeline">
-      <section class="wide">
-        <h2>Mood over time <span class="sp"></span>
-          <select id="tlKind">
-            <option value="mood">Mood</option>
-            <option value="traits">Traits</option>
-          </select>
-          <select id="tlRange">
-            <option value="1">1 hour</option>
-            <option value="6">6 hours</option>
-            <option value="24" selected>24 hours</option>
-            <option value="168">7 days</option>
-            <option value="720">30 days</option>
-          </select>
-          <button id="tlTable" aria-pressed="false">Table</button>
-        </h2>
-        <div class="legend" id="tlLegend"></div>
-        <div class="chart-wrap" id="tlWrap"><svg class="chart" id="tlSvg" role="img" aria-label="Mood over time"></svg>
-          <div class="tip" id="tlTip"></div>
-        </div>
-        <div class="legend" id="tlFeelings" aria-label="Feelings along the bottom strip"></div>
-        <div id="tlTableWrap" style="display:none"></div>
-      </section>
-    </div>
-
-    <div class="tab" id="tab-looks">
-      <section class="wide">
-        <h2>Looks <span class="sp"></span><span class="muted" id="looksSummary"></span></h2>
-        <p class="reasoning-note">Every look the companion has had, newest first. This page is read-only: tell the companion
-          "go back to version N" and it restores that one (rebuilding it if the file is no longer kept). To make a look
-          yourself, use the Build page.</p>
-        <p class="reasoning-note" id="looksLocked" hidden>The current look is an imported model, so the companion is keeping it:
-          it will not redesign itself or take a request to change it. Tell it "you can change your look" to free it, or ask for a
-          generated look.</p>
-        <div class="looks" id="looksGrid">
-          <div class="empty">Loading…</div>
-        </div>
-      </section>
-    </div>
-
-    <div class="tab" id="tab-animations">
-      <section class="wide">
-        <h2>Animations <span class="sp"></span><span class="muted" id="animationsSummary"></span></h2>
-        <p class="reasoning-note">Which animations each body gets from each installed library. A body needs the core of the
-          Quaternius skeleton to play a library; a body missing some bones (fingers, toes...) plays it without those. Read-only:
-          libraries are installed with <code>python -m brain.appearance.models add-animations</code>.</p>
-        <div id="animationsLibraries"></div>
-        <div id="animationsBodies"></div>
-      </section>
-    </div>
-
-    <div class="tab" id="tab-build">
-      <section class="wide">
-        <h2>Build your look <span class="sp"></span><span class="muted" id="buildSummary"></span></h2>
-        <p class="reasoning-note">Choose where to start, then change the body, clothes, colors and accessories. The viewer shows the
-          body, its outfit and how it moves, live. <b>Preview</b> builds a picture of the whole look without changing anything;
-          <b>Apply</b> makes it the companion's next look, a new version like any other. This is the one page that changes anything.</p>
-        <p class="reasoning-note" id="buildNotice" hidden></p>
-        <div class="loading" id="buildLoading" role="status" aria-live="polite" hidden>
-          <span class="spinner" aria-hidden="true"></span><span id="buildLoadingText">Loading…</span>
-        </div>
-        <div class="build">
-          <div class="build-form">
-            <div class="field picker"><label for="buildStart">Start from</label>
-              <button type="button" id="buildStart" class="picker-button" aria-haspopup="listbox" aria-expanded="false" disabled>Loading…</button>
-              <div class="picker-panel" id="startPanel" hidden>
-                <input type="search" id="startFilter" placeholder="Filter: a body, an outfit, an accessory…" aria-label="Filter the choices" autocomplete="off">
-                <div class="picker-groups" id="startGroups" role="listbox"></div>
-              </div>
-            </div>
-            <div id="buildForm"><div class="empty">Choose where to start: a look you have had, or a new look on a body.</div></div>
-          </div>
-          <div class="build-side">
-            <div class="viewer-row">
-              <div class="viewer">
-                <canvas id="buildCanvas"></canvas>
-                <div class="viewer-empty" id="viewerEmpty">Choose where to start to see the body here.</div>
-              </div>
-              <div class="clips">
-                <div class="clip-list" id="clipList" role="listbox" aria-label="Animations"></div>
-                <button id="playPause" class="thick" disabled>Pause</button>
-              </div>
-            </div>
-            <p class="viewer-note" id="viewerNote"></p>
-            <div class="preview">
-              <div class="pic"><span class="muted" id="previewHint">Your preview appears here.</span><img id="previewPic" alt="Preview of the look" hidden></div>
-              <div class="muted" id="previewCaption"></div>
-              <span class="chip stale" id="previewStale" hidden>out of date: you changed something since</span>
-              <div class="status" id="previewStatus" role="status" aria-live="polite"></div>
-              <div class="actions">
-                <button id="previewBtn" disabled>Preview</button>
-                <button id="applyBtn" class="primary" disabled>Apply</button>
-              </div>
-              <div class="muted" id="applyNote"></div>
-              <div class="status" id="applyStatus" role="status" aria-live="polite"></div>
+      <div class="tab" id="tab-thinking">
+        <section class="wide">
+          <h2>What it is thinking <span class="sp"></span>
+            <button id="showMinor" aria-pressed="false" title="Show placement moves and background work">Background
+              events</button>
+            <button id="clearFeed">Clear</button>
+          </h2>
+          <p class="reasoning-note" id="reasoningNote">Waiting for the first model call…</p>
+          <div id="feed">
+            <div class="empty">Nothing yet. Say something to the companion and each step shows up here as it happens.
             </div>
           </div>
-        </div>
-      </section>
-    </div>
+        </section>
+      </div>
 
-    <div class="tab" id="tab-chat">
-      <section class="wide">
-        <h2>Recent chat</h2>
-        <div class="chat" id="chat"></div>
-      </section>
-      <section class="wide">
-        <h2>Memory notes</h2>
-        <ul class="notes" id="memories"></ul>
-      </section>
-    </div>
+      <div class="tab" id="tab-skills">
+        <section class="wide">
+          <h2>Skills <span class="sp"></span><span class="muted" id="skillsSummary"></span></h2>
+          <div id="skillsTable">
+            <div class="empty">Loading…</div>
+          </div>
+        </section>
+        <section class="wide">
+          <h2>Installed Agent Skills <span class="sp"></span><span class="muted" id="installedSummary"></span></h2>
+          <p class="reasoning-note">Third-party <code>SKILL.md</code> skills installed with
+            <code>python -m brain.skills.importer</code>. They are checked and catalogued but <b>not run</b>, and even
+            an enabled skill is
+            not put in the prompt yet: that needs the agent runtime and sandbox still to come. This page is read-only;
+            change a skill with
+            <code>python -m brain.skills.manage enable|disable|pin|unpin &lt;skill&gt;</code>.
+          </p>
+          <div id="installedTable">
+            <div class="empty">Loading…</div>
+          </div>
+        </section>
+        <section class="wide">
+          <h2>Recent activity (this page session)</h2>
+          <div id="skillActivity">
+            <div class="empty">No skill has run since you opened this page.</div>
+          </div>
+        </section>
+        <section class="wide">
+          <h2>What the model is told</h2>
+          <p class="reasoning-note">This block is appended to the system prompt on every message. It is the only way the
+            companion knows what it can do.</p>
+          <pre id="skillPrompt" class="mono boxed"></pre>
+        </section>
+      </div>
 
-    <div class="tab" id="tab-logs">
-      <section class="wide">
-        <h2>Logs</h2>
-        <div class="tabs" id="logtabs"></div>
-        <pre id="log"></pre>
-      </section>
-    </div>
-  </main>
+      <div class="tab" id="tab-timeline">
+        <section class="wide">
+          <h2>Mood over time <span class="sp"></span>
+            <select id="tlKind">
+              <option value="mood">Mood</option>
+              <option value="traits">Traits</option>
+            </select>
+            <select id="tlRange">
+              <option value="1">1 hour</option>
+              <option value="6">6 hours</option>
+              <option value="24" selected>24 hours</option>
+              <option value="168">7 days</option>
+              <option value="720">30 days</option>
+            </select>
+            <button id="tlTable" aria-pressed="false">Table</button>
+          </h2>
+          <div class="legend" id="tlLegend"></div>
+          <div class="chart-wrap" id="tlWrap"><svg class="chart" id="tlSvg" role="img"
+              aria-label="Mood over time"></svg>
+            <div class="tip" id="tlTip"></div>
+          </div>
+          <div class="legend" id="tlFeelings" aria-label="Feelings along the bottom strip"></div>
+          <div id="tlTableWrap" style="display:none"></div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-looks">
+        <section class="wide">
+          <h2>Looks <span class="sp"></span><span class="muted" id="looksSummary"></span></h2>
+          <p class="reasoning-note">Every look the companion has had, newest first. This page is read-only: tell the
+            companion
+            "go back to version N" and it restores that one (rebuilding it if the file is no longer kept). To make a
+            look
+            yourself, use the Build page.</p>
+          <p class="reasoning-note" id="looksLocked" hidden>The current look is an imported model, so the companion is
+            keeping it:
+            it will not redesign itself or take a request to change it. Tell it "you can change your look" to free it,
+            or ask for a
+            generated look.</p>
+          <div class="looks" id="looksGrid">
+            <div class="empty">Loading…</div>
+          </div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-animations">
+        <section class="wide">
+          <h2>Animations <span class="sp"></span><span class="muted" id="animationsSummary"></span></h2>
+          <p class="reasoning-note">Which animations each body gets from each installed library. A body needs the core
+            of the
+            Quaternius skeleton to play a library; a body missing some bones (fingers, toes...) plays it without those.
+            Read-only:
+            libraries are installed with <code>python -m brain.appearance.models add-animations</code>.</p>
+          <div id="animationsLibraries"></div>
+          <div id="animationsBodies"></div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-build">
+        <section class="wide">
+          <h2>Build your look <span class="sp"></span><span class="muted" id="buildSummary"></span></h2>
+          <p class="reasoning-note">Choose where to start, then change the body, clothes, colors and accessories. The
+            viewer shows the
+            body, its outfit and how it moves, live. <b>Preview</b> builds a picture of the whole look without changing
+            anything;
+            <b>Apply</b> makes it the companion's next look, a new version like any other. This is the one page that
+            changes anything.
+          </p>
+          <p class="reasoning-note" id="buildNotice" hidden></p>
+          <div class="loading" id="buildLoading" role="status" aria-live="polite" hidden>
+            <span class="spinner" aria-hidden="true"></span><span id="buildLoadingText">Loading…</span>
+          </div>
+          <div class="build">
+            <div class="build-form">
+              <div class="field picker"><label for="buildStart">Start from</label>
+                <button type="button" id="buildStart" class="picker-button" aria-haspopup="listbox"
+                  aria-expanded="false" disabled>Loading…</button>
+                <div class="picker-panel" id="startPanel" hidden>
+                  <input type="search" id="startFilter" placeholder="Filter: a body, an outfit, an accessory…"
+                    aria-label="Filter the choices" autocomplete="off">
+                  <div class="picker-groups" id="startGroups" role="listbox"></div>
+                </div>
+              </div>
+              <div id="buildForm">
+                <div class="empty">Choose where to start: a look you have had, or a new look on a body.</div>
+              </div>
+            </div>
+            <div class="build-side">
+              <div class="viewer-row">
+                <div class="viewer">
+                  <canvas id="buildCanvas"></canvas>
+                  <div class="viewer-empty" id="viewerEmpty">Choose where to start to see the body here.</div>
+                </div>
+                <div class="clips">
+                  <div class="clip-list" id="clipList" role="listbox" aria-label="Animations"></div>
+                  <button id="playPause" class="thick" disabled>Pause</button>
+                </div>
+              </div>
+              <p class="viewer-note" id="viewerNote"></p>
+              <div class="preview">
+                <div class="pic"><span class="muted" id="previewHint">Your preview appears here.</span><img
+                    id="previewPic" alt="Preview of the look" hidden></div>
+                <div class="muted" id="previewCaption"></div>
+                <span class="chip stale" id="previewStale" hidden>out of date: you changed something since</span>
+                <div class="status" id="previewStatus" role="status" aria-live="polite"></div>
+                <div class="actions">
+                  <button id="previewBtn" disabled>Preview</button>
+                  <button id="applyBtn" class="primary" disabled>Apply</button>
+                </div>
+                <div class="muted" id="applyNote"></div>
+                <div class="status" id="applyStatus" role="status" aria-live="polite"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-settings">
+        <section class="wide">
+          <h2>Model settings <span class="sp"></span><span class="muted" id="msSummary"></span></h2>
+          <p class="reasoning-note">What makes one installed model behave differently from another: which animations it
+            plays and for
+            which role, which accessories it may wear and where they sit on it, how it is posed, and whether it is
+            available. Choose a
+            model, change what you need, and <b>Save</b>. A saved change applies from the next build of a look on that
+            model; the
+            page offers to rebuild the current look when it is on the model you changed. Only what you change is saved,
+            so the rules
+            keep improving everything you did not touch. This is the second page that changes anything.</p>
+          <p class="reasoning-note" id="msNotice" hidden></p>
+          <div class="loading" id="msLoading" role="status" aria-live="polite" hidden>
+            <span class="spinner" aria-hidden="true"></span><span id="msLoadingText">Loading…</span>
+          </div>
+          <div class="ms">
+            <div class="ms-pick">
+              <label class="check ms-filter"><input type="checkbox" id="msHeldOnly"> Held only</label>
+              <nav class="ms-list" id="msList" aria-label="Installed models">
+                <div class="empty">Loading…</div>
+              </nav>
+            </div>
+            <div class="ms-main">
+              <div class="empty" id="msEmpty">Choose a model to see and change how it behaves.</div>
+              <div id="msEditor" hidden>
+                <div class="ms-bar">
+                  <h3 id="msTitle"></h3>
+                  <span class="chip stale" id="msDirty" hidden>unsaved changes</span>
+                  <span class="sp"></span>
+                  <button id="msRevert" type="button" disabled>Discard changes</button>
+                  <button id="msSave" type="button" class="primary" disabled>Save</button>
+                </div>
+                <div class="status" id="msStatus" role="status" aria-live="polite"></div>
+                <div class="reasoning-note" id="msRebuild" hidden>
+                  <span>The current look is on this model and keeps its old behaviour until it is built again.</span>
+                  <button id="msRebuildBtn" type="button">Rebuild the current look</button>
+                  <span class="status" id="msRebuildStatus" role="status" aria-live="polite"></span>
+                </div>
+                <div id="msProblems"></div>
+                <div class="ms-grid">
+                  <div class="ms-forms">
+                    <details open class="ms-section">
+                      <summary>Animations and roles</summary>
+                      <div id="msAnimations"></div>
+                    </details>
+                    <details open class="ms-section">
+                      <summary>Accessories</summary>
+                      <div id="msAccessories"></div>
+                    </details>
+                    <details open class="ms-section">
+                      <summary>Pose and face</summary>
+                      <div id="msPose"></div>
+                    </details>
+                    <details open class="ms-section">
+                      <summary>Availability and credits</summary>
+                      <div id="msAvail"></div>
+                    </details>
+                  </div>
+                  <div class="ms-side">
+                    <div class="viewer-row">
+                      <div class="viewer">
+                        <canvas id="msCanvas"></canvas>
+                        <div class="viewer-empty" id="msViewerEmpty">Choose a model to see it here.</div>
+                      </div>
+                      <div class="clips">
+                        <div class="clip-list" id="msClipList" role="listbox" aria-label="Animations"></div>
+                        <button id="msPlayPause" type="button" class="thick" disabled>Pause</button>
+                      </div>
+                    </div>
+                    <p class="viewer-note" id="msViewerNote"></p>
+                    <div class="clip-verdict" id="msVerdict" hidden>
+                      <span id="msVerdictText"></span>
+                      <button id="msVerdictBtn" type="button">Doesn't work on this model: switch it off</button>
+                    </div>
+                    <div class="preview">
+                      <h3>Alignment sheet</h3>
+                      <p class="muted">A throwaway build of this model with one item in every socket it carries, using
+                        the placements
+                        above, saved or not. It shows what sits wrong on this model and checks the fix. Nothing is
+                        published.</p>
+                      <div class="sheet-pick" id="msSheetPick"></div>
+                      <div class="pic"><span class="muted" id="msSheetHint">The sheet appears here.</span><img
+                          id="msSheetPic" alt="Alignment sheet" hidden></div>
+                      <div class="status" id="msSheetStatus" role="status" aria-live="polite"></div>
+                      <div class="actions"><button id="msSheetBtn" type="button" disabled>Build the alignment
+                          sheet</button></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-chat">
+        <section class="wide">
+          <h2>Recent chat</h2>
+          <div class="chat" id="chat"></div>
+        </section>
+        <section class="wide">
+          <h2>Memory notes</h2>
+          <ul class="notes" id="memories"></ul>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-logs">
+        <section class="wide">
+          <h2>Logs</h2>
+          <div class="tabs" id="logtabs"></div>
+          <pre id="log"></pre>
+        </section>
+      </div>
+    </main>
+  </div>
   <script type="module" src="/static/js/main.js"></script>
 </body>
 

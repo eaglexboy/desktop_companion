@@ -1702,6 +1702,7 @@ def _install_body(deploy: Path, stem: str = "toy") -> Path:
     model.write_bytes(b"glTF")
     for suffix in (
         ".caps.json",
+        ".config.json",
         ".credits.json",
         ".face.json",
         ".pose.json",
@@ -1725,6 +1726,7 @@ def test_remove_body_deletes_the_model_and_what_belongs_to_it_only(deploy):
     assert {p.name for p in gone} == {
         "toy.glb",
         "toy.caps.json",
+        "toy.config.json",
         "toy.credits.json",
         "toy.face.json",
         "toy.pose.json",

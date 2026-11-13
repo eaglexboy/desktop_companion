@@ -1,5 +1,5 @@
 // @ts-check
-// Talking to this service. Reads are plain GETs; writes (only the Build page's) carry the header
+// Talking to this service. Reads are plain GETs; writes (only the Build and Model settings pages) carry the header
 // the server requires and turn a refusal into an error with the server's reason in it.
 
 /** A request the server refused or could not make. */
@@ -41,10 +41,10 @@ function reason(data, status) {
 }
 
 /**
- * A write (POST or DELETE). The server accepts one only from this page: its own Origin, plus the
+ * A write (POST, PUT or DELETE). The server accepts one only from this page: its own Origin, plus the
  * custom header a page on another origin cannot add (status_page/app.py `_write_guard`).
  * @template T
- * @param {"POST" | "DELETE"} method
+ * @param {"POST" | "PUT" | "DELETE"} method
  * @param {string} url
  * @param {unknown} [body]
  * @returns {Promise<T>}

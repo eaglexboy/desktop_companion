@@ -4,7 +4,9 @@ Description=Deskmate brain daemon
 # Wayland env vars are available for desktop_bridge.py's presence watchers)
 # but is independent of any particular desktop shell beyond that.
 PartOf=graphical-session.target
-After=graphical-session.target
+# No After=graphical-session.target: the target is WantedBy-pulling this unit,
+# so ordering after it forms a cycle that systemd resolves by dropping jobs
+# (it silently dropped the overlay at login). PartOf= is enough.
 
 [Service]
 Type=simple

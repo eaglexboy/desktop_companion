@@ -23,6 +23,7 @@ import shutil
 import sqlite3
 import time
 from pathlib import Path
+from urllib.parse import urlencode
 
 import httpx
 import uvicorn
@@ -88,10 +89,11 @@ async def _unless_stopping(awaitable):
 
 # The pages that write. Every route that changes anything lives under one of these,
 # and nothing else may be called with a method other than GET/HEAD (see `_only_named_writes`).
-WRITE_PREFIXES = ("/api/build/",)
+WRITE_PREFIXES = ("/api/build/", "/api/model-settings/")
 # A cross-origin page cannot set this header without a CORS preflight, which this app never answers.
 WRITE_HEADER = "x-deskmate-admin"
 MAX_WRITE_BODY = 16_384
+MAX_SETTINGS_BODY = 65_536  # a model's settings file may be this large (blender/model_config.MAX_BYTES)
 _PREVIEW_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -116,12 +118,17 @@ async def _write_guard(request: Request) -> None:
         raise HTTPException(403, "bad origin")
     if request.headers.get(WRITE_HEADER) != "1":
         raise HTTPException(403, "missing header")
-    if request.method == "POST":
+    if request.method in ("POST", "PUT"):
         if not request.headers.get("content-type", "").startswith(
             "application/json"
         ):
             raise HTTPException(415, "JSON only")
-        if int(request.headers.get("content-length") or 0) > MAX_WRITE_BODY:
+        limit = (
+            MAX_SETTINGS_BODY
+            if request.url.path.startswith("/api/model-settings/")
+            else MAX_WRITE_BODY
+        )
+        if int(request.headers.get("content-length") or 0) > limit:
             raise HTTPException(413, "too large")
 
 
@@ -795,6 +802,109 @@ async def build_apply(request: Request) -> JSONResponse:
     reason to refuse (the user is acting directly)."""
     return _relay(
         await _brain("POST", "/appearance/generate", await _json_body(request))
+    )
+
+
+# --- model settings (the second writing page; docs/ADR_MODEL_SETTINGS_PAGE.md) ------
+# Every route is a relay to the brain, which validates and writes. A body is named by id; the
+# brain turns it into files, so no path is accepted here. The preview routes of Build serve the
+# alignment sheet's picture.
+
+
+@app.get("/api/model-settings/models")
+async def model_settings_models() -> JSONResponse:
+    return _relay(await _brain("GET", "/appearance/model-settings/models"))
+
+
+@app.get("/api/model-settings/get")
+async def model_settings_get(body: str) -> JSONResponse:
+    return _relay(
+        await _brain(
+            "GET", "/appearance/model-settings?" + urlencode({"body": body})
+        )
+    )
+
+
+@app.post("/api/model-settings/validate", dependencies=[Depends(_write_guard)])
+async def model_settings_validate(request: Request) -> JSONResponse:
+    return _relay(
+        await _brain(
+            "POST",
+            "/appearance/model-settings/validate",
+            await _json_body(request),
+        )
+    )
+
+
+@app.put("/api/model-settings/save", dependencies=[Depends(_write_guard)])
+async def model_settings_save(request: Request) -> JSONResponse:
+    return _relay(
+        await _brain(
+            "PUT", "/appearance/model-settings", await _json_body(request)
+        )
+    )
+
+
+@app.delete("/api/model-settings/stale", dependencies=[Depends(_write_guard)])
+async def model_settings_stale(body: str) -> JSONResponse:
+    return _relay(
+        await _brain(
+            "DELETE",
+            "/appearance/model-settings/stale?" + urlencode({"body": body}),
+        )
+    )
+
+
+@app.put("/api/model-settings/hold", dependencies=[Depends(_write_guard)])
+async def model_settings_hold(request: Request) -> JSONResponse:
+    return _relay(
+        await _brain(
+            "PUT", "/appearance/model-settings/hold", await _json_body(request)
+        )
+    )
+
+
+@app.put("/api/model-settings/credits", dependencies=[Depends(_write_guard)])
+async def model_settings_credits(request: Request) -> JSONResponse:
+    return _relay(
+        await _brain(
+            "PUT",
+            "/appearance/model-settings/credits",
+            await _json_body(request),
+        )
+    )
+
+
+@app.put("/api/model-settings/face", dependencies=[Depends(_write_guard)])
+async def model_settings_face(request: Request) -> JSONResponse:
+    return _relay(
+        await _brain(
+            "PUT", "/appearance/model-settings/face", await _json_body(request)
+        )
+    )
+
+
+@app.post("/api/model-settings/alignment", dependencies=[Depends(_write_guard)])
+async def model_settings_alignment(request: Request) -> JSONResponse:
+    """A throwaway build with one item in every socket, using settings that are not saved."""
+    return _relay(
+        await _brain(
+            "POST",
+            "/appearance/model-settings/alignment",
+            await _json_body(request),
+        )
+    )
+
+
+@app.post("/api/model-settings/rebuild", dependencies=[Depends(_write_guard)])
+async def model_settings_rebuild(request: Request) -> JSONResponse:
+    """Rebuild the current look so a saved change reaches it (a new version)."""
+    return _relay(
+        await _brain(
+            "POST",
+            "/appearance/model-settings/rebuild",
+            await _json_body(request),
+        )
     )
 
 

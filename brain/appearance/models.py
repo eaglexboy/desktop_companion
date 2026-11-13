@@ -53,7 +53,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Concatenate, ParamSpec, TypeVar
 
-from blender import pack_profiles
+from blender import model_config, pack_profiles
 from blender.animation_library import (  # noqa: F401 -- model_animations reaches it through here
     wanted_clips,
 )
@@ -269,7 +269,33 @@ def discover_outfit_models(deploy_dir: Path, base_template: str) -> list[str]:
     )
 
 
-def effective_wardrobe_catalog(deploy_dir: Path, base_template: str) -> dict:
+def apply_accessory_settings(
+    allowed: dict[str, list[str]], deploy_dir: Path, base_template: str
+) -> dict[str, list[str]]:
+    """`allowed` ({socket: items}) narrowed by the body's own settings (`accessories.sockets` off,
+    `accessories.items` a shorter list), the last layer (ADR_MODEL_SETTINGS_PAGE 4). Settings only
+    remove: an entry naming something not offered is ignored, and a body without a model file (a
+    procedural one) has no settings."""
+    model = _model_file(deploy_dir, base_template)
+    if model is None:
+        return allowed
+    section = model_config.load(model)[0].get("accessories", {})
+    off = {s for s, on in section.get("sockets", {}).items() if on is False}
+    chosen = section.get("items", {})
+    out: dict[str, list[str]] = {}
+    for socket, items in allowed.items():
+        if socket in off:
+            continue
+        if socket in chosen:
+            items = [i for i in items if i in chosen[socket]]
+        if items:
+            out[socket] = items
+    return out
+
+
+def effective_wardrobe_catalog(
+    deploy_dir: Path, base_template: str, with_settings: bool = True
+) -> dict:
     """The wardrobe options that actually work on `base_template`: the catalog,
     plus every accessory model on disk, minus sockets the body cannot carry and
     models that need something it lacks. An installed model keeps its own
@@ -307,6 +333,8 @@ def effective_wardrobe_catalog(deploy_dir: Path, base_template: str) -> dict:
         if kept:
             allowed[socket] = kept
 
+    if with_settings:
+        allowed = apply_accessory_settings(allowed, deploy_dir, base_template)
     return {
         "outfits": (
             ["none", *discover_outfit_models(deploy_dir, base_template)]
@@ -391,6 +419,7 @@ def add_body(deploy_dir: Path, source: Path, name: str) -> dict:
 
 _BODY_SIDECARS = (
     ".caps.json",
+    ".config.json",
     ".credits.json",
     ".face.json",
     ".pose.json",

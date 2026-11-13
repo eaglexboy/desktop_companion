@@ -116,6 +116,10 @@ from blender.gen_models import (
     wear_outfit_model,
 )
 from blender.glb_post import brighten_emissive
+from blender.model_config import load as load_model_settings
+from blender.model_config import placement as model_placement
+from blender.model_config import set_override as set_model_settings_override
+from blender.model_config import validate as model_config_validate
 from blender.rigs import arm_spread
 from blender.sockets import canonical_socket_bones, find_socket_bones
 
@@ -148,6 +152,20 @@ DEPLOY_DIR = Path(_arg_or("--deploy-dir", "."))
 pack_profiles.configure(
     DEPLOY_DIR
 )  # the user's animation profiles are in the deploy directory
+_OVERRIDE_PATH = _arg("--settings-override")
+if (
+    _OVERRIDE_PATH
+):  # settings not saved yet, for a throwaway build (the alignment sheet)
+    try:
+        _override = json.loads(Path(_OVERRIDE_PATH).read_text())
+        if model_config_validate(_override).ok:
+            set_model_settings_override(_override)
+        else:
+            print(
+                "DESKMATE_WARN --settings-override is not valid settings; ignored"
+            )
+    except (OSError, ValueError) as _exc:
+        print(f"DESKMATE_WARN could not read --settings-override: {_exc}")
 INSPECT_PATH = _arg("--inspect")
 CONVERT_PATH = _arg("--convert")
 FACE_PATH = _arg("--face-landmarks")
@@ -447,20 +465,26 @@ def main() -> None:
                 "footwear is not layered onto an imported model; it keeps its own"
             )
         if imported["armature"] is not None:
-            rolls = _pose_sidecar(resolution["path"]).get("roll_bones")
+            pose_settings = _pose_sidecar(resolution["path"])
+            rolls = pose_settings.get("roll_bones")
             if rolls:
                 roll_model_bones(imported, rolls, warnings)
             library_plan = plan_animation_library(
-                DEPLOY_DIR, imported["armature"], resolution["path"]
+                DEPLOY_DIR,
+                imported["armature"],
+                resolution["path"],
+                warnings,
             )
             if (
                 library_plan
             ):  # its clips are relative to the rig's own rest pose: leave that alone
                 imported["arms_relaxed"] = False
-            else:
+            elif pose_settings.get("relax_arms", True):
                 imported["arms_relaxed"] = relax_arms(
                     imported
                 )  # after the outfit, so it hangs with the body
+            else:  # the model's settings keep its arms as modelled
+                imported["arms_relaxed"] = False
 
         # bound with automatic weights (no bone for their socket)
         accessory_objs = []
@@ -476,13 +500,24 @@ def main() -> None:
         frames = imported_socket_frames(imported, socket_bones)
         for frame_ in frames.values():
             frame_["body_scale"] = imported["import_scale"]
+        model_settings = (
+            load_model_settings(resolution["path"])[0]
+            if resolution.get("path")
+            else {}
+        )
         for socket_name in _SOCKET_NAMES:
             item = accessories.get(socket_name)
             if not item:
                 continue
             frame = frames.get(socket_name)
             built = build_socket_accessory(
-                socket_name, item, head_loc, palette, DEPLOY_DIR, frame
+                socket_name,
+                item,
+                head_loc,
+                palette,
+                DEPLOY_DIR,
+                frame,
+                model_placement(model_settings, socket_name, item),
             )
             if frame is None:
                 warnings.append(
@@ -623,7 +658,13 @@ def main() -> None:
             arm_obj,
             library_plan,
             warnings,
-            arm_spread=arm_spread(rig_family_of(resolution["path"])),
+            arm_spread=(
+                _pose_sidecar(resolution["path"]).get(
+                    "arm_spread", arm_spread(rig_family_of(resolution["path"]))
+                )
+                if resolution.get("path")
+                else 0.0
+            ),
         )
         fit_scale = fit_clips_to_the_frame(arm_obj, library_clips, warnings)
         if library_clips.get("sit_idle") in chair_sit_clips():

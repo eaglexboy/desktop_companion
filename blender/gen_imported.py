@@ -22,6 +22,7 @@ from blender.gen_garments import (
 from blender.gen_helpers import (
     _names_of,
 )
+from blender.model_config import load as load_model_settings
 from blender.sockets import wrist_is_tail
 from blender.viseme_shapekeys import (
     SHAPE_KEY_PREFIX,
@@ -480,6 +481,14 @@ def _front_surface_y(meshes, x: float, z: float) -> float | None:
 
 
 def _pose_sidecar(model_path: Path) -> dict:
+    """The pose settings of a model: `<model>.pose.json` with the `pose` section of its
+    `<model>.config.json` over it, key by key (ADR_MODEL_SETTINGS_PAGE 3)."""
+    settings = _legacy_pose_sidecar(model_path)
+    settings.update(load_model_settings(model_path)[0].get("pose", {}))
+    return settings
+
+
+def _legacy_pose_sidecar(model_path: Path) -> dict:
     path = model_path.with_name(model_path.stem + ".pose.json")
     if not path.is_file():
         return {}

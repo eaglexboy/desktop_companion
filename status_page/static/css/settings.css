@@ -1,0 +1,306 @@
+/* Model settings page: the model list, the four sections, the viewer and the alignment sheet. All lengths in rem. */
+#tab-settings [hidden] {
+  display: none !important;
+}
+.ms {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 62rem) {
+  .ms {
+    grid-template-columns: 14rem minmax(0, 1fr);
+    align-items: start;
+  }
+}
+.ms-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.ms-list button {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  width: 100%;
+  text-align: left;
+  font-size: 0.8125rem;
+}
+.ms-list button[aria-selected="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.ms-list .credit {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 0.6875rem;
+}
+.ms-list button[aria-selected="true"] .credit {
+  color: inherit;
+  opacity: 0.85;
+}
+.ms-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.ms-bar h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.ms-bar .sp {
+  flex: 1;
+}
+.ms-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr;
+  margin-top: 0.75rem;
+}
+@media (min-width: 80rem) {
+  .ms-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(26rem, 40rem);
+    align-items: start;
+  }
+  /* Side by side, only the forms scroll on their own, so a long animations list does not make the
+     page long; the viewer and the alignment sheet just follow the page. */
+  .ms-forms {
+    position: sticky;
+    top: 4rem;
+    max-height: calc(100vh - 5rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .ms-forms {
+    padding-right: 0.25rem;
+  }
+}
+.ms-section {
+  border: 0.0625rem solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--panel);
+  margin-bottom: 0.75rem;
+}
+.ms-section > summary {
+  cursor: pointer;
+  padding: 0.5rem 0.75rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+.ms-section > div {
+  padding: 0 0.75rem 0.75rem;
+}
+.ms h4 {
+  margin: 0.75rem 0 0.25rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ms .note {
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin: 0.25rem 0;
+}
+.ms .row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem 0.75rem;
+  padding: 0.25rem 0;
+  border-bottom: 0.0625rem solid var(--line);
+  font-size: 0.8125rem;
+}
+.ms .row:last-child {
+  border-bottom: 0;
+}
+.ms .row .name {
+  min-width: 8rem;
+  font-weight: 600;
+}
+.ms .row.dim .name {
+  color: var(--muted);
+  font-weight: 400;
+}
+.ms .row.gone .name {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.ms label.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.ms .role-clips {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding-left: 1rem;
+}
+.ms .role-clips .clip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}
+.ms .role-clips select {
+  max-width: 16rem;
+}
+.ms .num {
+  width: 5rem;
+}
+.ms .num.bad,
+.ms input.bad {
+  border-color: var(--bad);
+}
+.ms .placement {
+  flex-basis: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
+  gap: 0.375rem;
+  padding: 0.25rem 0 0.5rem 1rem;
+}
+.ms .placement label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.6875rem;
+  color: var(--muted);
+}
+.ms .placement input {
+  width: 100%;
+}
+.ms .items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+}
+.ms .problems {
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  border: 0.0625rem solid var(--line);
+  border-radius: 0.5rem;
+  font-size: 0.8125rem;
+}
+.ms .problems.bad {
+  border-color: var(--bad);
+}
+.ms .problems.warn {
+  border-color: var(--warn);
+}
+.ms .problems ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.25rem;
+}
+.ms .field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.5rem;
+}
+.ms .field-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  font-size: 0.75rem;
+}
+.ms .field-grid textarea {
+  min-height: 4rem;
+}
+.ms .span {
+  grid-column: 1 / -1;
+}
+.ms .preview {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+}
+.ms .preview h3 {
+  margin: 0;
+  font-size: 0.875rem;
+}
+.ms .preview .pic {
+  aspect-ratio: 1;
+  max-width: 24rem;
+  background: var(--bg);
+  border: 0.0625rem solid var(--line);
+  border-radius: 0.5rem;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.ms .preview .pic img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.ms .actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.ms .primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.ms :disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.ms .row > select {
+  max-width: 10.5rem;
+}
+.ms-list button[aria-selected="true"] .chip {
+  background: transparent;
+  color: #fff;
+  border-color: currentColor;
+}
+.ms .row .name {
+  min-width: 7rem;
+}
+.ms .row > select {
+  max-width: 9rem;
+}
+
+.clip-verdict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.4rem 0;
+}
+.clip-verdict[hidden] {
+  display: none;
+}
+
+.ms-filter {
+  display: block;
+  margin-bottom: 0.4rem;
+}
+
+/* The viewer is the point of this column: the animation list goes under it, not beside it. */
+.ms-side .viewer-row {
+  grid-template-columns: 1fr;
+}
+.ms-side .viewer {
+  aspect-ratio: 1 / 1;
+  max-height: 70vh;
+  margin-inline: auto;
+}
+.ms-side .clips {
+  height: 14rem;
+}
+
+.sheet-pick .row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.2rem 0;
+}
+.sheet-pick .name {
+  min-width: 5rem;
+}

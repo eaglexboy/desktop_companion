@@ -13,12 +13,10 @@ import mathutils  # pyright: ignore[reportMissingImports]
 from blender.animation_library import (
     SIT_PROP_NODE,
     library_contents,
-    library_extras,
     library_folder,
     library_gaps,
     library_time_scale,
-    merge_picks,
-    pick_clips,
+    plan_libraries,
 )
 from blender.frame_fit import FRAME_MARGIN, solve_fit
 from blender.gen_accessory_models import _join_objects
@@ -31,10 +29,14 @@ from blender.gen_imported import (
     _import_objects,
     _refresh_bounds,
 )
+from blender.model_config import load as load_model_settings
 
 
 def plan_animation_library(
-    deploy_dir: Path, armature, model_path: Path | None = None
+    deploy_dir: Path,
+    armature,
+    model_path: Path | None = None,
+    warnings: list[str] | None = None,
 ) -> dict[str, tuple[Path, str]]:
     """{role: (library file, clip)} for the clips an installed library can give `armature`: the
     roles whose clip exists in a library the body has the core bones of (a body may lack some,
@@ -46,7 +48,7 @@ def plan_animation_library(
     if armature is None or not folder.is_dir():
         return {}
     ours = {bone.name for bone in armature.data.bones}
-    plan: dict[str, tuple[Path, str]] = {}
+    fitting: dict[Path, set[str]] = {}
     for path in sorted(folder.glob("*.glb")):
         try:
             joints, clips = library_contents(path)
@@ -54,13 +56,9 @@ def plan_animation_library(
             continue
         if library_gaps(joints, ours) is None:
             continue
-        # roles with options take this library's clips as more of them; the others stay with the
-        # first library that fills them (a sit set is all from one library)
-        held = {
-            key for key in plan if key.split(".")[0] not in library_extras()
-        }
-        merge_picks(plan, pick_clips(clips, held), path)
-    return plan
+        fitting[path] = clips
+    settings = load_model_settings(model_path)[0] if model_path else {}
+    return plan_libraries(fitting, settings.get("animations"), warnings)
 
 
 def _pose_state(arm_obj):
