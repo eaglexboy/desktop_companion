@@ -25,6 +25,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+from brain import language_settings
 from brain.app_state import AppState
 from brain.appearance import model_settings
 from brain.appearance.blender_gen import is_build_running
@@ -53,6 +54,7 @@ from brain.config import (
 from brain.events import bus, emit
 from brain.evolution import AvatarEvolution
 from brain.ipc.server import OverlayHub, welcome_config_subset
+from brain.language import TurnLanguage
 from brain.llm_pool import LLMPool, LocalLLMClient
 from brain.personality.reflect import run_reflection
 from brain.personality.state import PersonalityStore
@@ -138,8 +140,10 @@ def build_app_state(settings: Settings | None = None) -> AppState:
 
     state_holder: dict[str, AppState] = {}
 
-    async def _on_user_text_input(_client_id: str, text: str) -> None:
-        await _handle_chat_text(state_holder["state"], text)
+    async def _on_user_text_input(
+        _client_id: str, text: str, heard: tuple | None = None
+    ) -> None:
+        await _handle_chat_text(state_holder["state"], text, heard=heard)
 
     async def _on_interaction_state(
         _client_id: str, interaction_state: str
@@ -175,6 +179,7 @@ def build_app_state(settings: Settings | None = None) -> AppState:
         get_manifest=lambda: load_manifest(settings.deploy_dir),
         streaming_stt=streaming_stt,
         on_user_text_input=_on_user_text_input,
+        get_stt_language=lambda: state_holder["state"].language.stt_hint(),
         on_interaction_state=_on_interaction_state,
         on_asset_swap_result=_on_asset_swap_result,
         on_speech_finished=_on_speech_finished,
@@ -227,6 +232,9 @@ def build_app_state(settings: Settings | None = None) -> AppState:
         desktop_bridge=desktop_bridge,
         skills=skills,
         skill_state=SkillStateStore(settings.personality_db_path),
+        language=TurnLanguage(
+            language_settings.effective(settings), store, emit
+        ),
     )
     state_holder["state"] = state
     return state
@@ -346,6 +354,9 @@ async def health():
             state.settings, state.voice_selector
         ),
         "voice_degraded": state.tts_pool.is_degraded,
+        "language": state.language.pin or "auto",
+        "speakable_languages": state.tts_pool.speakable_languages(),
+        "language_profile": state.language.profile.describe(),
         "presence": presence,
         "traits": state.store.get_traits(),
         "mood": state.store.get_mood(),
@@ -580,6 +591,60 @@ async def appearance_options():
     Read-only; reads the deploy directory and runs nothing."""
     state = _state(app)
     return await asyncio.to_thread(build_options, state.settings.deploy_dir)
+
+
+# --- Language settings (the Admin app's Language page; brain/language_settings.py) ----------------
+
+
+def _language_view(state: AppState) -> dict:
+    return language_settings.describe(
+        state.settings, state.language.pin, state.tts_pool.speakable_languages()
+    )
+
+
+@app.get("/language/settings")
+async def language_settings_get():
+    return _language_view(_state(app))
+
+
+@app.put("/language/settings")
+async def language_settings_save(document: dict):
+    """Validate, save and apply live (no restart)."""
+    state = _state(app)
+    try:
+        config = language_settings.parse(document)
+    except language_settings.LanguageSettingsError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    await asyncio.to_thread(
+        language_settings.save, state.settings.deploy_dir, config
+    )
+    state.language.apply(config)
+    emit("language.settings", {"source": "page"})
+    return _language_view(state)
+
+
+@app.delete("/language/settings")
+async def language_settings_reset():
+    """Forget the saved settings; `config.toml`'s values apply again."""
+    state = _state(app)
+    await asyncio.to_thread(language_settings.reset, state.settings.deploy_dir)
+    state.language.apply(state.settings.language)
+    emit("language.settings", {"source": "config.toml"})
+    return _language_view(state)
+
+
+class LanguagePinRequest(BaseModel):
+    code: str  # a language, or "auto"
+
+
+@app.put("/language/pin")
+async def language_pin(req: LanguagePinRequest):
+    state = _state(app)
+    try:
+        state.language.set_pin(req.code)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return _language_view(state)
 
 
 # --- Model settings (docs/ADR_MODEL_SETTINGS_PAGE.md) -------------------------------------------
@@ -829,7 +894,9 @@ async def appearance_revert():
 @app.post("/reflect")
 async def reflect():
     state = _state(app)
-    result = await run_reflection(state.store, state.local_pool)
+    result = await run_reflection(
+        state.store, state.local_pool, state.language.autonomous()
+    )
     return {
         "status": "ok",
         "notes_created": result.notes_created,

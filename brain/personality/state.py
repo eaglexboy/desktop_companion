@@ -52,6 +52,8 @@ AGENT_STATE_KEYS = (
     "staged_version",
     "last_redesign_timestamp",
     "base_template_since",
+    "language_pin",  # a language the user asked for, or absent for auto-detect
+    "last_language",  # the language of the most recent turn
 )
 
 _SCHEMA = """
@@ -129,12 +131,15 @@ class PersonalityStore:
         identity_name: str = DEFAULT_NAME,
     ) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path, check_same_thread=False, timeout=5.0)
+        self._conn = sqlite3.connect(
+            db_path, check_same_thread=False, timeout=5.0
+        )
         self._conn.row_factory = sqlite3.Row
         # WAL: the status page and backup read state.db while the brain writes.
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._seed(trait_names, mood_names, identity_name)
         self._conn.commit()
         self._last_snapshot: dict[str, tuple[float, dict[str, float]]] = {}
@@ -146,8 +151,24 @@ class PersonalityStore:
         self._record("mood", self.get_mood(), {}, "startup")
         self._record("traits", self.get_traits(), {}, "startup")
 
+    def _migrate(self) -> None:
+        """Additive column changes. A row written before the column existed
+        reads NULL, which callers treat as the default language."""
+        columns = {
+            r["name"]
+            for r in self._conn.execute("PRAGMA table_info(interactions)")
+        }
+        if "language" not in columns:
+            self._conn.execute(
+                "ALTER TABLE interactions ADD COLUMN language TEXT"
+            )
+
     def _record(
-        self, kind: str, values: dict[str, float], deltas: dict[str, float], cause: str
+        self,
+        kind: str,
+        values: dict[str, float],
+        deltas: dict[str, float],
+        cause: str,
     ) -> None:
         """Announce a change on the event bus and, if it is worth a point on
         the timeline, persist it. Never raises: observation must not be able
@@ -246,7 +267,9 @@ class PersonalityStore:
         rows = self._conn.execute("SELECT name, value FROM mood").fetchall()
         return {row["name"]: row["value"] for row in rows}
 
-    def nudge_mood(self, deltas: dict[str, float], cause: str = "") -> dict[str, float]:
+    def nudge_mood(
+        self, deltas: dict[str, float], cause: str = ""
+    ) -> dict[str, float]:
         now = time.time()
         with self._conn:
             for name, delta in deltas.items():
@@ -271,8 +294,12 @@ class PersonalityStore:
         with self._conn:
             for row in rows:
                 elapsed = max(0.0, now - row["updated_at"])
-                factor = 0.5 ** (elapsed / half_life_s) if half_life_s > 0 else 0.0
-                new_value = row["baseline"] + (row["value"] - row["baseline"]) * factor
+                factor = (
+                    0.5 ** (elapsed / half_life_s) if half_life_s > 0 else 0.0
+                )
+                new_value = (
+                    row["baseline"] + (row["value"] - row["baseline"]) * factor
+                )
                 self._conn.execute(
                     "UPDATE mood SET value = ?, updated_at = ? WHERE name = ?",
                     (new_value, now, row["name"]),
@@ -286,12 +313,14 @@ class PersonalityStore:
     def add_memory_note(self, note: str) -> None:
         with self._conn:
             self._conn.execute(
-                "INSERT INTO memories(ts, note) VALUES (?, ?)", (time.time(), note)
+                "INSERT INTO memories(ts, note) VALUES (?, ?)",
+                (time.time(), note),
             )
 
     def recent_memory_notes(self, limit: int = 20) -> list[MemoryNote]:
         rows = self._conn.execute(
-            "SELECT id, ts, note FROM memories ORDER BY ts DESC LIMIT ?", (limit,)
+            "SELECT id, ts, note FROM memories ORDER BY ts DESC LIMIT ?",
+            (limit,),
         ).fetchall()
         return [MemoryNote(row["id"], row["ts"], row["note"]) for row in rows]
 
@@ -312,14 +341,15 @@ class PersonalityStore:
         provider: str | None = None,
         escalated: bool = False,
         raw_text: str | None = None,
+        language: str | None = None,
     ) -> int:
         """Returns the new row's id. `raw_text` is the model's reply as it came
         back, kept next to the cleaned `text` for comparison on the status
         page; capped, since it only exists to be read by a person."""
         with self._conn:
             cursor = self._conn.execute(
-                "INSERT INTO interactions(ts, role, text, provider, escalated) VALUES (?, ?, ?, ?, ?)",
-                (time.time(), role, text, provider, int(escalated)),
+                "INSERT INTO interactions(ts, role, text, provider, escalated, language) VALUES (?, ?, ?, ?, ?, ?)",
+                (time.time(), role, text, provider, int(escalated), language),
             )
             interaction_id = cursor.lastrowid
             if raw_text is not None:
@@ -341,7 +371,9 @@ class PersonalityStore:
             "SELECT role, text FROM interactions WHERE ts >= ? ORDER BY id DESC LIMIT ?",
             (time.time() - max_age_s, limit),
         ).fetchall()
-        messages = [{"role": r["role"], "content": r["text"]} for r in reversed(rows)]
+        messages = [
+            {"role": r["role"], "content": r["text"]} for r in reversed(rows)
+        ]
         while messages and messages[0]["role"] != "user":
             messages.pop(0)
         return messages

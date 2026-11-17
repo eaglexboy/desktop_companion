@@ -1,0 +1,19 @@
+[Unit]
+Description=Deskmate resource sidecar (serves this machine's resource use to a Deskmate Admin app)
+# Deliberately separate from whatever it watches, so it keeps reporting while that is restarted or down.
+# deploy/install.sh installs this with the two placeholders below filled in for the machine with the
+# repository. On another machine, set WorkingDirectory to the folder that holds status_page/ (the three
+# files status_page/{__init__,resources_collect,resources_agent}.py are enough) and ExecStart to its python3.
+# It needs ~/.config/deskmate/resources-agent.toml first: docs/SPEC_RESOURCE_SIDECAR.md.
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_ROOT@
+ExecStart=@VENV_PYTHON@ -m status_page.resources_agent --config %h/.config/deskmate/resources-agent.toml
+# Tokens given as env:NAME in the sidecar's config are read from this file (readable only by you); the - means optional.
+EnvironmentFile=-%h/.config/deskmate/resources-agent.env
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

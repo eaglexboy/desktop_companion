@@ -12,6 +12,7 @@ from brain.config import (
 )
 from brain.evolution import AvatarEvolution
 from brain.ipc.server import OverlayHub
+from brain.language import TurnLanguage
 from brain.llm_pool import LLMPool
 from brain.personality.state import PersonalityStore
 from brain.presence.desktop_bridge import DesktopPresenceBridge
@@ -46,6 +47,7 @@ class AppState:
     desktop_bridge: DesktopPresenceBridge | None
     skills: SkillRegistry
     skill_state: SkillStateStore
+    language: TurnLanguage
     interaction_active: bool = False
     # Last window/screen telemetry from the sensing adapter, kept so a
     # (re)connecting overlay can be placed immediately instead of waiting
@@ -57,4 +59,6 @@ class AppState:
     # delivered when one connects, unless it has gone stale.
     pending_greeting: tuple[str, float] | None = None
     # Throwaway builds for the Build page's Preview button (never published).
+    # (language, notice kind) pairs already announced this run.
+    language_notices: set[tuple[str, str]] = field(default_factory=set)
     previews: PreviewStore = field(default_factory=PreviewStore)

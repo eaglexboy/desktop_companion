@@ -1,4 +1,4 @@
-/* Design tokens: colors for light and dark. Series colors --s1..--s3 are the validated categorical slots for each mode; the feeling colors used by the timeline live in js/feelings.js. */
+/* Design tokens: colors for light and dark. Series colors --s1..--s5 are the validated categorical slots for each mode; the feeling colors used by the timeline live in js/feelings.js. */
 :root {
   --bg: #f6f6f9;
   --panel: #ffffff;
@@ -13,6 +13,8 @@
   --s1: #2a78d6;
   --s2: #eb6834;
   --s3: #1baf7a;
+  --s4: #8a5fd6;
+  --s5: #d03c8c;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -29,6 +31,8 @@
     --s1: #3987e5;
     --s2: #d95926;
     --s3: #199e70;
+    --s4: #9f7be6;
+    --s5: #e0569f;
   }
 }
 :root[data-theme="dark"] {
@@ -45,4 +49,6 @@
   --s1: #3987e5;
   --s2: #d95926;
   --s3: #199e70;
+  --s4: #9f7be6;
+  --s5: #e0569f;
 }

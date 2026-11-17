@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 
 from brain.config import MOOD_NAMES, TRAIT_NAMES
 from brain.events import emit, llm_purpose
+from brain.language import language_name, primary_language
 from brain.llm_pool import LLMPool
 from brain.personality.state import PersonalityStore
 
@@ -66,7 +67,7 @@ don't want to adjust:
   "mood_deltas": {{"<mood_name>": <float between -20 and 20>, ...}},
   "memory_notes": ["<short factual note about the user or the interaction>", ...]
 }}
-
+{note_language_line}
 Transcript:
 {transcript}
 """
@@ -87,7 +88,9 @@ def _clamp(value: float, limit: float) -> float:
 
 
 async def run_reflection(
-    store: PersonalityStore, local_pool: LLMPool
+    store: PersonalityStore,
+    local_pool: LLMPool,
+    note_language: str | None = None,
 ) -> ReflectionResult:
     """Run one reflection pass over pending interactions."""
     pending = store.pending_interactions()
@@ -97,7 +100,15 @@ async def run_reflection(
         logger.info("no local LLM server configured, skipping reflection")
         return _NO_OP_RESULT
 
+    # Notes are written in the user's primary language so they read naturally
+    # when shown (ADR_MULTI_LANGUAGE_CHAT 2.4).
+    note_language_line = (
+        f"Write the memory notes in {language_name(note_language)}.\n"
+        if note_language and primary_language(note_language) != "en"
+        else ""
+    )
     prompt = _REFLECTION_PROMPT_TEMPLATE.format(
+        note_language_line=note_language_line,
         trait_names=", ".join(TRAIT_NAMES),
         mood_names=", ".join(MOOD_NAMES),
         transcript=_format_transcript(pending),
@@ -111,7 +122,7 @@ async def run_reflection(
         verdict = json.loads(raw.strip())
     except (
         Exception
-    ) as exc:  # noqa: BLE001 - a bad reflection pass shouldn't crash the daemon
+    ) as exc:  # noqa: BLE001 -- a failed reflection must never crash the caller
         logger.warning("reflection call failed: %s", exc)
         return _NO_OP_RESULT
 

@@ -1,0 +1,39 @@
+# Config for status_page/resources_agent.py, the resource sidecar that every machine the Admin app should
+# chart runs (this one included). Copy it to the machine (for example ~/.config/deskmate/resources-agent.toml)
+# and edit it; nothing machine-specific belongs in the repo. The whole picture: docs/SPEC_RESOURCE_SIDECAR.md.
+#
+#   python -m status_page.resources_agent --config ~/.config/deskmate/resources-agent.toml
+#   python -m status_page.resources_agent --new-token NAME      # make a client's token (see [client.*])
+#
+# The Admin app is told about each sidecar in its own config.toml, under [status.resources.sources.<name>].
+
+host = "127.0.0.1"          # this machine's LAN address to be reached from other machines
+port = 8781
+
+# How processes are read: "linux" (/proc and cgroups; no dependencies), "psutil" (Windows, macOS;
+# pip install psutil), or "auto" (linux where /proc exists, else psutil).
+backend = "auto"
+
+# How the GPU is read: "nvidia" (nvidia-smi, any OS), "xpu-smi" (Intel; runs inside gpu_container),
+# "none", or "auto" (nvidia if it is installed).
+gpu = "auto"
+# gpu_container = "my-inference-container"
+
+# One table per client: a status page that may ask. Make each with --new-token NAME and paste its table
+# here; the sidecar keeps only a hash, and the token itself goes to that client. Delete a table (and
+# restart) to revoke that client. With none, the sidecar answers only on loopback (open = true to override).
+# [client.my-status-page]
+# token_sha256 = "paste the line --new-token printed"
+# open = false
+
+# What to follow: one table per process; its name is the series name. Set exactly one of:
+#   unit      a systemd user unit's main process (Linux)
+#   port      whatever listens on that local TCP port
+#   match     a regex over the command line (the lowest matching pid; never the sidecar)
+#   container a Docker container (everything in it counts)
+# [process.overlay]
+# unit = "deskmate-overlay"
+# [process.tts]
+# port = 7501
+# [process.llm]
+# container = "my-inference-container"

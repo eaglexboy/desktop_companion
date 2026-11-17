@@ -14,6 +14,7 @@ faster-whisper>=1.0
 soundfile>=0.12
 numpy>=1.26
 pyyaml>=6.0
+tomlkit>=0.13
 
 # `voice` extra: local TTS engine (installs piper itself)
 piper-tts>=1.8
@@ -21,3 +22,7 @@ piper-tts>=1.8
 # `cloud` extra: Anthropic provider in brain/llm_pool.py (lazy-imported;
 # only needed if a provider_type = "anthropic" is configured)
 anthropic>=0.40
+
+# `resources` extra: the resource sidecar's psutil backend, for Windows and macOS
+# (the Linux backend needs nothing). Also in `dev`, so its test runs.
+psutil>=5.9

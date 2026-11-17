@@ -17,6 +17,9 @@
   <link rel="stylesheet" href="/static/css/animations.css">
   <link rel="stylesheet" href="/static/css/build.css">
   <link rel="stylesheet" href="/static/css/settings.css">
+  <link rel="stylesheet" href="/static/css/language.css">
+  <link rel="stylesheet" href="/static/css/config.css">
+  <link rel="stylesheet" href="/static/css/resources.css">
   <script type="importmap">
     { "imports": { "three": "/static/vendor/three/build/three.module.js", "three/addons/": "/static/vendor/three/examples/jsm/" } }
   </script>
@@ -35,6 +38,7 @@
         <div class="group" role="group" aria-labelledby="g-overview">
           <div class="group-name" id="g-overview">Overview</div>
           <button role="tab" data-tab="overview">Overview</button>
+          <button role="tab" data-tab="resources">Resources</button>
           <button role="tab" data-tab="logs">Logs</button>
         </div>
         <div class="group" role="group" aria-labelledby="g-companion">
@@ -43,12 +47,26 @@
           <button role="tab" data-tab="timeline">Mood timeline</button>
           <button role="tab" data-tab="chat">Chat &amp; memory</button>
           <button role="tab" data-tab="skills">Skills</button>
+          <button role="tab" data-tab="language">Language</button>
         </div>
         <div class="group" role="group" aria-labelledby="g-appearance">
           <div class="group-name" id="g-appearance">Appearance</div>
           <button role="tab" data-tab="looks">Looks</button>
           <button role="tab" data-tab="build">Build</button>
           <button role="tab" data-tab="animations">Animations</button>
+        </div>
+        <div class="group" role="group" aria-labelledby="g-config">
+          <div class="group-name" id="g-config">Settings</div>
+          <button role="tab" data-tab="cfg-general">General</button>
+          <button role="tab" data-tab="cfg-llm">LLM</button>
+          <button role="tab" data-tab="cfg-voice">Voice</button>
+          <button role="tab" data-tab="cfg-presence">Presence</button>
+          <button role="tab" data-tab="cfg-shortcuts">Shortcuts</button>
+          <button role="tab" data-tab="cfg-personality">Personality</button>
+          <button role="tab" data-tab="cfg-appearance">Appearance</button>
+          <button role="tab" data-tab="cfg-skills">Skills</button>
+          <button role="tab" data-tab="cfg-status">Status page</button>
+          <button role="tab" data-tab="cfg-server">Server &amp; storage</button>
         </div>
         <div class="group" role="group" aria-labelledby="g-models">
           <div class="group-name" id="g-models">Models</div>
@@ -91,6 +109,10 @@
           <img class="placement-pic" id="placementPic" alt="" hidden>
           <dl class="kv" id="placement"></dl>
         </section>
+        <section class="wide">
+          <h2>Resources <span class="sp"></span><a href="#resources" class="muted">history</a></h2>
+          <div id="resourceNow"></div>
+        </section>
       </div>
 
       <div class="tab" id="tab-thinking">
@@ -103,6 +125,196 @@
           <p class="reasoning-note" id="reasoningNote">Waiting for the first model call…</p>
           <div id="feed">
             <div class="empty">Nothing yet. Say something to the companion and each step shows up here as it happens.
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-cfg-general">
+        <section class="wide">
+          <h2>General <span class="sp"></span><span class="muted" data-cfg-path></span></h2>
+          <p class="reasoning-note">Logging. Part of <code>config.toml</code>: <b>Save</b> checks the whole file first,
+            keeps your comments and layout, and keeps the previous version as <code>config.toml.bak</code>. A setting
+            marked <span class="chip">live</span> applies at once; the rest are read at startup. Secrets are never shown
+            or changed here.</p>
+          <div data-cfg-page="general"></div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-cfg-llm">
+        <section class="wide">
+          <h2>LLM <span class="sp"></span><span class="muted" data-cfg-path></span></h2>
+          <p class="reasoning-note">The local model, the optional cloud model, and how replies are routed between them.
+            Part of <code>config.toml</code>: <b>Save</b> checks the whole file first, keeps your comments and layout,
+            and keeps the previous version as <code>config.toml.bak</code>. A setting marked <span
+              class="chip">live</span> applies at once; the rest are read at startup. Secrets are never shown or changed
+            here.</p>
+          <div data-cfg-page="llm"></div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-cfg-voice">
+        <section class="wide">
+          <h2>Voice <span class="sp"></span><span class="muted" data-cfg-path></span></h2>
+          <p class="reasoning-note">Speech recognition, speech synthesis (the engines, their voices and languages) and
+            lip-sync. Voice engines are read when the brain starts. Part of <code>config.toml</code>: <b>Save</b> checks
+            the whole file first, keeps your comments and layout, and keeps the previous version as
+            <code>config.toml.bak</code>. A setting marked <span class="chip">live</span> applies at once; the rest are
+            read at startup. Secrets are never shown or changed here.</p>
+          <div data-cfg-page="voice"></div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-cfg-presence">
+        <section class="wide">
+          <h2>Presence <span class="sp"></span><span class="muted" data-cfg-path></span></h2>
+          <p class="reasoning-note">Where the companion stands, how big it is, when it counts you as away, and the
+            speech bubble. Part of <code>config.toml</code>: <b>Save</b> checks the whole file first, keeps your
+            comments and layout, and keeps the previous version as <code>config.toml.bak</code>. A setting marked <span
+              class="chip">live</span> applies at once; the rest are read at startup. Secrets are never shown or changed
+            here.</p>
+          <div data-cfg-page="presence"></div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-cfg-shortcuts">
+        <section class="wide">
+          <h2>Shortcuts <span class="sp"></span><span class="muted" data-cfg-path></span></h2>
+          <p class="reasoning-note">The keyboard shortcuts for talking to the companion. Part of
+            <code>config.toml</code>: <b>Save</b> checks the whole file first, keeps your comments and layout, and keeps
+            the previous version as <code>config.toml.bak</code>. A setting marked <span class="chip">live</span>
+            applies at once; the rest are read at startup. Secrets are never shown or changed here.</p>
+          <div data-cfg-page="shortcuts"></div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-cfg-personality">
+        <section class="wide">
+          <h2>Personality <span class="sp"></span><span class="muted" data-cfg-path></span></h2>
+          <p class="reasoning-note">How the companion reflects on its conversations and how its mood settles. Its
+            language settings are on the Language page. Part of <code>config.toml</code>: <b>Save</b> checks the whole
+            file first, keeps your comments and layout, and keeps the previous version as <code>config.toml.bak</code>.
+            A setting marked <span class="chip">live</span> applies at once; the rest are read at startup. Secrets are
+            never shown or changed here.</p>
+          <div data-cfg-page="personality"></div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-cfg-appearance">
+        <section class="wide">
+          <h2>Appearance <span class="sp"></span><span class="muted" data-cfg-path></span></h2>
+          <p class="reasoning-note">How the companion's look is built and how often it may redesign itself. Part of
+            <code>config.toml</code>: <b>Save</b> checks the whole file first, keeps your comments and layout, and keeps
+            the previous version as <code>config.toml.bak</code>. A setting marked <span class="chip">live</span>
+            applies at once; the rest are read at startup. Secrets are never shown or changed here.</p>
+          <div data-cfg-page="appearance"></div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-cfg-skills">
+        <section class="wide">
+          <h2>Skills <span class="sp"></span><span class="muted" data-cfg-path></span></h2>
+          <p class="reasoning-note">What the companion may do besides talking, and the budgets for third-party skills.
+            Part of <code>config.toml</code>: <b>Save</b> checks the whole file first, keeps your comments and layout,
+            and keeps the previous version as <code>config.toml.bak</code>. A setting marked <span
+              class="chip">live</span> applies at once; the rest are read at startup. Secrets are never shown or changed
+            here.</p>
+          <div data-cfg-page="skills"></div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-cfg-status">
+        <section class="wide">
+          <h2>Status page <span class="sp"></span><span class="muted" data-cfg-path></span></h2>
+          <p class="reasoning-note">This Admin app: where it listens and which logs it shows. Read when the Admin app
+            starts. Part of <code>config.toml</code>: <b>Save</b> checks the whole file first, keeps your comments and
+            layout, and keeps the previous version as <code>config.toml.bak</code>. A setting marked <span
+              class="chip">live</span> applies at once; the rest are read at startup. Secrets are never shown or changed
+            here.</p>
+          <div data-cfg-page="status"></div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-cfg-server">
+        <section class="wide">
+          <h2>Server &amp; storage <span class="sp"></span><span class="muted" data-cfg-path></span></h2>
+          <p class="reasoning-note">Network binding and where your data lives. Shown here, but locked: a wrong value
+            would lock you out or move your data, so these are changed in config.toml. Part of <code>config.toml</code>:
+            <b>Save</b> checks the whole file first, keeps your comments and layout, and keeps the previous version as
+            <code>config.toml.bak</code>. A setting marked <span class="chip">live</span> applies at once; the rest are
+            read at startup. Secrets are never shown or changed here.</p>
+          <div data-cfg-page="server,storage"></div>
+        </section>
+      </div>
+
+      <div class="tab" id="tab-language">
+        <section class="wide">
+          <h2>Language settings <span class="sp"></span><span class="muted" id="lgSummary"></span></h2>
+          <p class="reasoning-note">How the companion handles languages: the language it talks in, its own home language
+            and how well it speaks the others (below the native level it speaks them with its home accent), and how it
+            decides which language you are using. <b>Save</b> applies at once, with no restart, and is kept in the
+            deploy directory; <code>config.toml</code> is never written and stays the default you can go back to.
+            What can be <i>spoken</i> depends on the installed voices (Overview shows them), not on these settings.</p>
+          <div class="status" id="lgNotice" role="status" aria-live="polite"></div>
+          <div class="lang">
+            <div class="lang-card">
+              <h3>Talking in</h3>
+              <div class="lang-row">
+                <label for="lgPin">Language</label>
+                <select id="lgPin"></select>
+                <span class="muted" id="lgPinHint"></span>
+              </div>
+              <p class="muted">Pinning is the same as telling the companion “talk to me in German”; it applies at once
+                and survives a restart. <i>Follow my language</i> detects it from what you write or say.</p>
+            </div>
+            <div class="lang-bar">
+              <span class="chip stale" id="lgDirty" hidden>unsaved changes</span>
+              <span class="sp"></span>
+              <button id="lgReset" type="button" title="Forget the saved settings; config.toml applies again">Back to
+                config.toml</button>
+              <button id="lgRevert" type="button" disabled>Discard changes</button>
+              <button id="lgSave" type="button" class="primary" disabled>Save</button>
+            </div>
+            <div class="reasoning-note problems warn" id="lgProblems" hidden></div>
+            <div class="lang-card">
+              <h3>The character</h3>
+              <div class="field-grid">
+                <label>Home language <input id="lgHome" type="text" placeholder="blank = default language"
+                    autocomplete="off"></label>
+                <label>Fluency in other languages: <b id="lgFluencyOut"></b>
+                  <input id="lgFluency" type="range" min="0" max="100" step="1"></label>
+                <label>Voice languages <input id="lgVoiceLanguages" type="text" placeholder="e.g. en, es"
+                    autocomplete="off"></label>
+              </div>
+              <h4>Fluency by language <span class="muted">(overrides the general level)</span></h4>
+              <div id="lgByLanguage"></div>
+              <button id="lgAddLanguage" type="button">Add a language</button>
+              <h4>Mixing languages</h4>
+              <div class="field-grid">
+                <label class="check"><input id="lgUseGlobalCs" type="checkbox"> No level of its own (the slider sets the
+                  general one)</label>
+                <label>Code-switching: <b id="lgCsOut"></b>
+                  <input id="lgCs" type="range" min="0" max="100" step="1"></label>
+              </div>
+              <p class="muted">0 keeps one language per reply. Higher lets it mix languages the way you do; from 50 it
+                also switches on its own.</p>
+              <div id="lgEffect" class="lang-effect"></div>
+            </div>
+            <div class="lang-card">
+              <h3>Detection and levels</h3>
+              <div class="field-grid">
+                <label>Default language <input id="lgDefault" type="text" autocomplete="off"></label>
+                <label>Languages in use <input id="lgEnabled" type="text" placeholder="e.g. en, es-mx"
+                    autocomplete="off"></label>
+                <label>Messages considered <input id="lgWindow" type="number" min="1" step="1"></label>
+                <label>Switch margin <input id="lgMargin" type="number" min="0" step="0.05"></label>
+                <label>Native from fluency <input id="lgNative" type="number" min="0" max="100" step="1"></label>
+                <label>Mostly home language below <input id="lgFloor" type="number" min="0" max="100" step="1"></label>
+              </div>
+              <p class="muted">“Languages in use” lets a detected Spanish become your regional Spanish (es-mx). A
+                language
+                must lead for the margin before the companion follows a switch, so one short message does not flip it.
+              </p>
             </div>
           </div>
         </section>
@@ -140,6 +352,24 @@
             companion knows what it can do.</p>
           <pre id="skillPrompt" class="mono boxed"></pre>
         </section>
+      </div>
+
+      <div class="tab" id="tab-resources">
+        <section class="wide rs-controls">
+          <h2>Resource use over time <span class="sp"></span>
+            <select id="rsRange" aria-label="Range">
+              <option value="1">1 hour</option>
+              <option value="6" selected>6 hours</option>
+              <option value="24">24 hours</option>
+              <option value="168">7 days</option>
+              <option value="336">14 days</option>
+            </select>
+            <button id="rsTable" aria-pressed="false">Table</button>
+          </h2>
+          <p class="muted" id="rsHint"></p>
+          <p class="muted" id="rsEmpty" hidden>No samples for this range yet. The status service records one every 30 seconds while it runs.</p>
+        </section>
+        <div id="rsCharts"></div>
       </div>
 
       <div class="tab" id="tab-timeline">

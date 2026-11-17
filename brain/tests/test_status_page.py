@@ -515,9 +515,10 @@ def test_a_write_must_be_a_small_json_object(settings, brain):
 
 
 def test_the_brains_refusal_reaches_the_page(settings, brain):
-    brain.status, brain.body = 422, {
-        "detail": "wardrobe.outfit 'x' is not available"
-    }
+    brain.status, brain.body = (
+        422,
+        {"detail": "wardrobe.outfit 'x' is not available"},
+    )
     r = _client().post(
         "/api/build/preview",
         json={"base_template": "primitive_blob"},
@@ -744,9 +745,15 @@ def test_the_navigation_is_a_sidebar_of_named_groups_and_every_page_is_in_one(
     html = _client().get("/").text
     side = html[html.index('id="nav"') : html.index("</aside>")]
     groups = re.findall(r'class="group-name"[^>]*>([^<]+)<', side)
-    assert groups == ["Overview", "Companion", "Appearance", "Models"]
-    tabs = re.findall(r'data-tab="([a-z]+)"', side)
-    panels = re.findall(r'class="tab" id="tab-([a-z]+)"', html)
+    assert groups == [
+        "Overview",
+        "Companion",
+        "Appearance",
+        "Settings",
+        "Models",
+    ]
+    tabs = re.findall(r'data-tab="([a-z-]+)"', side)
+    panels = re.findall(r'class="tab" id="tab-([a-z-]+)"', html)
     assert sorted(tabs) == sorted(
         panels
     )  # a page that is not in the menu cannot be reached
@@ -1186,14 +1193,19 @@ def test_model_settings_writes_need_the_guards_and_fit_the_size_limit(
     )
 
 
-def test_nothing_outside_the_two_writing_pages_can_change_anything(settings):
+def test_nothing_outside_the_writing_pages_can_change_anything(settings):
     for route in status_app.app.routes:
         if isinstance(route, APIRoute) and (route.methods or set()) - {
             "GET",
             "HEAD",
         }:
             assert route.path.startswith(
-                ("/api/build/", "/api/model-settings/")
+                (
+                    "/api/build/",
+                    "/api/model-settings/",
+                    "/api/language/",
+                    "/api/config/",
+                )
             ), route.path
     assert (
         _client()
@@ -1201,3 +1213,196 @@ def test_nothing_outside_the_two_writing_pages_can_change_anything(settings):
         .status_code
         == 405
     )
+
+
+# --- the Language settings page ---------------------------------------------------------------
+
+
+def test_language_settings_routes_relay_to_the_brain(settings, brain):
+    client = _client()
+    body = {"default": "en"}
+    for method, path, target in (
+        ("PUT", "/api/language/settings", "/language/settings"),
+        ("PUT", "/api/language/pin", "/language/pin"),
+    ):
+        brain.calls.clear()
+        r = client.request(method, path, json=body, headers=WRITE_HEADERS)
+        assert r.status_code == 202, (path, r.text)
+        assert brain.calls == [(method, target, body)]
+    brain.calls.clear()
+    assert (
+        client.delete(
+            "/api/language/settings", headers=WRITE_HEADERS
+        ).status_code
+        == 202
+    )
+    assert brain.calls == [("DELETE", "/language/settings", None)]
+    brain.calls.clear()
+    client.get("/api/language/settings")
+    assert brain.calls == [("GET", "/language/settings", None)]
+
+
+def test_language_settings_writes_need_the_guards(settings, brain):
+    client = _client()
+    no_header = {
+        k: v for k, v in WRITE_HEADERS.items() if k != "x-deskmate-admin"
+    }
+    foreign = {**WRITE_HEADERS, "origin": "http://evil.example"}
+    for headers in (no_header, foreign):
+        assert (
+            client.put(
+                "/api/language/settings", json={}, headers=headers
+            ).status_code
+            == 403
+        )
+        assert (
+            client.put(
+                "/api/language/pin", json={"code": "es"}, headers=headers
+            ).status_code
+            == 403
+        )
+        assert (
+            client.delete("/api/language/settings", headers=headers).status_code
+            == 403
+        )
+    assert brain.calls == []
+
+
+# --- the Settings page (the graphical alternative to editing config.toml) ---------------------
+
+
+@pytest.fixture
+def config_file(tmp_path, monkeypatch):
+    from brain.tests.test_config_editor import CONFIG
+
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG)
+    monkeypatch.setattr(status_app, "_config_path", lambda: path)
+    return path
+
+
+def test_config_get_and_save_work_without_the_brain(settings, config_file):
+    client = (
+        _client()
+    )  # no `brain` fixture: nothing answers on the brain's port
+    d = client.get("/api/config/get").json()
+    assert "sk-super-secret-value" not in json.dumps(d)
+    r = client.put(
+        "/api/config/save",
+        json={
+            "hash": d["hash"],
+            "changes": [{"path": ["voice", "tts", "volume"], "value": 0.6}],
+        },
+        headers=WRITE_HEADERS,
+    )
+    assert r.status_code == 200 and r.json()["applied"][0]["apply"] == "live"
+    assert "volume = 0.6" in config_file.read_text()
+    assert "# Deskmate test config" in config_file.read_text()
+
+
+def test_config_save_refusals(settings, config_file):
+    client = _client()
+    d = client.get("/api/config/get").json()
+    bad = client.put(
+        "/api/config/save",
+        json={
+            "hash": d["hash"],
+            "changes": [{"path": ["voice", "tts", "volume"], "value": 9}],
+        },
+        headers=WRITE_HEADERS,
+    )
+    assert bad.status_code == 422 and "volume" in bad.json()["detail"]
+    locked = client.put(
+        "/api/config/save",
+        json={
+            "hash": d["hash"],
+            "changes": [{"path": ["storage", "deploy_dir"], "value": "/x"}],
+        },
+        headers=WRITE_HEADERS,
+    )
+    assert locked.status_code == 422
+    stale = client.put(
+        "/api/config/save",
+        json={
+            "hash": "0" * 64,
+            "changes": [{"path": ["voice", "tts", "volume"], "value": 0.2}],
+        },
+        headers=WRITE_HEADERS,
+    )
+    assert stale.status_code == 409
+    assert (
+        client.put(
+            "/api/config/save", json={"changes": 1}, headers=WRITE_HEADERS
+        ).status_code
+        == 400
+    )
+    from brain.tests.test_config_editor import CONFIG
+
+    assert config_file.read_text() == CONFIG
+
+
+def test_config_writes_need_the_guards(settings, config_file):
+    client = _client()
+    no_header = {
+        k: v for k, v in WRITE_HEADERS.items() if k != "x-deskmate-admin"
+    }
+    for path, method in (
+        ("/api/config/save", "put"),
+        ("/api/config/restore", "post"),
+        ("/api/config/restart-brain", "post"),
+    ):
+        assert (
+            getattr(client, method)(
+                path, json={}, headers=no_header
+            ).status_code
+            == 403
+        )
+
+
+def test_restart_brain_runs_only_the_fixed_unit(settings, monkeypatch):
+    calls = []
+
+    async def fake_run(*args, timeout=3.0):
+        calls.append(args)
+        return 0, ""
+
+    monkeypatch.setattr(status_app, "_run", fake_run)
+    r = _client().post(
+        "/api/config/restart-brain",
+        json={"unit": "evil.service"},
+        headers=WRITE_HEADERS,
+    )
+    assert r.status_code == 200
+    assert calls == [
+        ("systemctl", "--user", "restart", "deskmate-brain.service")
+    ]
+
+
+def test_every_config_section_has_its_own_settings_page(settings):
+    """One page per config.toml table; the Language page stays in the Companion group."""
+    import re
+
+    from brain import config_editor
+
+    html = _client().get("/").text
+    side = html[html.index('id="nav"') : html.index("</aside>")]
+    settings_group = side[
+        side.index('id="g-config"') : side.index('id="g-models"')
+    ]
+    assert 'data-tab="language"' not in settings_group
+    companion = side[
+        side.index('id="g-companion"') : side.index('id="g-appearance"')
+    ]
+    assert 'data-tab="language"' in companion
+    pages = re.findall(r'data-cfg-page="([a-z_,]+)"', html)
+    covered = {name for p in pages for name in p.split(",")}
+    from brain.config import Settings
+
+    tables = {
+        n
+        for n, f in Settings.model_fields.items()
+        if isinstance(f.annotation, type)
+        and f.annotation.__name__.endswith("Config")
+    } - config_editor.HIDDEN_TABLES
+    assert tables == covered
+    assert len(pages) == len(set(pages))  # no table on two pages

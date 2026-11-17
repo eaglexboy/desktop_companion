@@ -23,11 +23,14 @@ from pydantic import (
     ConfigDict,
     Field,
     ValidationError,
+    field_validator,
     model_validator,
 )
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 from watchdog.observers.api import BaseObserver
+
+from brain.language import normalize_language
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +207,7 @@ class STTLocalConfig(StrictModel):
     # below. Literal (not bare str) so a typo is a loud config error rather
     # than an unrecognized-engine error surfacing deep in the STT code path.
     engine: Literal["faster-whisper"] = "faster-whisper"
-    model_size: str = "base.en"
+    model_size: str = "base"
     device: str = "auto"
     compute_type: str = "int8"
 
@@ -256,6 +259,11 @@ class TTSLocalConfig(StrictModel):
     # rather than carrying their own "voices/" prefix.
     voice_model_path: str = "default.onnx"
     voice_config_path: str = "default.onnx.json"
+    # Language -> voice model file (relative to voices_dir), for Piper's
+    # one-voice-per-language models, e.g. { es-mx = "es_MX-claude-high.onnx" }.
+    # `voice_model_path` is the entry for the default language. A turn in a
+    # language with no entry is not spoken by Piper.
+    voice_models: dict[str, str] = Field(default_factory=dict)
 
 
 class SeedVoices(StrictModel):
@@ -330,6 +338,25 @@ class TTSRemoteEntry(StrictModel):
     voice_sample: str = ""
     # Transcript of voice_sample; tts_serve only (sent as reference_text).
     voice_sample_text: str = ""
+    # Language capability (docs/ADR_MULTI_LANGUAGE_CHAT.md 2.5.1). Defaults
+    # read an entry as English-only, one language per instance.
+    languages: list[str] = Field(default_factory=lambda: ["en"])
+    selection: Literal["fixed", "per_request", "inferred"] = "fixed"
+    # True only after listening: the engine reads text outside `languages`
+    # with its own phonetics (this is what makes accented speech possible).
+    foreign_text: bool = False
+    cloning: bool = False
+
+    @field_validator("languages")
+    @classmethod
+    def _normalize_languages(cls, v: list[str]) -> list[str]:
+        out = []
+        for item in v:
+            tag = "*" if item == "*" else normalize_language(item)
+            if tag is None:
+                raise ValueError(f"not a language tag: {item!r}")
+            out.append(tag)
+        return out
 
     @model_validator(mode="after")
     def _check_voice_sample_if_enabled(self) -> TTSRemoteEntry:
@@ -391,6 +418,94 @@ class VoiceConfig(StrictModel):
     # ~1.3s for the same clip with a similar spread of mouth shapes, which is
     # plenty for a small stylized mouth, so it is the default.
     lipsync_recognizer: Literal["phonetic", "pocketSphinx"] = "phonetic"
+
+
+class LanguageProfileConfig(StrictModel):
+    """The active character's language fields (ADR_MULTI_LANGUAGE_CHAT 2.6).
+    They live here until personality profiles ship; a profile file will carry
+    the same keys under `language` / `voice.languages`. With none set the
+    character is fully fluent in every language, home = the default language."""
+
+    home: str = ""  # "" = the configured default language
+    fluency: int = Field(
+        default=100, ge=0, le=100
+    )  # level in any non-home language
+    fluency_by_language: dict[str, int] = Field(default_factory=dict)
+    code_switching: int | None = Field(
+        default=None, ge=0, le=100
+    )  # None = global
+    voice_languages: list[str] = Field(default_factory=list)  # informational
+
+    @field_validator("home")
+    @classmethod
+    def _normalize_home(cls, v: str) -> str:
+        if not v:
+            return ""
+        tag = normalize_language(v)
+        if tag is None:
+            raise ValueError(f"not a language tag: {v!r}")
+        return tag
+
+    @field_validator("fluency_by_language")
+    @classmethod
+    def _normalize_fluency_keys(cls, v: dict[str, int]) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for key, level in v.items():
+            tag = normalize_language(key)
+            if tag is None:
+                raise ValueError(f"not a language tag: {key!r}")
+            if not 0 <= level <= 100:
+                raise ValueError("fluency must be 0-100")
+            out[tag] = level
+        return out
+
+
+class LanguageConfig(StrictModel):
+    """docs/ADR_MULTI_LANGUAGE_CHAT.md. Defaults keep an English-only install
+    behaving as before."""
+
+    default: str = "en"
+    # Detection: recency-weighted score over the last `window` user messages;
+    # another language must lead by `margin` to take over.
+    window: int = Field(default=5, ge=1)
+    margin: float = Field(default=0.25, ge=0.0)
+    # Languages the companion is expected to handle, so a detected `es` can
+    # resolve to the configured regional `es-mx`.
+    enabled: list[str] = Field(default_factory=list)
+    # Fluency at or above this speaks natively; below it speaks with the home
+    # language's accent. Below `wording_floor` the character answers mainly in
+    # its home language. Starting values, tuned by ear.
+    native_threshold: int = Field(default=80, ge=0, le=100)
+    wording_floor: int = Field(default=20, ge=0, le=100)
+    # 0 = one language per reply; higher lets the character mix languages the
+    # way the user does (a profile can override it).
+    code_switching: int = Field(default=0, ge=0, le=100)
+    profile: LanguageProfileConfig = Field(
+        default_factory=LanguageProfileConfig
+    )
+
+    @property
+    def home(self) -> str:
+        return self.profile.home or self.default
+
+    @field_validator("default")
+    @classmethod
+    def _normalize_default(cls, v: str) -> str:
+        tag = normalize_language(v)
+        if tag is None:
+            raise ValueError(f"not a language tag: {v!r}")
+        return tag
+
+    @field_validator("enabled")
+    @classmethod
+    def _normalize_enabled(cls, v: list[str]) -> list[str]:
+        out = []
+        for item in v:
+            tag = normalize_language(item)
+            if tag is None:
+                raise ValueError(f"not a language tag: {item!r}")
+            out.append(tag)
+        return out
 
 
 class PresenceConfig(StrictModel):
@@ -503,6 +618,47 @@ class SkillsConfig(StrictModel):
     max_script_workers: int = Field(default=4, ge=1)
 
 
+class ResourceSource(StrictModel):
+    """A resource sidecar (status_page/resources_agent.py, docs/SPEC_RESOURCE_SIDECAR.md) to pull from."""
+
+    url: str
+    # This status page's own token for that sidecar: an env:NAME reference, like every secret here.
+    # Blank only for a sidecar on this machine that has no clients configured.
+    token: str = ""
+    timeout_s: float = Field(default=5.0, gt=0, le=60)
+
+
+class ResourcesConfig(StrictModel):
+    """Resource use over time. The Admin app measures nothing itself: every machine to chart, this one
+    included, runs a sidecar that reads its own processes and GPU, and each is a source here.
+    """
+
+    enabled: bool = True
+    interval_s: float = Field(default=30.0, ge=5, le=3600)
+    retention_days: float = Field(default=14.0, ge=0.1, le=365)
+    # name -> sidecar. The name prefixes that machine's series, "<name>/<process>".
+    sources: dict[str, ResourceSource] = Field(default_factory=dict)
+
+    @field_validator("sources")
+    @classmethod
+    def _plain_names(
+        cls, value: dict[str, ResourceSource]
+    ) -> dict[str, ResourceSource]:
+        for name in value:
+            if "/" in name or not name:
+                raise ValueError("a source name cannot be empty or contain '/'")
+        return value
+
+    @model_validator(mode="after")
+    def _resolve_tokens(self) -> ResourcesConfig:
+        if self.enabled:
+            for source in self.sources.values():
+                source.token = (
+                    _resolve_secret(source.token) if source.token else ""
+                )
+        return self
+
+
 class StatusConfig(StrictModel):
     """The standalone status page (status_page/), a separate process from the
     brain so it stays up when the brain is down. Read by that service only."""
@@ -515,6 +671,8 @@ class StatusConfig(StrictModel):
     )
     # name -> file path, shown as extra log panes (e.g. tts-serve's server.log).
     extra_logs: dict[str, str] = Field(default_factory=dict)
+    # Resource use over time (docs/SPEC_OVERVIEW.md, the Resources page).
+    resources: ResourcesConfig = Field(default_factory=ResourcesConfig)
 
 
 class Settings(StrictModel):
@@ -529,6 +687,7 @@ class Settings(StrictModel):
     appearance: AppearanceConfig = Field(default_factory=AppearanceConfig)
     status: StatusConfig = Field(default_factory=StatusConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    language: LanguageConfig = Field(default_factory=LanguageConfig)
 
     # --- Derived paths (storage.workspace_dir = ephemeral scratch,
     # storage.deploy_dir = persistent state -- true siblings, not nested,

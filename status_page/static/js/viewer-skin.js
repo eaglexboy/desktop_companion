@@ -21,6 +21,13 @@ import * as THREE from "three";
  * @property {Float32Array} weight
  */
 
+/**
+ * What `restFrames` measures on a body.
+ * @typedef {object} RestFrames
+ * @property {Record<string, Frame>} frames
+ * @property {BodySkin | null} skin
+ */
+
 const HIPS = "pelvis";
 const OUTFIT_KEEPS = ["head", "neck"];
 const SOCKET_BONES = { head: "head", neck: "neck_01" };
@@ -212,7 +219,7 @@ export function skinLikeBody(source, world, skin) {
  * to Preview. Measured once, at rest, as the model loads.
  * @param {THREE.Object3D} body
  * @param {THREE.Object3D | null} outfit
- * @returns {{ frames: Record<string, Frame>, skin: BodySkin | null }}
+ * @returns {RestFrames}
  */
 export function restFrames(body, outfit) {
   const meshes = [...skinnedMeshes(body), ...skinnedMeshes(outfit)];

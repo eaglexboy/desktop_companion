@@ -148,6 +148,13 @@ Window {
     }
     // Sentences of the current reply spoken so far (shown in the bubble).
     property var bubbleSentences: []
+    // Right-to-left languages (Arabic, Hebrew, Persian, Urdu) flow right-to-left
+    // in the bubble. Decided per reply from the daemon's `reply_language` (the
+    // dominant language of a mixed reply); the client does no detection of its own.
+    property bool bubbleRtl: false
+    function isRtlLanguage(tag) {
+        return /^(ar|he|fa|ur)(-|$)/i.test(tag || "");
+    }
     // The bubble shows the most recent sentences that fit ~240 chars, so a
     // missed sentence can still be read while the reply continues.
     readonly property string bubbleText: {
@@ -334,8 +341,10 @@ Window {
         root.activeUtteranceId = chunk.utterance_id || "";
         root.activeChunkFinal = chunk.final !== false;
         bubbleHideTimer.stop();
-        if ((chunk.chunk_seq || 0) === 0)
+        if ((chunk.chunk_seq || 0) === 0) {
             root.bubbleSentences = [];
+            root.bubbleRtl = root.isRtlLanguage(chunk.reply_language || chunk.language);
+        }
         if (chunk.text) {
             const spoken = root.bubbleSentences.slice();
             spoken.push(chunk.text);
@@ -852,6 +861,7 @@ Window {
     SpeechBubble {
         id: speechBubble
         text: root.bubbleText
+        rtl: root.bubbleRtl
         enabled: root.showSpeechBubble
         avatarHidden: root.hidden
         avatarWidth: root.avatarWidth

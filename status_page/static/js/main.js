@@ -11,6 +11,9 @@ import { initLooks } from "./looks.js";
 import { initAnimations } from "./animations.js";
 import { initBuild } from "./build.js";
 import { initSettings } from "./settings.js";
+import { initLanguage } from "./language.js";
+import { initConfig } from "./config.js";
+import { initResources } from "./resources.js";
 import { initLogs } from "./logs.js";
 import { connectStream } from "./stream.js";
 
@@ -20,10 +23,13 @@ initSkills();
 initThinking();
 initTimeline();
 initLogs();
+initResources();
 initLooks();
 initAnimations();
 initBuild();
 initSettings();
+initLanguage();
+initConfig();
 initTabs(); // after the listeners above, so the first "tab" event reaches them
 initOverview(); // starts polling; the first result fans out to every panel
 connectStream();

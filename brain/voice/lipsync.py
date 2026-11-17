@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from blender.viseme_shapekeys import shape_key_name
+from brain.language import primary_language
 
 
 @dataclass(frozen=True)
@@ -41,18 +42,27 @@ class RhubarbLipSync:
         self.recognizer = recognizer
 
     async def extract_visemes(
-        self, wav_path: Path, dialog_text: str | None = None
+        self,
+        wav_path: Path,
+        dialog_text: str | None = None,
+        language: str | None = None,
     ) -> list[VisemeFrame]:
         """Runs rhubarb against `wav_path`, optionally passing `dialog_text`
         (the known text that was synthesized -- always available here,
         since we generated the audio ourselves, which is exactly the case
         Rhubarb's own docs say `--dialogFile` most improves)."""
+        recognizer = self.recognizer
+        if language and primary_language(language) != "en":
+            # pocketSphinx (and its dialog file) is English-only; the phonetic
+            # recognizer is language-independent (ADR_MULTI_LANGUAGE_CHAT 2.5.7).
+            recognizer = "phonetic"
+            dialog_text = None
         with tempfile.TemporaryDirectory() as tmp:
             out_json = Path(tmp) / "visemes.json"
             args = [
                 self.rhubarb_bin,
                 "-r",
-                self.recognizer,
+                recognizer,
                 "-f",
                 "json",
                 "-o",
@@ -101,6 +111,7 @@ async def extract_visemes_if_needed(
     *,
     has_face: bool,
     dialog_text: str | None = None,
+    language: str | None = None,
 ) -> list[VisemeFrame]:
     """Extraction is bypassed completely if has_face == false -- a faceless
     avatar has no viseme shape keys to drive at all (see
@@ -108,4 +119,6 @@ async def extract_visemes_if_needed(
     even shell out to rhubarb."""
     if not has_face:
         return []
-    return await lipsync.extract_visemes(wav_path, dialog_text)
+    if language is None:
+        return await lipsync.extract_visemes(wav_path, dialog_text)
+    return await lipsync.extract_visemes(wav_path, dialog_text, language)

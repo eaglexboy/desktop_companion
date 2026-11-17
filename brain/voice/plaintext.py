@@ -10,6 +10,9 @@ bubble, the stored chat and the chat_response event all agree.
 from __future__ import annotations
 
 import re
+from functools import partial
+
+from brain.language import lookup_by_language
 
 _CODE_FENCE = re.compile(r"```[^\n]*\n?(.*?)```", re.DOTALL)
 _INLINE_CODE = re.compile(r"`([^`\n]*)`")
@@ -22,9 +25,16 @@ _BARE_URL = re.compile(r"https?://\S+")
 # controls; VoxCPM only a voice-design prefix, which cloning ignores), so a cue
 # is rewritten as a sound the engine can actually say. Tune the table by ear.
 _SINGLE_STAR = re.compile(r"(?<![*\w])\*(?!\*)([^*\n]{1,200}?)\*(?![*\w])")
-_VOCAL_CUES: tuple[tuple[re.Pattern[str], str], ...] = tuple(
-    (re.compile(pattern, re.IGNORECASE), sound)
-    for pattern, sound in (
+
+
+def _cue_table(
+    rows: tuple[tuple[str, str], ...],
+) -> tuple[tuple[re.Pattern[str], str], ...]:
+    return tuple((re.compile(p, re.IGNORECASE), sound) for p, sound in rows)
+
+
+_VOCAL_CUES_EN = _cue_table(
+    (
         (r"\bsigh", "Ahhh..."),
         (r"\bgasp", "Oh!"),
         (r"\bgiggl|\btitter", "Hee hee."),
@@ -39,6 +49,30 @@ _VOCAL_CUES: tuple[tuple[re.Pattern[str], str], ...] = tuple(
         (r"\bwhistl|\bwhew|\bphew", "Whew."),
     )
 )
+_VOCAL_CUES = _VOCAL_CUES_EN
+
+# Spoken stand-ins per language (docs/ADR_MULTI_LANGUAGE_CHAT.md 2.5.6). The
+# model may write the cue word in either language, so each table also matches
+# the English word. A language with no table drops the cue rather than
+# speaking an English sound inside foreign speech. `es-mx` uses `es`.
+_VOCAL_CUES_ES = _cue_table(
+    (
+        (r"\bsuspir|\bsigh", "Ahhh..."),
+        (r"\bjadea|\bgasp|\bsorprend", "¡Oh!"),
+        (r"\bris(?:it|ill)|\bgiggl", "Ji ji."),
+        (r"\bcarcajea|\bríe|\brie\b|\bríen|\blaugh|\bchuckl", "Ja ja ja."),
+        (r"\bgru[ñn]e|\brefunfu|\bugh\b|\bgroan", "Ugh."),
+        (r"\btarare|\bmmm|\bhmm|\bpiensa|\bponder", "Mmm."),
+        (r"garganta|\btose|\btos\b|\bahem", "Ejem."),
+        (r"\bbosteza|\byawn", "Aaaah."),
+        (r"\bresopla|\bbufa|\bhmph", "Bah."),
+        (r"\bsilba|\bwhew|\bphew|\buf\b", "Uf."),
+    )
+)
+VOCAL_CUES: dict[str, tuple[tuple[re.Pattern[str], str], ...]] = {
+    "en": _VOCAL_CUES_EN,
+    "es": _VOCAL_CUES_ES,
+}
 
 
 # Verbs a model writes as a one-word silent stage direction ("*smiles*",
@@ -172,11 +206,14 @@ def _is_silent_action(word: str) -> bool:
 _DROPPED = "\x00"
 
 
-def _star_span(match: re.Match[str]) -> str:
+def _star_span(match: re.Match[str], language: str = "en") -> str:
     inner = match.group(1).strip()
-    for pattern, sound in _VOCAL_CUES:
+    table = lookup_by_language(VOCAL_CUES, language)
+    for pattern, sound in table or ():
         if pattern.search(inner):
             return sound
+    if table is None and _is_cue_like(inner):
+        return _DROPPED
     words = inner.split()
     # Anything longer than a word is a silent action with nothing to say
     # aloud. One word is emphasis and keeps its word -- unless it is an
@@ -213,14 +250,22 @@ _EMOJI = re.compile(
 _SENTENCE_END = (".", "!", "?", ":", ";", ",")
 
 
-def to_plain_speech(text: str) -> str:
+def _is_cue_like(inner: str) -> bool:
+    """With no cue table for the language, a starred English cue word still must
+    not be spoken: it is dropped. Other starred words are emphasis."""
+    return any(p.search(inner) for p, _ in _VOCAL_CUES_EN)
+
+
+def to_plain_speech(text: str, language: str = "en") -> str:
     text = _CODE_FENCE.sub(lambda m: m.group(1), text)
     text = _IMAGE.sub("", text)
     text = _LINK.sub(r"\1", text)
     text = _BARE_URL.sub("", text)
     text = _INLINE_CODE.sub(r"\1", text)
-    text = _SINGLE_STAR.sub(_star_span, text)
-    text = re.sub(r"[ \t]*\x00(?=[ \t]*[.,!?;:…])", "", text).replace(_DROPPED, "")
+    text = _SINGLE_STAR.sub(partial(_star_span, language=language), text)
+    text = re.sub(r"[ \t]*\x00(?=[ \t]*[.,!?;:…])", "", text).replace(
+        _DROPPED, ""
+    )
     text = _BOLD.sub(r"\2", text)
     text = _STRIKE.sub(r"\1", text)
     text = _ITALIC_UNDERSCORE.sub(r"\1", text)

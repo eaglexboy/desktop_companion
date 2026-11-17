@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from brain.language import language_name
 from brain.skills.registry import Param, Skill, SkillRegistry
 
 GESTURES = (
@@ -31,7 +32,7 @@ def gesture_intensity(state: Any) -> float:
         )
     except (
         Exception
-    ):  # noqa: BLE001 -- a gesture must never fail for want of a mood
+    ):  # noqa: BLE001 -- a malformed mood must not break the skill
         return 0.5
     return max(0.0, min(1.0, 0.5 + lift / 100.0))
 
@@ -69,6 +70,31 @@ async def _revert_look(args: dict[str, Any], state: Any) -> str:
 
 async def _unlock_look(_args: dict[str, Any], state: Any) -> str:
     return await state.evolution.unlock_appearance()
+
+
+async def _set_language(args: dict[str, Any], state: Any) -> str:
+    code = str(args["code"]).strip()
+    try:
+        tag = state.language.set_pin(code)
+    except ValueError:
+        return f"unknown language {code!r}"
+    if tag is None:
+        return "language set to auto: follow the user's language"
+    return f"language pinned to {language_name(tag)} ({tag})"
+
+
+async def _auto_language(_args: dict[str, Any], state: Any) -> str:
+    state.language.set_pin(None)
+    return "language set to auto: follow the user's language"
+
+
+async def _get_language(_args: dict[str, Any], state: Any) -> str:
+    pin = state.language.pin
+    return (
+        f"pinned to {language_name(pin)}"
+        if pin
+        else f"following the user's language, currently {language_name(state.language.autonomous())}"
+    )
 
 
 def register_builtin(registry: SkillRegistry) -> None:
@@ -117,5 +143,29 @@ def register_builtin(registry: SkillRegistry) -> None:
             "free yourself to change your look again; use when the user says you may change your look "
             "(you keep an imported model until they do)",
             _unlock_look,
+        )
+    )
+    registry.register(
+        Skill(
+            "set_language",
+            "talk to the user in one language from now on (a language code like es, es-mx, de), "
+            'or "auto" to follow whichever language they use; use only when they ask',
+            _set_language,
+            (Param("code", "language code, or auto"),),
+        )
+    )
+    registry.register(
+        Skill(
+            "get_language",
+            "check which language you are talking in",
+            _get_language,
+        )
+    )
+    registry.register(
+        Skill(
+            "auto_language",
+            "stop talking in a fixed language and follow whichever language the user writes in "
+            "again; use when they ask you to go back to automatic or to detect their language",
+            _auto_language,
         )
     )

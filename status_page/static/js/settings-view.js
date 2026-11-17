@@ -7,6 +7,7 @@ import * as doc from "./settings-doc.js";
 
 /**
  * @typedef {import("./settings-state.js").Info} Info
+ * @typedef {import("./settings-state.js").Focus} Focus
  * @typedef {import("./settings-state.js").Checked} Checked
  * @typedef {import("./settings-doc.js").Settings} Settings
  */
@@ -197,7 +198,7 @@ export function animations(info, draft, showAll) {
 /**
  * @param {Info} info
  * @param {Settings} draft
- * @param {{ socket: string, item: string } | null} focus
+ * @param {Focus | null} focus
  */
 export function accessories(info, draft, focus) {
   const { choices } = info;
@@ -408,7 +409,7 @@ const NOTHING = "__nothing__";
  * @param {Info} info
  * @param {Settings} draft
  * @param {Record<string, string | null>} picks
- * @param {{ socket: string, item: string } | null} focus
+ * @param {Focus | null} focus
  */
 export function sheetPicker(info, draft, picks, focus) {
   const { choices } = info;

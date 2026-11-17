@@ -20,7 +20,8 @@ The project is built as a reusable, modular system where all machine-specific pa
 
 * **Skills & Sub-Agent Orchestration (V2+ Roadmap):** Deterministic script DAG execution and cognitive multi-turn sub-agents governed by the Inference Capacity Governor (ICG) are detailed in [ADR_SKILLS_AND_AGENT_ORCHESTRATION.md](ADR_SKILLS_AND_AGENT_ORCHESTRATION.md).
 
-* **Configuration Interface:** V1 relies on direct editing of `$XDG_CONFIG_HOME/deskmate/config.toml` with live zero-downtime hot-reloading. Dedicated graphical settings interfaces are deferred to V2+.
+* **Configuration Interface:** `$XDG_CONFIG_HOME/deskmate/config.toml` is the source of truth, hot-reloaded without downtime when it is edited by hand. The Admin app's Settings page is a graphical alternative to hand editing (validated writes that keep comments and layout, see `brain/config_editor.py`); the Language page keeps the character's language settings in the deploy directory instead ([ADR_MULTI_LANGUAGE_CHAT.md](ADR_MULTI_LANGUAGE_CHAT.md)).
+* **Resource Monitoring:** The Admin app charts memory, threads, open files, CPU and GPU use over time (the Resources page, and current values with a trend on the Overview), but measures nothing itself: every machine to chart, the Admin app's own included, runs a small sidecar that reads its own processes in whatever way its OS needs and serves them over HTTP, one token per client. That keeps the capability the same on every OS, and a machine nobody has covered only needs a sidecar that speaks the contract. Which processes to follow, and which sidecars to ask, is configuration, never code ([SPEC_RESOURCE_SIDECAR.md](SPEC_RESOURCE_SIDECAR.md)).
 
 ## Architectural Components
 

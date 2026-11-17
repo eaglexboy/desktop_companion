@@ -29,6 +29,7 @@ test that builds `AppState` quietly dependent on network access.
 from __future__ import annotations
 
 import asyncio
+import logging
 import wave
 from pathlib import Path
 from typing import Any
@@ -36,9 +37,11 @@ from typing import Any
 import numpy as np
 
 from brain.config import STTLocalConfig
-from brain.voice.stt import STTBackend
+from brain.language import normalize_language, primary_language
+from brain.voice.stt import STTBackend, Transcript
 
 _WHISPER_SAMPLE_RATE = 16000
+logger = logging.getLogger("deskmate.voice.stt_local")
 
 
 def _read_wav_as_float32(wav_path: Path) -> tuple[np.ndarray, int]:
@@ -70,6 +73,7 @@ class FasterWhisperSTTBackend(STTBackend):
     def __init__(self, config: STTLocalConfig) -> None:
         self._config = config
         self._model: Any | None = None
+        self._warned_english_only = False
 
     def _ensure_model_sync(self) -> Any:
         if self._model is None:
@@ -84,16 +88,38 @@ class FasterWhisperSTTBackend(STTBackend):
             )
         return self._model
 
-    def _transcribe_sync(self, wav_path: Path, language: str | None) -> str:
+    def _transcribe_sync(
+        self, wav_path: Path, language: str | None
+    ) -> Transcript:
         model = self._ensure_model_sync()
+        # Whisper takes plain codes; a regional tag (es-mx) is just `es` to it.
+        hint = primary_language(normalize_language(language) or "") or None
         audio, sample_rate = _read_wav_as_float32(wav_path)
         audio = _resample_to_whisper_rate(audio, sample_rate)
-        segments, _info = model.transcribe(audio, language=language)
-        return " ".join(segment.text.strip() for segment in segments).strip()
+        if self._config.model_size.endswith(".en"):
+            # An English-only model cannot transcribe anything else.
+            if hint not in (None, "en") and not self._warned_english_only:
+                self._warned_english_only = True
+                logger.warning(
+                    "STT model %r is English-only but the turn language is %r; "
+                    "set [voice.stt.local] model_size to a multilingual model",
+                    self._config.model_size,
+                    hint,
+                )
+            hint = "en"
+        segments, info = model.transcribe(audio, language=hint)
+        text = " ".join(segment.text.strip() for segment in segments).strip()
+        detected = normalize_language(getattr(info, "language", None))
+        probability = getattr(info, "language_probability", None)
+        return Transcript(
+            text,
+            detected,
+            float(probability) if probability is not None else None,
+        )
 
     async def transcribe(
         self, wav_path: Path, *, language: str | None = None
-    ) -> str:
+    ) -> Transcript:
         return await asyncio.to_thread(
             self._transcribe_sync, wav_path, language
         )

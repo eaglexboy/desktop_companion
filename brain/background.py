@@ -33,7 +33,9 @@ async def _reflection_loop(state: AppState) -> None:
     while True:
         await asyncio.sleep(state.settings.personality.reflection_interval_s)
         try:
-            await run_reflection(state.store, state.local_pool)
+            await run_reflection(
+                state.store, state.local_pool, state.language.autonomous()
+            )
         except Exception:
             logger.exception("reflection loop iteration failed")
         try:

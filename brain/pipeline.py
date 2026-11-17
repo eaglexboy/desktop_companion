@@ -18,6 +18,16 @@ from brain.app_state import AppState
 from brain.appearance.manifest import load_manifest
 from brain.events import begin_turn, emit
 from brain.ipc.server import project_manifest
+from brain.language import (
+    detect_language_request,
+    dominant_language,
+    identify_text,
+    language_name,
+    native_name,
+    primary_language,
+    split_language_spans,
+)
+from brain.messages import has_language, message
 from brain.personality.prompts import build_system_prompt, rank_memory_notes
 from brain.presence.desktop_bridge import PresenceState
 from brain.presence.placement import (
@@ -39,6 +49,7 @@ from brain.voice.delivery import pick_delivery
 from brain.voice.lipsync import extract_visemes_if_needed
 from brain.voice.plaintext import to_plain_speech
 from brain.voice.stereo import ensure_stereo_wav
+from brain.voice.tts import SpeechUnavailable
 
 logger = logging.getLogger("deskmate.main")
 
@@ -56,7 +67,7 @@ def _is_long_or_code(text: str) -> bool:
 # Sentence terminators: a run of non-terminator characters followed by one or
 # more of . ! ? -- the same boundary rule the TalkWithMe reference client uses
 # to keep each TTS request short enough to finish inside a remote timeout.
-_SENTENCE_RE = re.compile(r"[^.!?]*[.!?]+")
+_SENTENCE_RE = re.compile(r"[^.!?。！？]*[.!?。！？]+")
 
 
 def split_sentences(text: str) -> list[str]:
@@ -72,8 +83,102 @@ def split_sentences(text: str) -> list[str]:
     return [s for s in sentences if re.search(r"\w", s)]
 
 
+def _written_language(state: AppState, text: str, language: str) -> str | None:
+    """The language `text` is clearly written in when it is not `language`
+    (as the configured regional tag), else None. A clear lead, not a high share:
+    the identifier splits its score among similar languages, so a plain Spanish
+    sentence tops out near 0.4."""
+    guess = identify_text(text)
+    if (
+        len(guess) > 0
+        and len(text.split()) >= 4
+        and primary_language(guess[0][0]) != primary_language(language)
+        and guess[0][1] >= 0.35
+        and guess[0][1] >= 2 * (guess[1][1] if len(guess) > 1 else 0.0)
+    ):
+        return state.language.regional(guess[0][0])
+    return None
+
+
+def _message_language(state: AppState, text: str, language: str) -> str:
+    """The language recorded for the user's own message: what it is written in
+    when that is clear, else the turn language. Not the turn language alone, which
+    follows a pin: someone who pinned Spanish and writes English wrote English.
+    """
+    return _written_language(state, text, language) or language
+
+
+def _reply_spans(
+    state: AppState, text: str, language: str
+) -> list[tuple[str, str]]:
+    """The reply as (text, language) spans: one span unless the character
+    code-switches or barely speaks the language (answers mostly in its home
+    language with the odd word of the user's)."""
+    profile = state.language.profile
+    if not profile.mixes(language):
+        # The model is told to follow the user's language, so a reply can come
+        # back in a different one than the turn's (the turn language is a
+        # detection, not a promise). Route by what was actually written, so a
+        # voice never reads text in a language it was not chosen for.
+        written = _written_language(state, text, language)
+        return [(text, written or language)]
+    return split_language_spans(
+        text,
+        language,
+        by_phrase=profile.code_switching >= 50 or profile.below_floor(language),
+    )
+
+
+async def _announce_language(
+    state: AppState, language: str, key: str, *, spoken: bool
+) -> None:
+    """Says once per language and kind what the voice can and cannot do, in
+    that language. Shown and stored like any reply; spoken only when it can be
+    (the accented notice is, the no-voice one cannot be)."""
+    seen = state.language_notices
+    if (language, key) in seen:
+        return
+    seen.add((language, key))
+    # The language's own name reads naturally inside its own sentence; a line
+    # that fell back to English names it in English.
+    name = (
+        native_name(language)
+        if has_language(language)
+        else language_name(language)
+    )
+    text = message(language, key, language=name)
+    state.store.log_interaction(
+        "assistant", text, provider="language", language=language
+    )
+    utterance_id = f"utt_{int(time.time() * 1000)}"
+    await state.hub.broadcast(
+        "chat_response",
+        {
+            "utterance_id": utterance_id,
+            "text": text,
+            "provider": "language",
+            "escalated": False,
+            "rationale": "",
+            "language": language,
+        },
+    )
+    if spoken:
+        await _speak(
+            state,
+            text,
+            utterance_id=utterance_id,
+            language=language,
+            notify=False,
+        )
+
+
 async def _speak(
-    state: AppState, text: str, *, utterance_id: str | None = None
+    state: AppState,
+    text: str,
+    *,
+    utterance_id: str | None = None,
+    language: str | None = None,
+    notify: bool = True,
 ) -> None:
     """Speaks a reply one sentence at a time. Each sentence is its own TTS
     request, lip-sync pass, and `speech` envelope (`chunk_seq`, `final`), sent
@@ -89,7 +194,58 @@ async def _speak(
     if state.tts_pool.is_empty:
         return
     utterance_id = utterance_id or f"utt_{int(time.time() * 1000)}"
-    sentences = split_sentences(text)
+    profile = state.language.profile
+    chunks: list[tuple[str, str | None]]
+    reply_language = language  # the dominant language: drives bubble direction
+    if language is None:
+        chunks = [(sentence, None) for sentence in split_sentences(text)]
+    else:
+        # One language per reply unless the character code-switches (ADR 2.6.1);
+        # then each language span is its own chunk, spoken with its own routing.
+        spans = _reply_spans(state, text, language)
+        reply_language = dominant_language(spans, language)
+        chunks = []
+        for span_text, span_language in spans:
+            if span_language != language:
+                try:
+                    state.tts_pool.plan(
+                        span_language,
+                        home_language=profile.home,
+                        accented=profile.accented(span_language),
+                    )
+                except SpeechUnavailable:
+                    # Nearest speakable language: the turn's own.
+                    logger.info(
+                        "no voice for %r span; speaking it in %r",
+                        span_language,
+                        language,
+                    )
+                    span_language = language
+            chunks += [(s_, span_language) for s_ in split_sentences(span_text)]
+        try:
+            plan = state.tts_pool.plan(
+                language,
+                home_language=profile.home,
+                accented=profile.accented(language),
+            )
+        except SpeechUnavailable:
+            # Shown and stored already; mispronounced speech presented as
+            # correct is worse than none, so there is no wrong-language fallback.
+            logger.warning(
+                "no voice for language %r; reply not spoken", language
+            )
+            if notify:
+                await _announce_language(
+                    state, language, "lang.no_voice", spoken=False
+                )
+            return
+        # Only the no-native-engine fallback is announced; an accent the
+        # character has by fluency is just the character.
+        if plan.mode == "accented" and plan.reason == "fallback" and notify:
+            await _announce_language(
+                state, language, "lang.accented", spoken=True
+            )
+    sentences = [c[0] for c in chunks]
     delivery = pick_delivery(
         state.store.get_traits(), state.store.get_mood(), _is_long_or_code(text)
     )
@@ -107,14 +263,23 @@ async def _speak(
             utterance_id,
         )
 
-    async def lipsync(wav_path: Path, sentence: str, chunk_seq: int) -> list:
+    async def lipsync(
+        wav_path: Path,
+        sentence: str,
+        chunk_seq: int,
+        chunk_language: str | None,
+    ) -> list:
         # Lipsync is a separate failure domain from synthesis: rhubarb being
         # unavailable (or erroring on this particular clip) must not throw away
         # perfectly good audio that already exists on disk -- degrade to no
         # visemes (a static mouth) rather than skipping the whole broadcast.
         try:
             return await extract_visemes_if_needed(
-                state.lipsync, wav_path, has_face=has_face, dialog_text=sentence
+                state.lipsync,
+                wav_path,
+                has_face=has_face,
+                dialog_text=sentence,
+                language=chunk_language,
             )
         except Exception:
             logger.exception(
@@ -130,6 +295,7 @@ async def _speak(
         wav_path: Path,
         lip_task: asyncio.Task,
         previous: asyncio.Task | None,
+        chunk_language: str | None,
     ) -> None:
         visemes = await lip_task
         if previous is not None:
@@ -153,6 +319,8 @@ async def _speak(
                 "wav_path": str(wav_path),
                 "audio_url": f"/audio/{utterance_id}_{chunk_seq}.wav",
                 "text": sentence,
+                "language": chunk_language,
+                "reply_language": reply_language,
                 "delivery": delivery,
                 "visemes": [
                     {
@@ -166,7 +334,7 @@ async def _speak(
         )
 
     previous: asyncio.Task | None = None
-    for chunk_seq, sentence in enumerate(sentences):
+    for chunk_seq, (sentence, chunk_language) in enumerate(chunks):
         try:
             wav_path = (
                 state.settings.voice_cache_dir
@@ -174,7 +342,14 @@ async def _speak(
             )
             started = time.monotonic()
             backend = await state.tts_pool.synthesize(
-                sentence, wav_path, remote_params=remote_params
+                sentence,
+                wav_path,
+                remote_params=remote_params,
+                language=chunk_language,
+                home_language=profile.home,
+                accented=bool(
+                    chunk_language and profile.accented(chunk_language)
+                ),
             )
             seed = (remote_params or {}).get(backend, {}).get("seed")
             emit(
@@ -218,10 +393,17 @@ async def _speak(
             )
             continue
 
-        lip_task = asyncio.create_task(lipsync(wav_path, sentence, chunk_seq))
+        lip_task = asyncio.create_task(
+            lipsync(wav_path, sentence, chunk_seq, chunk_language)
+        )
         previous = asyncio.create_task(
             broadcast_when_ready(
-                chunk_seq, sentence, wav_path, lip_task, previous
+                chunk_seq,
+                sentence,
+                wav_path,
+                lip_task,
+                previous,
+                chunk_language,
             )
         )
 
@@ -242,7 +424,11 @@ CONVERSATION_HISTORY_MAX_AGE_S = 3600.0
 
 
 async def _handle_chat_text(
-    state: AppState, text: str, *, speak: bool = True
+    state: AppState,
+    text: str,
+    *,
+    speak: bool = True,
+    heard: tuple[str | None, float | None] | None = None,
 ) -> str:
     """Shared by POST /chat and any client->daemon text (typed
     user_text_input, or a finalized audio_stream_end transcription --
@@ -250,7 +436,20 @@ async def _handle_chat_text(
     deliberately: whether the user typed or spoke, it's the same event)."""
     store = state.store
     begin_turn()
-    emit("turn.start", {"text": text, "speak": speak})
+    # `heard` is a recognizer's own (language, confidence) for spoken input.
+    language = state.language.resolve(text, heard or (None, None))
+    emit("turn.start", {"text": text, "speak": speak, "language": language})
+    stt = state.settings.voice.stt
+    if (
+        heard is not None
+        and primary_language(language) != "en"
+        and stt.active_backend == "local"
+        and stt.local.model_size.endswith(".en")
+    ):
+        # An English-only recognizer cannot have understood this; say so once.
+        await _announce_language(
+            state, language, "stt.english_only", spoken=True
+        )
     skills_block = (
         state.skills.prompt_block() if state.settings.skills.enabled else ""
     )
@@ -266,12 +465,16 @@ async def _handle_chat_text(
         ],
         look_summary=state.evolution.look_context(),
         skills_block=skills_block,
+        language=language,
+        language_notes=state.language.prompt_notes(language, text),
     )
     emit("turn.prompt", {"system_prompt": system_prompt})
     history = store.recent_conversation(
         CONVERSATION_HISTORY_MESSAGES, CONVERSATION_HISTORY_MAX_AGE_S
     )
-    store.log_interaction("user", text)
+    store.log_interaction(
+        "user", text, language=_message_language(state, text, language)
+    )
     reply_format = (
         ReplyFormat(FORMAT_REMINDER, REPAIR_PROMPT, is_structured)
         if skills_block
@@ -296,6 +499,7 @@ async def _handle_chat_text(
         system_prompt=system_prompt,
         history=history,
         reply_format=reply_format,
+        user_note=state.language.reply_reminder(language, text),
     )
     # What the model actually returned, before it is parsed and cleaned for
     # speech -- kept (event + database) so the status page can show what the
@@ -340,6 +544,19 @@ async def _handle_chat_text(
                 )
                 for a in actions
             ]
+        # Same for a plain request to talk in (or stop pinning) a language.
+        requested_language = detect_language_request(text)
+        if requested_language is not None and not any(
+            a.skill in ("set_language", "auto_language") for a in actions
+        ):
+            actions = [
+                *actions,
+                (
+                    SkillCall("auto_language", {})
+                    if requested_language == "auto"
+                    else SkillCall("set_language", {"code": requested_language})
+                ),
+            ]
         if not any(a.skill == "change_look" for a in actions):
             if state.evolution.is_direct_look_request(text):
                 actions = [
@@ -357,7 +574,7 @@ async def _handle_chat_text(
                     SkillCall("change_look", {"request": promised}),
                 ]
     # The companion speaks this aloud: strip any Markdown/emoji the model used anyway.
-    result.text = to_plain_speech(result.text) if result.text else ""
+    result.text = to_plain_speech(result.text, language) if result.text else ""
     if actions:
         ran = await state.skills.run_all(actions, state)
         if (
@@ -366,7 +583,7 @@ async def _handle_chat_text(
             and ran[-1]["ok"]
             and isinstance(ran[-1]["result"], str)
         ):
-            result.text = to_plain_speech(ran[-1]["result"])
+            result.text = to_plain_speech(ran[-1]["result"], language)
     if not result.text:
         emit(
             "turn.reply",
@@ -378,12 +595,18 @@ async def _handle_chat_text(
             },
         )
         return f"utt_{int(time.time() * 1000)}"
+    # Memory, the stored record and right-to-left layout use the dominant
+    # language of a mixed reply (ADR 2.6.1).
+    reply_language = dominant_language(
+        _reply_spans(state, result.text, language), language
+    )
     store.log_interaction(
         "assistant",
         result.text,
         provider=result.source,
         escalated=result.escalated,
         raw_text=raw_text,
+        language=reply_language,
     )
     emit(
         "turn.reply",
@@ -404,10 +627,13 @@ async def _handle_chat_text(
             "provider": result.source,
             "escalated": result.escalated,
             "rationale": result.reason or "",
+            "language": reply_language,
         },
     )
     if speak:
-        await _speak(state, result.text, utterance_id=utterance_id)
+        await _speak(
+            state, result.text, utterance_id=utterance_id, language=language
+        )
     return utterance_id
 
 
@@ -619,8 +845,13 @@ async def _deliver_greeting(state: AppState, greeting: str) -> None:
     state.store.set_agent_state("last_greeting_timestamp", str(time.time()))
     # Same delivery as a model reply: stored in the conversation (so chat and
     # the model's history see it) and sent as chat_response before the voice.
+    language = state.language.autonomous()
     state.store.log_interaction(
-        "assistant", greeting, provider="presence", escalated=False
+        "assistant",
+        greeting,
+        provider="presence",
+        escalated=False,
+        language=language,
     )
     utterance_id = f"utt_{int(time.time() * 1000)}"
     await state.hub.broadcast(
@@ -631,6 +862,7 @@ async def _deliver_greeting(state: AppState, greeting: str) -> None:
             "provider": "presence",
             "escalated": False,
             "rationale": "",
+            "language": language,
         },
     )
     await state.hub.broadcast(
@@ -642,7 +874,7 @@ async def _deliver_greeting(state: AppState, greeting: str) -> None:
             "intensity": gesture_intensity(state),
         },
     )
-    await _speak(state, greeting, utterance_id=utterance_id)
+    await _speak(state, greeting, utterance_id=utterance_id, language=language)
 
 
 def _return_greeting(state: AppState, *, revealed: bool) -> str | None:
@@ -660,14 +892,12 @@ def _return_greeting(state: AppState, *, revealed: bool) -> str | None:
         and time.time() - float(last_raw) < cfg.greet_cooldown_s
     ):
         return None
+    language = state.language.autonomous()
     if revealed:
-        return "Welcome back! While you were away, I decided to try out a new look. What do you think?"
+        return message(language, "greet.reveal")
     hour = time.localtime().tm_hour
     part = "morning" if hour < 12 else "afternoon" if hour < 18 else "evening"
-    return random.choice(
-        [
-            f"Welcome back! Good {part}.",
-            "Hey, you're back!",
-            f"Good {part}! Ready when you are.",
-        ]
+    key = random.choice(
+        ["greet.return.welcome", "greet.return.hey", "greet.return.ready"]
     )
+    return message(language, key, part=part)

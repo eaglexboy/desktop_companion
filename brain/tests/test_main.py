@@ -25,7 +25,7 @@ from brain.appearance.manifest import append_version, save_manifest
 from brain.config import Settings
 from brain.ipc.server import PROTOCOL_VERSION
 from brain.main import app, build_app_state
-from brain.voice.tts import TTSBackend
+from brain.voice.tts import TTSBackend, TTSCapabilities
 
 HAS_RHUBARB = shutil.which("rhubarb") is not None
 
@@ -61,12 +61,16 @@ def _mock_chat_transport(reply_text: str) -> httpx.MockTransport:
 
 
 class _SilentWavTTSBackend(TTSBackend):
+    def __init__(self) -> None:
+        self.languages: list[str | None] = []
+
     """Writes a real, valid silent WAV -- so lipsync (real rhubarb, not
     faked) has genuine audio to run against, deterministically."""
 
     async def synthesize(
-        self, text, out_wav_path, *, voice_id=None, params=None
+        self, text, out_wav_path, *, voice_id=None, params=None, language=None
     ) -> None:
+        self.languages.append(language)
         out_wav_path.parent.mkdir(parents=True, exist_ok=True)
         with wave.open(str(out_wav_path), "wb") as wf:
             wf.setnchannels(1)
@@ -128,6 +132,9 @@ def test_health_returns_200_with_documented_fields(client):
     assert body["name"] == "Deskmate"
     assert body["active_voice"] == "piper:default"
     assert body["voice_degraded"] is False
+    assert body["language"] == "auto"
+    assert body["language_profile"]["home"] == "en"
+    assert body["language_profile"]["fluency"] == 100
     assert body["presence"] == "User_Active"
     assert "openness" in body["traits"]
     assert "energy" in body["mood"]
@@ -284,7 +291,7 @@ def test_a_reply_that_says_it_is_switching_but_sends_no_action_makes_the_change(
 def test_the_event_stream_ends_when_the_daemon_is_stopping(client):
     """The status page's stream is open for as long as the page is, and uvicorn waits for it
     before it stops: it ends the moment the daemon is told to stop."""
-    import brain.main as main
+    from brain import main
 
     c, _state = client
     main._stopping.set()
@@ -683,7 +690,13 @@ async def test_speak_logs_backend_and_warns_when_piper_fallback_was_used(
 
     class _Failing(TTSBackend):
         async def synthesize(
-            self, text, out_wav_path, *, voice_id=None, params=None
+            self,
+            text,
+            out_wav_path,
+            *,
+            voice_id=None,
+            params=None,
+            language=None,
         ) -> None:
             raise RuntimeError("remote down")
 
@@ -716,7 +729,13 @@ async def test_lipsync_overlaps_next_sentence_and_chunks_stay_in_order(
 
     class _RecordingTTS(TTSBackend):
         async def synthesize(
-            self, text, out_wav_path, *, voice_id=None, params=None
+            self,
+            text,
+            out_wav_path,
+            *,
+            voice_id=None,
+            params=None,
+            language=None,
         ) -> None:
             events.append(f"synth:{text}")
             await asyncio.sleep(0.01)
@@ -726,7 +745,9 @@ async def test_lipsync_overlaps_next_sentence_and_chunks_stay_in_order(
     # sentence 0's lip-sync is slow, sentence 1's is instant: 1 finishes first
     delays = {"A.": 0.3, "B.": 0.0}
 
-    async def slow_lipsync(_lipsync, wav_path, *, has_face, dialog_text: str):
+    async def slow_lipsync(
+        _lipsync, wav_path, *, has_face, dialog_text: str, language=None
+    ):
         events.append(f"lip-start:{dialog_text}")
         await asyncio.sleep(delays[dialog_text])
         events.append(f"lip-end:{dialog_text}")
@@ -1074,7 +1095,7 @@ async def test_greeting_waits_for_overlay_then_speaks(client, monkeypatch):
     async def fast_sleep(_s):
         return None
 
-    _g, spoken = await _transition(
+    _g, _spoken = await _transition(
         state, PresenceState.AWAY, PresenceState.ACTIVE, monkeypatch
     )
     state.settings.presence.greet_cooldown_s = 0
@@ -1131,6 +1152,7 @@ async def test_greeting_held_without_overlay_and_delivered_on_connect(
 
 async def test_stale_held_greeting_is_dropped(client):
     import time
+
     from brain.pipeline import _deliver_pending_greeting
 
     _c, state = client
@@ -1519,7 +1541,7 @@ def test_rebuild_is_offered_only_for_the_model_the_current_look_is_on(
         ).status_code
         == 422
     )  # no look yet
-    scheduled = []
+    scheduled: list = []
     monkeypatch.setattr(
         state.evolution, "schedule_generate_from_full_spec", scheduled.append
     )
@@ -1611,3 +1633,331 @@ def test_the_alignment_sheet_can_render_chosen_items_only(client):
         },
     )
     assert refused.status_code == 422
+
+
+# --- multi-language chat (docs/ADR_MULTI_LANGUAGE_CHAT.md), es_MX as the second language ---
+
+_ES_MX_TURN = "Hola, ¿cómo estás? Quiero que me ayudes con esto, por favor."
+
+
+async def _chat_in_spanish(state, monkeypatch):
+    from brain.pipeline import _handle_chat_text
+
+    sent: list[tuple[str, dict]] = []
+
+    async def fake_broadcast(event_type, payload):
+        sent.append((event_type, payload))
+
+    state.hub.broadcast = fake_broadcast
+    prompts: list[str] = []
+
+    def fake_emit(event_type, payload=None, **_kw):
+        if event_type == "turn.prompt" and payload is not None:
+            prompts.append(payload["system_prompt"])
+
+    monkeypatch.setattr("brain.pipeline.emit", fake_emit)
+    state.language.set_pin("es_MX")
+    await _handle_chat_text(state, _ES_MX_TURN)
+    return sent, prompts
+
+
+async def test_spanish_turn_with_no_spanish_voice_is_shown_but_not_spoken(
+    client, monkeypatch
+):
+    _c, state = client
+    _wire_fakes(state, chat_reply="¡Claro que sí! Con gusto te ayudo.")
+    sent, prompts = await _chat_in_spanish(state, monkeypatch)
+
+    assert "Reply in Mexican Spanish." in prompts[0]
+    replies = [p for t, p in sent if t == "chat_response"]
+    assert replies[0]["language"] == "es-mx"
+    assert replies[0]["text"] == "¡Claro que sí! Con gusto te ayudo."
+    # An honest, once-only notice in Spanish; nothing was spoken.
+    assert "no tengo voz" in replies[1]["text"]
+    assert not [t for t, _ in sent if t == "speech"]
+    rows = state.store._conn.execute(
+        "SELECT role, language FROM interactions ORDER BY id"
+    ).fetchall()
+    assert {r["language"] for r in rows} == {"es-mx"}
+
+
+async def test_spanish_turn_is_spoken_when_a_spanish_voice_exists(
+    client, monkeypatch
+):
+    _c, state = client
+    _wire_fakes(state, chat_reply="¡Claro que sí! Con gusto te ayudo.")
+    state.tts_pool._local_caps = TTSCapabilities(languages=("en", "es-mx"))
+    sent, _prompts = await _chat_in_spanish(state, monkeypatch)
+
+    speech = [p for t, p in sent if t == "speech"]
+    assert speech and speech[0]["language"] == "es-mx"
+    assert state.tts_pool._local.languages == ["es-mx", "es-mx"]
+    assert len([t for t, _ in sent if t == "chat_response"]) == 1  # no notice
+
+
+def _two_engine_pool(state):
+    from brain.voice.tts import TTSPool
+
+    english, spanish = _SilentWavTTSBackend(), _SilentWavTTSBackend()
+    state.tts_pool = TTSPool(
+        [("pocket_cpu", english), ("pocket_es", spanish)],
+        None,
+        capabilities={
+            "pocket_cpu": TTSCapabilities(foreign_text=True, cloning=True),
+            "pocket_es": TTSCapabilities(languages=("es",), cloning=True),
+        },
+    )
+    return english, spanish
+
+
+def _character(state, **profile):
+    from brain.config import LanguageConfig, LanguageProfileConfig
+    from brain.language import LanguageProfile
+
+    state.language.profile = LanguageProfile(
+        LanguageConfig(
+            default="en",
+            enabled=["en", "es-mx"],
+            profile=LanguageProfileConfig(**profile),
+        )
+    )
+
+
+async def test_fluent_character_speaks_spanish_natively(client, monkeypatch):
+    _c, state = client
+    _wire_fakes(state, chat_reply="¡Claro que sí! Con gusto te ayudo.")
+    english, spanish = _two_engine_pool(state)
+    await _chat_in_spanish(state, monkeypatch)
+    assert spanish.languages and not english.languages
+
+
+async def test_less_fluent_character_speaks_spanish_with_the_home_accent(
+    client, monkeypatch
+):
+    _c, state = client
+    _wire_fakes(state, chat_reply="¡Claro que sí! Con gusto te ayudo.")
+    english, spanish = _two_engine_pool(state)
+    _character(state, fluency=60)  # below the native threshold
+    sent, prompts = await _chat_in_spanish(state, monkeypatch)
+    # The English-voice engine read the Spanish text; no "no native voice" notice.
+    assert english.languages and not spanish.languages
+    assert len([t for t, _ in sent if t == "chat_response"]) == 1
+    assert "still learning Mexican Spanish" in prompts[0]
+
+
+async def test_code_switching_reply_is_spoken_per_language_span(
+    client, monkeypatch
+):
+    _c, state = client
+    _wire_fakes(
+        state,
+        chat_reply="Claro que sí, con mucho gusto te ayudo. I will check the weather for you right now.",
+    )
+    english, spanish = _two_engine_pool(state)
+    _character(state, code_switching=80)
+    sent, prompts = await _chat_in_spanish(state, monkeypatch)
+    langs = [p["language"] for t, p in sent if t == "speech"]
+    assert langs == ["es-mx", "en"]
+    assert spanish.languages and english.languages
+    assert "switch language yourself" in prompts[0]
+    # The stored record carries the dominant language of the mixed reply.
+    row = state.store._conn.execute(
+        "SELECT language FROM interactions WHERE role='assistant' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row["language"] in ("es-mx", "en")
+
+
+async def test_english_only_recognizer_is_announced_once_for_spoken_spanish(
+    client, monkeypatch
+):
+    from brain.pipeline import _handle_chat_text
+
+    _c, state = client
+    _wire_fakes(state)
+    state.settings.voice.stt.local.model_size = "base.en"
+    sent = []
+
+    async def fake_broadcast(t, p):
+        sent.append((t, p))
+
+    state.hub.broadcast = fake_broadcast
+    state.language.set_pin("es_MX")
+    for _ in range(2):
+        await _handle_chat_text(
+            state, _ES_MX_TURN, speak=False, heard=("es", 0.9)
+        )
+    notices = [
+        p["text"]
+        for t, p in sent
+        if t == "chat_response" and p["provider"] == "language"
+    ]
+    assert len(notices) == 1 and "solo entiende inglés" in notices[0]
+
+
+async def test_reply_in_another_language_is_routed_by_what_was_written(
+    client, monkeypatch
+):
+    _c, state = client
+    # The turn is Spanish, but the model answered in English: the English
+    # engine speaks it, not the Spanish one.
+    _wire_fakes(
+        state,
+        chat_reply="Okay, I will switch to German now. How are you today?",
+    )
+    english, spanish = _two_engine_pool(state)
+    sent, _ = await _chat_in_spanish(state, monkeypatch)
+    assert english.languages and not spanish.languages
+    replies = [p for t, p in sent if t == "chat_response"]
+    assert replies[0]["language"] == "en"
+
+
+async def test_plain_language_request_is_honoured_even_if_the_model_sends_no_action(
+    client, monkeypatch
+):
+    from brain.pipeline import _handle_chat_text
+
+    _c, state = client
+    _wire_fakes(state, chat_reply="Okay, I'll talk to you in German now.")
+
+    async def quiet(*a, **k):
+        return None
+
+    state.hub.broadcast = quiet
+    await _handle_chat_text(
+        state, "Please talk to me in German from now on.", speak=False
+    )
+    assert state.language.pin == "de"
+    await _handle_chat_text(
+        state, "Go back to detecting my language automatically.", speak=False
+    )
+    assert state.language.pin is None
+
+
+# --- Language settings page endpoints (/language/*) ---------------------------------
+
+
+def _language_doc(c, **over):
+    doc = c.get("/language/settings").json()["settings"]
+    doc.update(over)
+    return doc
+
+
+def test_language_settings_get_reports_source_and_options(client):
+    c, _state = client
+    body = c.get("/language/settings").json()
+    assert body["source"] == "config.toml"
+    assert body["settings"]["profile"]["fluency"] == 100
+    assert body["pin"] is None
+    assert "en" in body["speakable_languages"]
+
+
+def test_language_settings_save_applies_live_and_persists(client):
+    c, state = client
+    doc = _language_doc(
+        c,
+        profile={
+            "home": "en",
+            "fluency": 55,
+            "fluency_by_language": {"es_MX": 25},
+            "code_switching": 30,
+            "voice_languages": ["en"],
+        },
+    )
+    r = c.put("/language/settings", json=doc)
+    assert r.status_code == 200 and r.json()["source"] == "page"
+    # Applied to the running brain with no restart...
+    assert state.language.profile.fluency("es-mx") == 25
+    assert state.language.profile.code_switching == 30
+    assert c.get("/health").json()["language_profile"]["fluency"] == 55
+    # ...and survives a restart: a new brain reads the saved file.
+    from brain import language_settings
+
+    assert language_settings.effective(state.settings).profile.fluency == 55
+
+
+def test_language_settings_invalid_document_is_refused_and_changes_nothing(
+    client,
+):
+    c, state = client
+    r = c.put("/language/settings", json=_language_doc(c, code_switching=500))
+    assert r.status_code == 422 and "code_switching" in r.json()["detail"]
+    assert c.get("/language/settings").json()["source"] == "config.toml"
+    assert state.language.profile.code_switching == 0
+
+
+def test_language_settings_reset_returns_to_config(client):
+    c, state = client
+    c.put("/language/settings", json=_language_doc(c, code_switching=70))
+    assert state.language.profile.code_switching == 70
+    body = c.delete("/language/settings").json()
+    assert body["source"] == "config.toml"
+    assert state.language.profile.code_switching == 0
+
+
+def test_language_pin_endpoint(client):
+    c, state = client
+    assert (
+        c.put("/language/pin", json={"code": "es_MX"}).json()["pin"] == "es-mx"
+    )
+    assert state.language.pin == "es-mx"
+    assert c.put("/language/pin", json={"code": "auto"}).json()["pin"] is None
+    assert c.put("/language/pin", json={"code": "!!"}).status_code == 422
+
+
+async def test_spanish_reply_to_an_english_turn_is_spoken_by_the_spanish_engine(
+    client, monkeypatch
+):
+    """Seen live: the turn was detected as English, the model answered in Spanish, and the
+    English engine read it. The voice follows the language written, with the regional tag.
+    """
+    from brain.pipeline import _handle_chat_text
+
+    _c, state = client
+    _wire_fakes(
+        state,
+        chat_reply="¡Me siento genial! Todo fluyendo, listo para lo que necesites.",
+    )
+    english, spanish = _two_engine_pool(state)
+    sent = []
+
+    async def fake_broadcast(t, p):
+        sent.append((t, p))
+
+    state.hub.broadcast = fake_broadcast
+    from brain.config import LanguageConfig
+
+    state.language.apply(LanguageConfig(enabled=["en", "es-mx"]))
+    state.language.resolver.current = "en"
+    # An English-looking turn the detector cannot call Spanish (one ambiguous word).
+    await _handle_chat_text(state, "ok", speak=True)
+    assert spanish.languages and not english.languages
+    replies = [p for t, p in sent if t == "chat_response"]
+    assert replies[0]["language"] == "es-mx"
+    speech = [p for t, p in sent if t == "speech"]
+    assert {p["language"] for p in speech} == {"es-mx"}
+
+
+async def test_users_message_is_tagged_with_what_it_is_written_in_not_the_pin(
+    client, monkeypatch
+):
+    from brain.pipeline import _handle_chat_text
+
+    _c, state = client
+    _wire_fakes(state, chat_reply="Claro, aquí estoy para lo que necesites.")
+
+    async def fake_broadcast(event_type, payload):
+        pass
+
+    state.hub.broadcast = fake_broadcast
+    state.language.set_pin("es_MX")
+    await _handle_chat_text(
+        state, "Please tell me how you are doing today, my friend."
+    )
+    await _handle_chat_text(
+        state, "ok"
+    )  # too little to tell: the turn language
+    rows = state.store._conn.execute(
+        "SELECT role, language FROM interactions ORDER BY id"
+    ).fetchall()
+    users = [r["language"] for r in rows if r["role"] == "user"]
+    assert users == ["en", "es-mx"]

@@ -110,8 +110,30 @@ function render(d) {
     companion.push(
       ["name", h.name],
       ["voice", h.active_voice + (h.voice_degraded ? " (degraded)" : "")],
+      ["language", h.language || "auto"],
+      [
+        "speakable languages",
+        (h.speakable_languages || []).join(", ") || "none",
+      ],
       ["presence", h.presence],
     );
+  // The character's own language settings (home language, fluency, accent).
+  const lp = h.language_profile;
+  if (!h.error && lp) {
+    const byLang = Object.entries(lp.fluency_by_language || {})
+      .map(([k, v]) => `${k} ${v}`)
+      .join(", ");
+    companion.push(
+      ["home language", lp.home],
+      [
+        "fluency",
+        `${lp.fluency}${byLang ? " (" + byLang + ")" : ""} — ${lp.fluency >= lp.native_threshold ? "native" : "home accent"} (native from ${lp.native_threshold})`,
+      ],
+      ["code-switching", String(lp.code_switching)],
+    );
+    if ((lp.voice_languages || []).length)
+      companion.push(["voice languages", lp.voice_languages.join(", ")]);
+  }
   if (!s.error) {
     companion.push(["look", `v${s.look.current_version} — ${s.look.summary}`]);
     companion.push([
@@ -175,7 +197,9 @@ function render(d) {
       s.screens.map((x) => `${x.name} ${x.w}×${x.h}`).join(" · ") || "none",
     ]);
   $("placement").innerHTML = kvList(placement);
-  showPlacementPicture(s.error ? pictureVersion : (s.look && s.look.current_version) ?? null);
+  showPlacementPicture(
+    s.error ? pictureVersion : ((s.look && s.look.current_version) ?? null),
+  );
 
   $("memories").innerHTML =
     d.db.memories.map((m) => `<li>${esc(m.note)}</li>`).join("") ||
@@ -191,7 +215,12 @@ function render(d) {
           m.raw == null
             ? ""
             : `<details class="rawmsg" data-id="${m.id}"${openRaw.has(m.id) ? " open" : ""}><summary>raw response${wasCleaned(m.raw, m.text) ? " · cleaned" : ""}</summary>${compareHtml(m.raw, m.text)}</details>`;
-        return `<div class="msg ${esc(m.role)}"><small>${esc(m.role)} · ${fmtTime(m.ts)}${m.provider ? " · " + esc(m.provider) : ""}${m.escalated ? " · escalated" : ""}</small>${esc(m.text)}${raw}</div>`;
+        // A language column; right-to-left languages flow right-to-left (dir="auto" for the rest).
+        const lang = m.language ? esc(m.language) : "";
+        const dir = /^(ar|he|fa|ur)(-|$)/.test(m.language || "")
+          ? "rtl"
+          : "auto";
+        return `<div class="msg ${esc(m.role)}"><small>${esc(m.role)} · ${fmtTime(m.ts)}${m.language ? " · " + lang : ""}${m.provider ? " · " + esc(m.provider) : ""}${m.escalated ? " · escalated" : ""}</small><span dir="${dir}"${lang ? ` lang="${lang}"` : ""}>${esc(m.text)}</span>${raw}</div>`;
       })
       .join("") || '<span class="muted">no messages</span>';
   if (atBottom) chat.scrollTop = chat.scrollHeight;

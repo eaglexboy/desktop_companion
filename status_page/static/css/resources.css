@@ -1,0 +1,122 @@
+/* Resource use: the current values on the Overview and the history page (its chart reuses the timeline's). */
+.rs-table[hidden] {
+  display: none;
+}
+svg.chart line.restart {
+  stroke: var(--muted);
+  stroke-dasharray: 0.25rem 0.25rem;
+}
+
+/* The Overview's board: a host header, then a tile per process. */
+.res-host + .res-host {
+  margin-top: 1rem;
+}
+.res-host h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.res-down {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-weight: 400;
+  font-size: 0.75rem;
+  color: var(--bad);
+}
+.res-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  gap: 0.625rem;
+}
+.res-tile {
+  background: var(--code);
+  border: 0.0625rem solid var(--line);
+  border-radius: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.res-tile.rising {
+  border-color: var(--warn);
+}
+.res-tile .res-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+}
+.res-tile .res-head b {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.res-tile .big {
+  font-size: 1.375rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.res-tile .big small {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+.res-tile svg.spark {
+  width: 100%;
+  height: 1.5rem;
+  display: block;
+}
+.res-tile svg.spark polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.res-tile .trend {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+.res-tile .trend.up {
+  color: var(--warn);
+  font-weight: 600;
+}
+.res-tile .fact,
+.res-tile .meter {
+  display: grid;
+  grid-template-columns: 3.5rem 1fr;
+  font-size: 0.75rem;
+  gap: 0.5rem;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+.res-tile .fact span:last-child {
+  text-align: right;
+}
+.res-tile .meter {
+  grid-template-columns: 3.5rem 1fr 3rem;
+}
+.res-tile .meter span:last-child {
+  text-align: right;
+}
+.res-tile .bar {
+  background: var(--line);
+}
+
+/* The charts sit straight in the tab's grid, one panel each. */
+#rsCharts {
+  display: contents;
+}
+
+/* The range and view controls stay in sight under the page header while the charts scroll. */
+.rs-controls {
+  position: sticky;
+  top: 3.25rem;
+  z-index: 2;
+}

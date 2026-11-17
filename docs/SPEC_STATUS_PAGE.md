@@ -9,7 +9,7 @@ The Admin app: a set of pages, most of them a browser dashboard for seeing what 
 * **Read-only, except the named writing pages.** It never writes `state.db` (opened `?mode=ro`), never controls services (only queries `systemctl --user is-active/show`), and never executes anything the browser names. The pages that write are **Build** (see [ADR_BUILD_YOUR_LOOK.md](ADR_BUILD_YOUR_LOOK.md)), whose routes, under `/api/build/`, only ask the brain to preview or build a look, and **Model settings** ([ADR_MODEL_SETTINGS_PAGE.md](ADR_MODEL_SETTINGS_PAGE.md)), whose routes, under `/api/model-settings/`, only relay a model's settings, hold, credit and face landmarks to the brain, which validates and writes them; in both the brain validates what they pass on. Every route that is not a `GET` lives under a writing page's prefix (`WRITE_PREFIXES`), a middleware refuses any other non-`GET`/`HEAD` request with `405`, and a writing route also needs the page's own `Origin`, the header `X-Deskmate-Admin: 1` and a small JSON body. A new writing page needs its own decision and an entry in `WRITE_PREFIXES` (the Models page of [ADR_MODEL_IMPORT_PAGE.md](ADR_MODEL_IMPORT_PAGE.md) is proposed).
 * **Local only.** Binds `[status] host:port` (default `127.0.0.1:8780`); a middleware rejects any request whose `Host` header is not that address (DNS-rebinding guard). The page shows chat history and prompts, so do not bind it beyond loopback.
 * **Degrades visibly.** A brain that cannot be reached is a banner and a red dot, not an empty page; the rest (units, endpoint probes, database, logs) keeps working.
-* **Config:** the daemon's own `config.toml` (`get_settings()`), plus `[status]`: `host`, `port`, `units` (journalctl `--user` units shown as log panes), `extra_logs` (name $\to$ file path).
+* **Config:** the daemon's own `config.toml` (`get_settings()`), plus `[status]`: `host`, `port`, `units` (journalctl `--user` units shown as log panes), `extra_logs` (name $\to$ file path), and `[status.resources]` (`sources`: the sidecars to pull resource use from, with `interval_s` and `retention_days`).
 
 ## Endpoints
 
@@ -20,6 +20,7 @@ The Admin app: a set of pages, most of them a browser dashboard for seeing what 
 | `GET /api/overview` | One poll (the page polls every 3 s): unit states, backup status (`[storage] backup_dir`'s `state.db` mtime plus `deskmate-backup.timer`), brain `GET /health` + `GET /api/status` + `GET /api/skills`, endpoint probes, and from `state.db` the last 40 chat turns (each assistant turn joined to its `reply_raw` row, when it has one; a database from before that table still reads), 12 memory notes, `agent_state`, traits and mood. |
 | `GET /api/events` | Relays the brain's SSE event stream (`GET /api/events`, see [SPEC_BRAIN.md](SPEC_BRAIN.md) "Event Stream") so the browser talks only to this service. `?since=` / `Last-Event-ID` pass through; if the brain is unreachable it emits a `brain-down` event and ends, and the browser's `EventSource` retries. |
 | `GET /api/history?kind=mood\|traits&hours=` | Time series from `personality_history`, step-function points per name, down-sampled to $\le 600$ per series, anchored by the last point before the window (1 hour to 30 days). |
+| `GET /api/resources?metric=&hours=` | Resource use over time, one line per process on each configured machine, from the history the Admin app builds by pulling every `[status.resources.sources.*]` sidecar (it measures nothing itself; see [SPEC_RESOURCE_SIDECAR.md](SPEC_RESOURCE_SIDECAR.md)). `/api/overview` also carries the latest values (`resources`) and whether each sidecar answered (`resource_sources`). |
 | `GET /api/looks` | Every version in `manifest.json`, newest first: `version`, `created_at`, `status`, `summary` (template, outfit, footwear, worn accessories), `palette`, `has_picture` (a PNG exists in `<deploy_dir>/looks/`) and `kept` (its `.glb` is still in `assets/`), plus `current` and `locked` (the current look is an imported model the companion is keeping, derived from the manifest and `agent_state.look_unlocked_for`, read-only; see [ADR_IMPORTED_LOOK_LOCK.md](ADR_IMPORTED_LOOK_LOCK.md)). Read straight from the manifest file; a missing or unreadable manifest gives an empty list. |
 | `GET /api/animations` | Which animations each installed body gets from each installed animation library (`brain.appearance.models.animation_matrix`, read-only, computed from the files under the deploy directory): `libraries` (`name`, `clips`, `joints`) and `bodies` (`body`, `installed`, `held`, `credit` (who made it and under what licence, for a model that came with that recorded: a Sketchfab one), and per library `fits`, `roles`, `sit` (`chair` / `ground` / null) and `gaps`, the bones of the library the body lacks, whose tracks are dropped). `libraries` is null for a body whose rig was never inspected and `{}` for one with no rig of the libraries'. An unreadable deploy directory gives empty lists. |
 | `GET /api/looks/{version}.png` | The version's picture (`<deploy_dir>/looks/look-v{N}.png`, rendered by the brain, see [ADR_LOOK_HISTORY.md](ADR_LOOK_HISTORY.md)); `404` if not rendered yet. The version is an integer in the route, never a path. |
@@ -47,10 +48,13 @@ Every length is in `rem` and lives in `css/`, so the page scales with the viewer
 ```
 status_page/
 ├── app.py                  # FastAPI service (routes above)
+├── resources.py            # resource history: the SQLite store and the puller (no OS-specific code)
+├── resources_collect.py    # the sidecar's readers: linux (/proc, cgroups) and psutil backends, GPU tools
+├── resources_agent.py      # the sidecar: serves GET /samples, per-client tokens (docs/SPEC_RESOURCE_SIDECAR.md)
 └── static/
     ├── index.html          # markup only; links the CSS files and js/main.js (type="module")
     ├── css/
-    │   ├── tokens.css      # colors for light and dark; series slots --s1..--s3
+    │   ├── tokens.css      # colors for light and dark; series slots --s1..--s5
     │   ├── base.css        # reset, header, tab nav, buttons, tab panels, section cards
     │   ├── components.css  # status rows, dots, key/value, bars, chips, tables, banner, empty state
     │   ├── thinking.css  timeline.css  chat.css  logs.css  looks.css  animations.css  build.css   # one per tab
