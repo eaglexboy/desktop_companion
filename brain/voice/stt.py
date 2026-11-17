@@ -22,6 +22,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 from brain.config import Settings
 
@@ -36,12 +37,22 @@ _VOICE_ACTIVITY_RMS_THRESHOLD = 500.0
 _STREAM_SAMPLE_WIDTH_BYTES = 2  # PCM16LE, per the Microphone Wire Format
 
 
+class Transcript(NamedTuple):
+    """What a recognizer heard. `language`/`confidence` are None when the
+    backend cannot report detection; callers then identify the text itself."""
+
+    text: str
+    language: str | None = None
+    confidence: float | None = None
+
+
 class STTBackend(ABC):
     @abstractmethod
     async def transcribe(
         self, wav_path: Path, *, language: str | None = None
-    ) -> str:
-        """Transcribe the audio at `wav_path` to text. Raises on failure."""
+    ) -> Transcript:
+        """Transcribe the audio at `wav_path`. `language` is an optional hint
+        (pinned mode); without one the backend detects. Raises on failure."""
 
     async def health_check(self) -> bool:
         return True
@@ -64,16 +75,14 @@ class STTCoordinator:
 
     async def transcribe(
         self, wav_path: Path, *, language: str | None = None
-    ) -> tuple[str, str]:
-        """Returns (backend_name, text)."""
+    ) -> tuple[str, Transcript]:
+        """Returns (backend_name, transcript)."""
         if self._active_backend == "remote" and self._remote is not None:
             try:
                 return "remote", await self._remote.transcribe(
                     wav_path, language=language
                 )
-            except (
-                Exception
-            ) as exc:  # noqa: BLE001 -- fall back to local, same policy as TTS
+            except Exception as exc:
                 logger.warning(
                     "remote STT failed (%s); falling back to local", exc
                 )
@@ -170,7 +179,7 @@ class StreamingSTT:
 
     async def end_stream(
         self, stream_id: str, *, language: str | None = None
-    ) -> tuple[str, str]:
+    ) -> tuple[str, Transcript]:
         """Finalizes and transcribes the buffered audio, then discards the
         stream's state either way (a stream is finalized at most once)."""
         state = self._streams.pop(stream_id, None)

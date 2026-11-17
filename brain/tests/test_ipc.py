@@ -16,7 +16,12 @@ from starlette.websockets import WebSocketDisconnect
 from brain.appearance.manifest import append_version
 from brain.config import Settings
 from brain.ipc.server import PROTOCOL_VERSION, OverlayHub, project_manifest
-from brain.voice.stt import StreamingSTT, STTBackend, STTCoordinator
+from brain.voice.stt import (
+    StreamingSTT,
+    STTBackend,
+    STTCoordinator,
+    Transcript,
+)
 
 DEFAULT_HOST_HEADER = "127.0.0.1:8765"
 
@@ -330,17 +335,19 @@ def test_close_all_sends_every_client_away_so_the_server_can_stop():
         await hub.close_all()
         return {"left": hub.connected_client_ids}
 
-    with TestClient(app) as client:
-        with client.websocket_connect(
+    with (
+        TestClient(app) as client,
+        client.websocket_connect(
             "/ws/overlay", headers={"host": DEFAULT_HOST_HEADER}
-        ) as ws:
-            ws.send_json(_hello("desktop_primary"))
-            ws.receive_json()  # welcome
-            assert hub.connected_client_ids == ["desktop_primary"]
-            assert client.post("/stop").json() == {"left": []}
-            with pytest.raises(WebSocketDisconnect) as exc_info:
-                ws.receive_json()
-            assert exc_info.value.code == 1001
+        ) as ws,
+    ):
+        ws.send_json(_hello("desktop_primary"))
+        ws.receive_json()  # welcome
+        assert hub.connected_client_ids == ["desktop_primary"]
+        assert client.post("/stop").json() == {"left": []}
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            ws.receive_json()
+        assert exc_info.value.code == 1001
 
 
 # --- client -> daemon event dispatch --------------------------------------------
@@ -349,7 +356,7 @@ def test_close_all_sends_every_client_away_so_the_server_can_stop():
 def test_user_text_input_invokes_callback():
     received = []
 
-    async def on_user_text_input(client_id, text):
+    async def on_user_text_input(client_id, text, heard=None):
         received.append((client_id, text))
 
     hub = OverlayHub(_settings(), on_user_text_input=on_user_text_input)
@@ -539,15 +546,15 @@ class _FakeSTTBackend(STTBackend):
     def __init__(self, text: str) -> None:
         self._text = text
 
-    async def transcribe(self, wav_path, *, language=None) -> str:
-        return self._text
+    async def transcribe(self, wav_path, *, language=None):
+        return Transcript(self._text, "es-mx", 0.9)
 
 
 def test_audio_stream_routes_binary_frames_and_finalizes_on_end():
     received = []
 
-    async def on_user_text_input(client_id, text):
-        received.append((client_id, text))
+    async def on_user_text_input(client_id, text, heard=None):
+        received.append((client_id, text, heard))
 
     coordinator = STTCoordinator(
         "local", _FakeSTTBackend("transcribed speech"), None
@@ -602,7 +609,9 @@ def test_audio_stream_routes_binary_frames_and_finalizes_on_end():
         )
         ws.close()
 
-    assert received == [("desktop_primary", "transcribed speech")]
+    assert received == [
+        ("desktop_primary", "transcribed speech", ("es-mx", 0.9))
+    ]
 
 
 def test_binary_frame_with_no_active_stream_is_ignored_not_fatal():

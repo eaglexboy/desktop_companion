@@ -136,7 +136,7 @@ The core daemon, IPC protocol, and asset contracts are platform-agnostic by desi
 * **Parametric Asset Generator (`blender/`):** headless procedural `LookSpec` → rigged, viseme-capable, animated `.glb` pipeline (targets Blender 5.0.1; 4.5 LTS+ compatibility floor).
 * **Voice:** user-configured default voice model with per-call voice overrides supported by the daemon.
 * **Networking:** binds strictly to local loopback (`127.0.0.1:8765`), secured against browser-origin hijacking; protocol is "network-ready" (dual local-path/HTTP URL fields) for future phases.
-* **Configuration:** direct editing of `$XDG_CONFIG_HOME/deskmate/config.toml` with live, zero-downtime hot reload. No dedicated graphical settings UI.
+* **Configuration:** `$XDG_CONFIG_HOME/deskmate/config.toml` with live, zero-downtime hot reload, edited by hand or through the Admin app's Settings page (validated, comments kept, secrets never shown).
 * **Deployment:** user-level systemd units and install/sync scripts.
 
 ### V2+
@@ -148,4 +148,4 @@ The core daemon, IPC protocol, and asset contracts are platform-agnostic by desi
 * **Network & mobile multi-client access** ([`docs/ADR_NETWORK_AND_MOBILE_STRATEGY.md`](docs/ADR_NETWORK_AND_MOBILE_STRATEGY.md)) — private mesh exposure (Tailscale/WireGuard) with per-device bearer tokens, then a zero-install mobile PWA client (Three.js/WebGL) for interacting with the same companion from other devices, with the Brain daemon remaining the single source of truth.
 * **Autonomous voice selection & cloning** ([`docs/ADR_AUTONOMOUS_VOICE_SELECTION.md`](docs/ADR_AUTONOMOUS_VOICE_SELECTION.md)) — the companion evolves its voice alongside its visual appearance during autonomous redesigns, choosing between preset voice personas or cloned voices, subject to user-configured safeguards.
 * **Skills & sub-agent orchestration** ([`docs/ADR_SKILLS_AND_AGENT_ORCHESTRATION.md`](docs/ADR_SKILLS_AND_AGENT_ORCHESTRATION.md)) — a 3-track model for extending the companion beyond conversation: deterministic sandboxed script pipelines, single-turn tool calls, and autonomous multi-turn sub-agents (e.g. "audit this repo and fix the tests") coordinated through an Inference Capacity Governor so background work never starves the interactive voice/chat loop.
-* **Dedicated settings UI** — a graphical alternative to direct `config.toml` editing.
+* **Dedicated settings UI** — *done:* the Admin app's Settings page, a graphical alternative to direct `config.toml` editing. Still to come: adding or removing whole entries (a new voice engine or LLM backend) from the page.

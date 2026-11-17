@@ -53,6 +53,7 @@ class TTSServeBackend(TTSBackend):
         *,
         voice_id: str | None = None,
         params: dict[str, Any] | None = None,
+        language: str | None = None,
     ) -> None:
         # voice_id is an accommodation for a future voice-selection feature,
         # with no meaning for tts-serve today: each configured remote
@@ -113,6 +114,7 @@ class GenericOpenAITTSBackend(TTSBackend):
         *,
         voice_id: str | None = None,
         params: dict[str, Any] | None = None,
+        language: str | None = None,
     ) -> None:
         # model/voice are mandatory per the OpenAI contract but have no
         # sane engine-agnostic default -- they must come from this entry's

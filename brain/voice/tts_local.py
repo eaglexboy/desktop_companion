@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from brain.config import TTSLocalConfig
+from brain.language import (
+    languages_match,
+    lookup_by_language,
+    normalize_language,
+)
 from brain.voice.tts import TTSBackend
 
 
@@ -26,12 +31,42 @@ class PiperTTSBackend(TTSBackend):
         voices_dir: Path,
         *,
         piper_bin: str = "piper",
+        default_language: str = "en",
     ) -> None:
+        self._default_language = default_language
         self._config = config
         self._voices_dir = voices_dir
         self._piper_bin = piper_bin
 
-    def _resolve_voice_path(self, voice_id: str | None) -> Path:
+    @property
+    def languages(self) -> tuple[str, ...]:
+        """The languages with a configured voice: the default language's
+        `voice_model_path`, plus every entry of `voice_models`."""
+        langs = [self._default_language]
+        langs += [
+            tag
+            for key in self._config.voice_models
+            if (tag := normalize_language(key)) and tag not in langs
+        ]
+        return tuple(langs)
+
+    def _voice_for_language(self, language: str | None) -> Path | None:
+        if not language:
+            return None
+        models = {
+            (normalize_language(k) or k): v
+            for k, v in self._config.voice_models.items()
+        }
+        name = lookup_by_language(models, language)
+        if name:
+            return self._voices_dir / name
+        if languages_match(language, self._default_language):
+            return self._voices_dir / self._config.voice_model_path
+        raise PiperVoiceNotFound(f"no Piper voice configured for {language!r}")
+
+    def _resolve_voice_path(
+        self, voice_id: str | None, language: str | None = None
+    ) -> Path:
         """`voice_id` is an accommodation for a future voice-catalog feature
         (`agent_state.current_voice_id` format: "piper:<stem>" or
         "remote:<id>") -- there's no catalog of alternate local voices yet,
@@ -39,6 +74,9 @@ class PiperTTSBackend(TTSBackend):
         voices_dir, this honors it rather than ignoring it outright; any
         other value (including None) falls back to the one configured
         default voice."""
+        by_language = self._voice_for_language(language)
+        if by_language is not None:
+            return by_language
         if voice_id and voice_id.startswith("piper:"):
             candidate = (
                 self._voices_dir / f"{voice_id.removeprefix('piper:')}.onnx"
@@ -62,8 +100,9 @@ class PiperTTSBackend(TTSBackend):
         *,
         voice_id: str | None = None,
         params: dict[str, Any] | None = None,
+        language: str | None = None,
     ) -> None:
-        onnx_path = self._resolve_voice_path(voice_id)
+        onnx_path = self._resolve_voice_path(voice_id, language)
         if not onnx_path.is_file():
             raise PiperVoiceNotFound(
                 f"Piper voice model not found at {onnx_path}. Download it (and its .onnx.json "

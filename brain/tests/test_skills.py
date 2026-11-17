@@ -5,7 +5,13 @@ from __future__ import annotations
 import pytest
 
 from brain.skills.builtin import register_builtin
-from brain.skills.registry import Param, Skill, SkillCall, SkillError, SkillRegistry
+from brain.skills.registry import (
+    Param,
+    Skill,
+    SkillCall,
+    SkillError,
+    SkillRegistry,
+)
 from brain.skills.reply import parse_reply
 
 
@@ -38,7 +44,9 @@ def test_structured_reply_splits_dialogue_from_actions():
         '{"say": "Hi there!", "do": [{"skill": "gesture", "args": {"name": "greet"}}]}'
     )
     assert r.structured and r.say == "Hi there!"
-    assert [(a.skill, a.args) for a in r.actions] == [("gesture", {"name": "greet"})]
+    assert [(a.skill, a.args) for a in r.actions] == [
+        ("gesture", {"name": "greet"})
+    ]
 
 
 def test_code_fenced_json_and_surrounding_chatter_still_parse():
@@ -49,12 +57,16 @@ def test_code_fenced_json_and_surrounding_chatter_still_parse():
 def test_plain_text_is_all_dialogue_with_no_actions():
     r = parse_reply("Just chatting, no JSON here.")
     assert (
-        not r.structured and r.say == "Just chatting, no JSON here." and r.actions == []
+        not r.structured
+        and r.say == "Just chatting, no JSON here."
+        and r.actions == []
     )
 
 
 def test_json_without_say_is_not_guessed_into_actions():
-    r = parse_reply('{"do": [{"skill": "change_look", "args": {"request": "x"}}]}')
+    r = parse_reply(
+        '{"do": [{"skill": "change_look", "args": {"request": "x"}}]}'
+    )
     assert not r.structured and r.actions == []
 
 
@@ -86,7 +98,8 @@ def _registry(**kw) -> SkillRegistry:
 def test_prompt_block_lists_enabled_skills_only():
     block = _registry(disabled={"change_look"}).prompt_block()
     assert (
-        "gesture(name: greet|agree|disagree|celebrate|shrug|angry|hip_thrust)" in block
+        "gesture(name: greet|agree|disagree|celebrate|shrug|angry|hip_thrust)"
+        in block
     )
     assert "change_look" not in block
     assert SkillRegistry().prompt_block() == ""
@@ -104,7 +117,9 @@ def test_validation_rejects_unknown_skills_and_bad_arguments():
         reg.validate(SkillCall("remember", {}))
     with pytest.raises(SkillError):
         reg.validate(SkillCall("remember", {"note": "x" * 1000}))
-    assert reg.validate(SkillCall("gesture", {"name": " shrug "})) == {"name": "shrug"}
+    assert reg.validate(SkillCall("gesture", {"name": " shrug "})) == {
+        "name": "shrug"
+    }
 
 
 async def test_run_all_executes_valid_calls_and_refuses_the_rest():
@@ -112,7 +127,9 @@ async def test_run_all_executes_valid_calls_and_refuses_the_rest():
     calls = [
         SkillCall("gesture", {"name": "greet"}),
         SkillCall("nope", {}),
-        SkillCall("remember", {"note": "likes tea"}),  # third: over the limit of 2
+        SkillCall(
+            "remember", {"note": "likes tea"}
+        ),  # third: over the limit of 2
     ]
     results = await reg.run_all(calls, state)
     assert [r["ok"] for r in results] == [True, False]
@@ -175,13 +192,19 @@ async def test_describe_reports_every_skill_with_usage_counters():
         "remember",
         "change_look",
         "revert_look",
+        "set_language",
+        "get_language",
+        "auto_language",
         "unlock_look",
     }
     assert (
         by_name["change_look"]["enabled"] is False
         and by_name["gesture"]["enabled"] is True
     )
-    assert (by_name["gesture"]["calls"], by_name["gesture"]["refused"]) == (1, 1)
+    assert (by_name["gesture"]["calls"], by_name["gesture"]["refused"]) == (
+        1,
+        1,
+    )
     assert by_name["gesture"]["params"][0]["enum"] == [
         "greet",
         "agree",
@@ -202,7 +225,12 @@ def test_a_gesture_is_more_animated_when_the_companion_is_happy_and_less_when_it
 
     class Store:
         def __init__(self, **mood):
-            self.mood = {"energy": 50.0, "valence": 50.0, "stress": 50.0, **mood}
+            self.mood = {
+                "energy": 50.0,
+                "valence": 50.0,
+                "stress": 50.0,
+                **mood,
+            }
 
         def get_mood(self):
             return self.mood
@@ -215,8 +243,12 @@ def test_a_gesture_is_more_animated_when_the_companion_is_happy_and_less_when_it
     assert (
         gesture_intensity(State(valence=85.0, energy=75.0)) > 0.65
     )  # very happy to see you
-    assert gesture_intensity(State(valence=20.0, energy=30.0, stress=70.0)) < 0.35
-    assert gesture_intensity(State(valence=100.0, energy=100.0, stress=0.0)) <= 1.0
+    assert (
+        gesture_intensity(State(valence=20.0, energy=30.0, stress=70.0)) < 0.35
+    )
+    assert (
+        gesture_intensity(State(valence=100.0, energy=100.0, stress=0.0)) <= 1.0
+    )
     assert (
         gesture_intensity(object()) == 0.5
     )  # no store: a gesture never fails for want of a mood

@@ -80,6 +80,13 @@ import { empty } from "./settings-doc.js";
  */
 
 /**
+ * The accessory whose placement is open.
+ * @typedef {object} Focus
+ * @property {string} socket
+ * @property {string} item
+ */
+
+/**
  * @typedef {object} SettingsState
  * @property {ListedModel[] | null} models
  * @property {boolean} unreachable
@@ -88,7 +95,7 @@ import { empty } from "./settings-doc.js";
  * @property {Settings} saved
  * @property {Settings} draft
  * @property {Checked | null} checked  the brain's verdict on the draft
- * @property {{ socket: string, item: string } | null} focus  the item whose placement is open
+ * @property {Focus | null} focus  the item whose placement is open
  * @property {boolean} showAllClips
  * @property {Record<string, string | null>} sheetPicks  what the alignment sheet wears, socket by socket: an item, null for nothing; a socket not here has its default
  * @property {boolean} heldOnly  list only the models held back

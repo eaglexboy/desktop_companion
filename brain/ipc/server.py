@@ -201,7 +201,9 @@ class HandshakeError(ValueError):
     closing the socket with `_CLOSE_POLICY_VIOLATION`, never a crash."""
 
 
-OnUserText = Callable[[str, str], Awaitable[None]]  # (client_id, text)
+# (client_id, text) for typed input; spoken input adds a third argument, the
+# recognizer's (language, confidence).
+OnUserText = Callable[..., Awaitable[None]]
 OnInteractionState = Callable[[str, str], Awaitable[None]]  # (client_id, state)
 OnAssetSwapResult = Callable[
     [bool, int, str | None], Awaitable[None]
@@ -249,6 +251,7 @@ class OverlayHub:
         get_manifest: Callable[[], AssetManifest | None] = lambda: None,
         streaming_stt: StreamingSTT | None = None,
         on_user_text_input: OnUserText = _noop_user_text,
+        get_stt_language: Callable[[], str | None] = lambda: None,
         on_interaction_state: OnInteractionState = _noop_interaction_state,
         on_asset_swap_result: OnAssetSwapResult = _noop_asset_swap_result,
         on_speech_finished: OnSpeechFinished = _noop_speech_finished,
@@ -258,6 +261,7 @@ class OverlayHub:
         self._get_manifest = get_manifest
         self._streaming_stt = streaming_stt
         self._on_user_text_input = on_user_text_input
+        self._get_stt_language = get_stt_language
         self._on_interaction_state = on_interaction_state
         self._on_asset_swap_result = on_asset_swap_result
         self._on_speech_finished = on_speech_finished
@@ -499,8 +503,8 @@ class OverlayHub:
         if state.active_stream_id == stream_id:
             state.active_stream_id = None
         try:
-            _backend_name, text = await self._streaming_stt.end_stream(
-                stream_id
+            _backend_name, heard = await self._streaming_stt.end_stream(
+                stream_id, language=self._get_stt_language()
             )
         except Exception:
             logger.exception(
@@ -509,8 +513,10 @@ class OverlayHub:
                 state.client_id,
             )
             return
-        if text:
-            await self._on_user_text_input(state.client_id, text)
+        if heard.text:
+            await self._on_user_text_input(
+                state.client_id, heard.text, (heard.language, heard.confidence)
+            )
 
     @property
     def settings(self) -> Settings:

@@ -11,7 +11,8 @@ from pathlib import Path
 import httpx
 
 from brain.config import STTRemoteConfig
-from brain.voice.stt import STTBackend
+from brain.language import normalize_language, primary_language
+from brain.voice.stt import STTBackend, Transcript
 
 
 class RemoteSTTBackend(STTBackend):
@@ -28,17 +29,24 @@ class RemoteSTTBackend(STTBackend):
 
     async def transcribe(
         self, wav_path: Path, *, language: str | None = None
-    ) -> str:
+    ) -> Transcript:
         data = {"model": self._config.model, **self._config.params}
         if language:
-            data["language"] = language
+            data["language"] = primary_language(
+                normalize_language(language) or language
+            )
         wav_bytes = await asyncio.to_thread(wav_path.read_bytes)
         files = {"file": (wav_path.name, wav_bytes, "audio/wav")}
         response = await self._http.post(
             self._config.endpoint, data=data, files=files
         )
         response.raise_for_status()
-        return response.json()["text"]
+        body = response.json()
+        # Plain OpenAI "json" carries only text; verbose_json (set it in
+        # [voice.stt.remote] params) also reports the detected language.
+        return Transcript(
+            body["text"], normalize_language(body.get("language")), None
+        )
 
     async def aclose(self) -> None:
         await self._http.aclose()

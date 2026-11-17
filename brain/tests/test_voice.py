@@ -24,6 +24,7 @@ from brain.voice.stt import (
     StreamingSTT,
     STTBackend,
     STTCoordinator,
+    Transcript,
     UnknownStreamError,
 )
 from brain.voice.stt_remote import RemoteSTTBackend
@@ -50,7 +51,7 @@ class _ScriptedSTTBackend(STTBackend):
 
     async def transcribe(
         self, wav_path: Path, *, language: str | None = None
-    ) -> str:
+    ) -> Transcript:
         if wav_path.is_file():
             with wave.open(str(wav_path), "rb") as wf:
                 self.calls.append(
@@ -62,7 +63,7 @@ class _ScriptedSTTBackend(STTBackend):
             )  # failover tests pass a placeholder path that's never written
         if self.fails:
             raise RuntimeError("transcription failed")
-        return self.text
+        return Transcript(self.text)
 
 
 # --- STTCoordinator: local/remote failover -----------------------------------
@@ -74,8 +75,8 @@ async def test_local_active_backend_never_touches_remote(tmp_path):
     remote = _ScriptedSTTBackend(text="remote result")
     coordinator = STTCoordinator("local", local, remote)
 
-    name, text = await coordinator.transcribe(tmp_path / "x.wav")
-    assert (name, text) == ("local", "local result")
+    name, heard = await coordinator.transcribe(tmp_path / "x.wav")
+    assert (name, heard.text) == ("local", "local result")
     assert remote.calls == []
 
 
@@ -85,8 +86,8 @@ async def test_remote_active_backend_tries_remote_first(tmp_path):
     remote = _ScriptedSTTBackend(text="remote result")
     coordinator = STTCoordinator("remote", local, remote)
 
-    name, text = await coordinator.transcribe(tmp_path / "x.wav")
-    assert (name, text) == ("remote", "remote result")
+    name, heard = await coordinator.transcribe(tmp_path / "x.wav")
+    assert (name, heard.text) == ("remote", "remote result")
     assert local.calls == []
 
 
@@ -96,8 +97,8 @@ async def test_remote_failure_falls_back_to_local(tmp_path):
     remote = _ScriptedSTTBackend(fails=True)
     coordinator = STTCoordinator("remote", local, remote)
 
-    name, text = await coordinator.transcribe(tmp_path / "x.wav")
-    assert (name, text) == ("local", "local result")
+    name, heard = await coordinator.transcribe(tmp_path / "x.wav")
+    assert (name, heard.text) == ("local", "local result")
 
 
 @pytest.mark.asyncio
@@ -105,8 +106,8 @@ async def test_remote_active_with_no_remote_configured_uses_local(tmp_path):
     local = _ScriptedSTTBackend(text="local result")
     coordinator = STTCoordinator("remote", local, None)
 
-    name, text = await coordinator.transcribe(tmp_path / "x.wav")
-    assert (name, text) == ("local", "local result")
+    name, heard = await coordinator.transcribe(tmp_path / "x.wav")
+    assert (name, heard.text) == ("local", "local result")
 
 
 # --- StreamingSTT: buffering, VAD, finalization ------------------------------
@@ -141,9 +142,9 @@ async def test_end_stream_transcribes_buffered_pcm_as_wav(tmp_path):
     streaming.start_stream("s_1", sample_rate=16000)
     streaming.feed_chunk("s_1", _pcm16le_tone(5000))
     streaming.feed_chunk("s_1", _pcm16le_tone(5000))
-    name, text = await streaming.end_stream("s_1")
+    name, heard = await streaming.end_stream("s_1")
 
-    assert (name, text) == ("local", "hello world")
+    assert (name, heard.text) == ("local", "hello world")
     assert local.calls[0] is not None
     n_channels, framerate, n_frames = local.calls[0]
     assert framerate == 16000
@@ -233,7 +234,7 @@ async def test_remote_stt_posts_multipart_and_parses_text_field(tmp_path):
     )
 
     text = await backend.transcribe(wav_path, language="en")
-    assert text == "transcribed text"
+    assert text.text == "transcribed text"
     assert "multipart/form-data" in captured["content_type"]
     assert b"whisper-1" in captured["body"]
     assert b"utterance.wav" in captured["body"]
@@ -243,7 +244,7 @@ async def test_remote_stt_posts_multipart_and_parses_text_field(tmp_path):
 async def test_remote_stt_sends_bearer_token_when_api_key_set(tmp_path):
     wav_path = tmp_path / "utterance.wav"
     wav_path.write_bytes(b"fake")
-    captured_headers = {}
+    captured_headers: dict[str, str] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured_headers.update(request.headers)
@@ -379,5 +380,5 @@ async def test_real_faster_whisper_transcribes_real_piper_audio(tmp_path):
     # test exists to prove the real decode-and-resample pipeline runs
     # end-to-end (see the PyAV workaround above), not to grade model
     # accuracy, so it only checks for a plausible, non-trivial result.
-    assert "pipeline" in transcribed.lower()
-    assert len(transcribed.split()) >= 5
+    assert "pipeline" in transcribed.text.lower()
+    assert len(transcribed.text.split()) >= 5

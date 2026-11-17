@@ -146,7 +146,7 @@ if [ -z "$VENV_PYTHON" ]; then
     echo "   and re-run install.sh, or fix it by hand afterward." >&2
 fi
 
-for unit in deskmate-brain.service deskmate-overlay.service deskmate-status.service deskmate-backup.service deskmate-backup.timer; do
+for unit in deskmate-brain.service deskmate-overlay.service deskmate-status.service deskmate-resources-agent.service deskmate-backup.service deskmate-backup.timer; do
     SRC="$REPO_ROOT/deploy/systemd/$unit"
     if [ ! -f "$SRC" ]; then
         echo "!! $SRC missing, skipping" >&2
@@ -171,6 +171,7 @@ systemctl --user daemon-reload
 echo "-- ran: systemctl --user daemon-reload"
 echo "   enable with: systemctl --user enable --now deskmate-brain.service deskmate-status.service deskmate-backup.timer"
 echo "   (deskmate-overlay.service once overlay/build/deskmate_overlay has been built)"
+echo "   (deskmate-resources-agent.service once you have written resources-agent.toml: docs/SPEC_RESOURCE_SIDECAR.md)"
 
 echo "=========================================================="
 echo " install.sh complete."

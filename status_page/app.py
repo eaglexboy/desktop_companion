@@ -1,11 +1,12 @@
 """The Deskmate Admin app (the status page and the Build page).
 
 A separate process from the brain on purpose: when the brain hangs or
-crashes, this is the thing you need to still be up. Every page but one is
+crashes, this is the thing you need to still be up. Most pages are
 read-only: `state.db` is opened read-only, units are only queried, and logs
-are only read. The one writing page is Build (docs/ADR_BUILD_YOUR_LOOK.md); its
-routes are the named set under `WRITE_PREFIXES`, they only ask the brain to
-preview or build a look, and the brain validates what they pass on. Nothing
+are only read. The writing pages are Build (docs/ADR_BUILD_YOUR_LOOK.md), Model
+settings (docs/ADR_MODEL_SETTINGS_PAGE.md) and Language settings; their routes
+are the named set under `WRITE_PREFIXES`, they only ask the brain to preview,
+build or save, and the brain validates what they pass on. Nothing
 else here changes anything, and a middleware refuses any other non-GET request.
 What lives solely in the brain's memory comes from the brain's own
 GET /api/status, and a failure to reach it is shown, not hidden.
@@ -16,6 +17,7 @@ Run: python -m status_page.app   (from the repo root; see deploy/systemd/deskmat
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -37,6 +39,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 
+from brain import config_editor
 from brain.appearance.models import animation_matrix
 from brain.appearance.viewer_files import (
     accessory_file,
@@ -45,7 +48,8 @@ from brain.appearance.viewer_files import (
     library_file,
     outfit_file,
 )
-from brain.config import Settings, get_settings
+from brain.config import Settings, _default_config_path, get_settings
+from status_page import resources
 
 logger = logging.getLogger("deskmate.status")
 
@@ -57,8 +61,51 @@ LOG_BACKLOG_LINES = 200
 # cheap 304) on every load, so an edited script or stylesheet is never stale.
 NO_CACHE = {"Cache-Control": "no-cache"}
 
+
+_sampler: resources.Sampler | None = None
+
+
+def _build_sampler(settings: Settings) -> resources.Sampler:
+    """Pulls every `[status.resources.sources.*]` sidecar; the Admin app measures nothing itself."""
+    cfg = settings.status.resources
+    return resources.Sampler(
+        resources.db_path(settings.workspace_dir),
+        {
+            name: resources.Source(src.url, src.token, src.timeout_s)
+            for name, src in cfg.sources.items()
+        },
+        interval_s=cfg.interval_s,
+        retention_s=cfg.retention_days * 86_400,
+    )
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Samples resource use for as long as the app runs (see status_page/resources.py)."""
+    global _sampler
+    settings = _settings()
+    if (
+        not settings.status.resources.enabled
+        or not settings.status.resources.sources
+    ):
+        yield
+        return
+    _sampler = _build_sampler(settings)
+    task = asyncio.create_task(_sampler.run())
+    try:
+        yield
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        _sampler = None
+
+
 app = FastAPI(
-    title="Deskmate Admin", docs_url=None, redoc_url=None, openapi_url=None
+    title="Deskmate Admin",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    lifespan=_lifespan,
 )
 
 
@@ -89,7 +136,12 @@ async def _unless_stopping(awaitable):
 
 # The pages that write. Every route that changes anything lives under one of these,
 # and nothing else may be called with a method other than GET/HEAD (see `_only_named_writes`).
-WRITE_PREFIXES = ("/api/build/", "/api/model-settings/")
+WRITE_PREFIXES = (
+    "/api/build/",
+    "/api/model-settings/",
+    "/api/language/",
+    "/api/config/",
+)
 # A cross-origin page cannot set this header without a CORS preflight, which this app never answers.
 WRITE_HEADER = "x-deskmate-admin"
 MAX_WRITE_BODY = 16_384
@@ -270,16 +322,23 @@ def _db_rows(settings: Settings) -> dict:
                 # `raw` is what the model returned before the reply was parsed
                 # and cleaned for speech (NULL for older turns and user turns).
                 rows = conn.execute(
-                    "SELECT i.id, i.ts, i.role, i.text, i.provider, i.escalated, r.raw "
+                    "SELECT i.id, i.ts, i.role, i.text, i.provider, i.escalated, i.language, r.raw "
                     "FROM interactions i LEFT JOIN reply_raw r ON r.interaction_id = i.id "
                     "ORDER BY i.id DESC LIMIT 40"
                 )
             except (
                 sqlite3.OperationalError
-            ):  # a database from before reply_raw existed
-                rows = conn.execute(
-                    "SELECT id, ts, role, text, provider, escalated FROM interactions ORDER BY id DESC LIMIT 40"
-                )
+            ):  # a database from before reply_raw / language existed
+                try:
+                    rows = conn.execute(
+                        "SELECT i.id, i.ts, i.role, i.text, i.provider, i.escalated, r.raw "
+                        "FROM interactions i LEFT JOIN reply_raw r ON r.interaction_id = i.id "
+                        "ORDER BY i.id DESC LIMIT 40"
+                    )
+                except sqlite3.OperationalError:
+                    rows = conn.execute(
+                        "SELECT id, ts, role, text, provider, escalated FROM interactions ORDER BY id DESC LIMIT 40"
+                    )
             out["interactions"] = [dict(r) for r in rows][::-1]
             out["memories"] = [
                 dict(r)
@@ -397,6 +456,17 @@ async def overview() -> dict:
         "probes": probes,
         "db": db,
         "backup": backup,
+        "resources": await asyncio.to_thread(
+            resources.current,
+            resources.db_path(settings.workspace_dir),
+            None,
+            settings.status.resources.interval_s,
+        ),
+        "resource_sources": {
+            name: (_sampler.status.get(name) if _sampler else None)
+            or {"ok": None, "error": "not polled yet"}
+            for name in settings.status.resources.sources
+        },
         "log_sources": list(_log_sources(settings)),
     }
 
@@ -486,21 +556,23 @@ async def proxy_events(request: Request, since: int = 0):
 
     async def relay():
         try:
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(5.0, read=None)
-            ) as client:
-                async with client.stream(
+            async with (
+                httpx.AsyncClient(
+                    timeout=httpx.Timeout(5.0, read=None)
+                ) as client,
+                client.stream(
                     "GET", url, params={"since": since}, headers=headers
-                ) as upstream:
-                    chunks = upstream.aiter_raw().__aiter__()
-                    while True:
-                        try:
-                            chunk = await _unless_stopping(chunks.__anext__())
-                        except StopAsyncIteration:
-                            break
-                        if chunk is None:  # the app is stopping
-                            break
-                        yield chunk
+                ) as upstream,
+            ):
+                chunks = upstream.aiter_raw().__aiter__()
+                while True:
+                    try:
+                        chunk = await _unless_stopping(chunks.__anext__())
+                    except StopAsyncIteration:
+                        break
+                    if chunk is None:  # the app is stopping
+                        break
+                    yield chunk
         except httpx.HTTPError:
             yield b"event: brain-down\ndata: {}\n\n"
 
@@ -805,6 +877,97 @@ async def build_apply(request: Request) -> JSONResponse:
     )
 
 
+# --- settings (brain/config_editor.py): the graphical alternative to editing config.toml -----------
+# These routes read and write the config file themselves, not through the brain, so they still
+# work when the brain is down (a broken config is when this page is most needed). The brain's
+# own config watcher picks the new file up. Secrets are never returned.
+
+BRAIN_UNIT = "deskmate-brain.service"
+
+
+def _config_path() -> Path:
+    return _default_config_path()
+
+
+def _config_error(exc: config_editor.ConfigEditError) -> HTTPException:
+    return HTTPException(
+        409 if isinstance(exc, config_editor.ConfigConflict) else 422, str(exc)
+    )
+
+
+@app.get("/api/config/get")
+async def config_get() -> dict:
+    try:
+        return await asyncio.to_thread(config_editor.describe, _config_path())
+    except config_editor.ConfigEditError as exc:
+        raise _config_error(exc) from None
+
+
+@app.put("/api/config/save", dependencies=[Depends(_write_guard)])
+async def config_save(request: Request) -> dict:
+    body = await _json_body(request)
+    changes, base = body.get("changes"), body.get("hash")
+    if not isinstance(changes, list) or not isinstance(base, str):
+        raise HTTPException(400, "changes (a list) and hash are needed")
+    try:
+        return await asyncio.to_thread(
+            config_editor.apply, _config_path(), changes, base
+        )
+    except config_editor.ConfigEditError as exc:
+        raise _config_error(exc) from None
+
+
+@app.post("/api/config/restore", dependencies=[Depends(_write_guard)])
+async def config_restore() -> dict:
+    try:
+        return await asyncio.to_thread(
+            config_editor.restore_backup, _config_path()
+        )
+    except config_editor.ConfigEditError as exc:
+        raise _config_error(exc) from None
+
+
+@app.post("/api/config/restart-brain", dependencies=[Depends(_write_guard)])
+async def config_restart_brain() -> dict:
+    """Restarts the brain so settings read at startup apply. The unit is fixed, nothing from the
+    request reaches the command."""
+    code, out = await _run(
+        "systemctl", "--user", "restart", BRAIN_UNIT, timeout=60.0
+    )
+    if code != 0:
+        raise HTTPException(500, f"the brain did not restart: {out or code}")
+    return {"restarted": True}
+
+
+# --- language settings (brain/language_settings.py) ---------------------------------------------
+# Relays to the brain, which validates, saves to the deploy directory (never config.toml) and
+# applies the change live.
+
+
+@app.get("/api/language/settings")
+async def language_settings_get() -> JSONResponse:
+    return _relay(await _brain("GET", "/language/settings"))
+
+
+@app.put("/api/language/settings", dependencies=[Depends(_write_guard)])
+async def language_settings_save(request: Request) -> JSONResponse:
+    return _relay(
+        await _brain("PUT", "/language/settings", await _json_body(request))
+    )
+
+
+@app.delete("/api/language/settings", dependencies=[Depends(_write_guard)])
+async def language_settings_reset() -> JSONResponse:
+    return _relay(await _brain("DELETE", "/language/settings"))
+
+
+@app.put("/api/language/pin", dependencies=[Depends(_write_guard)])
+async def language_pin(request: Request) -> JSONResponse:
+    return _relay(
+        await _brain("PUT", "/language/pin", await _json_body(request))
+    )
+
+
 # --- model settings (the second writing page; docs/ADR_MODEL_SETTINGS_PAGE.md) ------
 # Every route is a relay to the brain, which validates and writes. A body is named by id; the
 # brain turns it into files, so no path is accepted here. The preview routes of Build serve the
@@ -954,6 +1117,21 @@ async def history(kind: str = "mood", hours: float = 24.0) -> dict:
         raise HTTPException(400, "kind must be mood or traits")
     return await asyncio.to_thread(
         _history, _settings(), kind, min(max(hours, 0.1), 24 * 30)
+    )
+
+
+@app.get("/api/resources")
+async def resource_history(metric: str = "anon", hours: float = 6.0) -> dict:
+    if metric not in resources.METRICS:
+        raise HTTPException(
+            400, "metric must be one of " + ", ".join(resources.METRICS)
+        )
+    settings = _settings()
+    return await asyncio.to_thread(
+        resources.history,
+        resources.db_path(settings.workspace_dir),
+        metric,
+        min(max(hours, 0.1), settings.status.resources.retention_days * 24),
     )
 
 

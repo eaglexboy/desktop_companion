@@ -98,7 +98,7 @@ silence_threshold_ms = 800                # Trailing silence required to trigger
 
 [voice.stt.local]
 engine = "faster-whisper"
-model_size = "base.en"                    # tiny, base, small
+model_size = "base"      # multilingual; use "base.en" for an English-only install                    # tiny, base, small
 device = "auto"                           # "cpu", "cuda", "auto"
 compute_type = "int8"
 
@@ -213,6 +213,29 @@ default_seed = 5
 # voice_sample = "~/voices/companion.wav"   # optional clone; do NOT combine with `voice` (server 422s)
 # params = { voice = "alba" }               # preset; omit for the language default (and when using voice_sample)
 
+# Language capability of an engine (docs/ADR_MULTI_LANGUAGE_CHAT.md 2.5.1). Pocket serves ONE language per
+# instance (tts-serve: POCKET_TTS_MODEL), so a Spanish voice is a second instance, e.g.
+# `POCKET_TTS_MODEL=spanish POCKET_TTS_PORT=7502`, declared as its own entry:
+# [voice.tts.remote.pocket_es]
+# provider_type = "tts_serve"
+# base_url = "http://127.0.0.1:7502"
+# priority = 29
+# languages = ["es"]       # an `es` engine also serves `es-mx`
+# selection = "fixed"      # fixed | per_request | inferred; the language field is sent only to per_request engines
+# foreign_text = false     # true only after LISTENING: reads other languages with its own phonetics (accented speech)
+# cloning = true
+
+# Language. Defaults keep an English-only install as it was.
+# [language]
+# default = "en"
+# enabled = ["en", "es-mx"]   # a detected `es` resolves to the configured `es-mx`
+# window = 5                  # recent user messages scored for auto-detection
+# margin = 0.25               # how clearly another language must lead before the turn language changes
+
+# Piper has one voice per language: map language -> model file in voices_dir.
+# [voice.tts.local]
+# voice_models = { es-mx = "es_MX-claude-high.onnx" }
+
 # Reserved voice catalog stubs for a future autonomous voice-selection feature — not consumed yet:
 # [voice.voice_catalog.<id>]
 # backend = "local_piper"
@@ -269,3 +292,21 @@ host = "127.0.0.1"
 port = 8780
 units = ["deskmate-brain", "deskmate-overlay"]      # journalctl --user units shown as log panes
 # extra_logs = { pocket_tts = "/path/to/tts-serve/pocket/server.log" }
+
+# Resource use over time (the Resources page and the Overview board). The Admin app measures nothing itself:
+# every machine to chart, this one included, runs a resource sidecar that reads its own processes and GPU,
+# and each is a source here. Setting one up, and making a token per client: docs/SPEC_RESOURCE_SIDECAR.md.
+# Nothing machine-specific belongs in the repo, so the sources are for your own config.toml.
+[status.resources]
+# enabled = true
+# interval_s = 30              # how often to ask each sidecar
+# retention_days = 14          # how long history is kept
+
+# One table per sidecar; the name prefixes that machine's series ("workstation/overlay").
+# [status.resources.sources.workstation]
+# url = "http://127.0.0.1:8781"
+# token = "env:STATUS_RESOURCES_TOKEN"     # this status page's own token for that sidecar; blank only for a loopback sidecar with no clients
+#
+# [status.resources.sources.llm-box]
+# url = "http://192.0.2.10:8781"
+# token = "env:LLM_BOX_RESOURCES_TOKEN"

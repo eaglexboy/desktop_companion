@@ -12,10 +12,25 @@
  * @typedef {import("./types.js").ProportionName} ProportionName
  * @typedef {import("./types.js").Proportions} Proportions
  * @typedef {import("./types.js").Accessories} Accessories
+ * @typedef {import("./types.js").Control} Control
  * @typedef {import("./types.js").Clip} Clip
  * @typedef {import("./types.js").Library} Library
  * @typedef {import("./types.js").Looks} Looks
  * @typedef {import("./types.js").StartGroup} StartGroup
+ */
+
+/**
+ * A library and one of its clips.
+ * @typedef {object} ClipChoice
+ * @property {string} library
+ * @property {string} clip
+ */
+
+/**
+ * An accessory socket the body cannot take, and why.
+ * @typedef {object} MissingSlot
+ * @property {Socket} socket
+ * @property {string | null} reason
  */
 
 /** @type {PaletteKey[]} */
@@ -135,7 +150,7 @@ const noAccessories = () =>
 export function fitToBody(spec, body) {
   const { controls } = body;
   /**
-   * @param {{ available: boolean, choices: string[] }} control
+   * @param {Control} control
    * @param {string | null | undefined} value
    */
   const offered = (control, value) =>
@@ -193,7 +208,7 @@ export function summary(spec) {
 /**
  * The clip to show first: the idle, else the first.
  * @param {Library[]} libraries
- * @returns {{ library: string, clip: string } | null}
+ * @returns {ClipChoice | null}
  */
 export function defaultClip(libraries) {
   for (const library of libraries) {
@@ -287,7 +302,7 @@ export const surfaceReason = (body) =>
 export function slotsFor(body) {
   /** @type {Socket[]} */
   const usable = [];
-  /** @type {{ socket: Socket, reason: string | null }[]} */
+  /** @type {MissingSlot[]} */
   const missing = [];
   for (const socket of SOCKETS) {
     const control = body.controls.accessories[socket];

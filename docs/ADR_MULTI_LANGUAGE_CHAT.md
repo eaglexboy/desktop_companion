@@ -1,6 +1,6 @@
 # Architecture Decision Record: Multi-Language Chat
 
-* **Status:** Proposed.
+* **Status:** Accepted; implemented in part (see section 6).
 * **Date:** 2026-11-12
 * **Deciders:** Architecture & Core Engineering Team
 * **Related:** [ADR_PERSONALITY_PROFILES.md](ADR_PERSONALITY_PROFILES.md) (voice override, profile format), [ADR_AUTONOMOUS_VOICE_SELECTION.md](ADR_AUTONOMOUS_VOICE_SELECTION.md) (voice pools), [ADR_MULTI_USER.md](ADR_MULTI_USER.md) (one brain and one state store per user), [SPEC_BRAIN.md](SPEC_BRAIN.md), [SPEC_OVERLAY.md](SPEC_OVERLAY.md)
@@ -61,7 +61,7 @@ Resolution order, first hit wins:
 
 The result is attached to the turn, stored with the chat record (a nullable `language` field added by the same additive migration pattern the project uses; absent reads as the default), and passed to every later stage. Autonomous utterances (greetings, idle chatter) use the pinned language if set, otherwise the last turn language.
 
-**Detection is context-driven, not per-message.** In `auto` mode the language is the one with the highest running score over a short window of recent user messages (recency-weighted), not the verdict on the latest message alone. Each message contributes its detected language weighted by detector confidence and by length, so a long, clear message moves the score a lot and a one-word message ("ok", "si") barely moves it. The current language is kept until another language's score clearly overtakes it, so a short or ambiguous message continues the established pattern. A fresh conversation starts from the previous session's language, then the default. Window size and overtake margin are configuration, tuned on real chat history.
+**Detection is context-driven, not per-message.** In `auto` mode the language is the one with the highest running score over a short window of recent user messages (recency-weighted), not the verdict on the latest message alone. Each message contributes its detected language weighted by detector confidence and by length, so a long, clear message moves the score a lot and a one-word message ("ok", "si") barely moves it. The current language is kept until another language's score clearly overtakes it, so a short or ambiguous message continues the established pattern. A single message that is itself clearly in another language (detector confidence of at least 0.7, which already falls for short text) switches at once: a four-word Spanish sentence is not ambiguous because the last two messages were English. A fresh conversation starts from the previous session's language, then the default. Window size and overtake margin are configuration, tuned on real chat history.
 
 **Language-identification contract.** The detector is an offline component with one operation: `identify(text) -> [(language, confidence)]`, fast enough to run on every message (milliseconds) and free of network calls. Which library or model satisfies it is an implementation choice.
 
@@ -157,7 +157,7 @@ A scalar `language.code_switching` (0-100, profile field with a global default) 
 * **0 (default).** One language per reply. If the user mixes languages, the companion picks the dominant language of the message (ties go to the turn language from 2.2) and answers fully in it. Communication works, which is the goal.
 * **Higher values.** The prompt tells the model it may mix languages naturally, mirroring the user's mix; at high values it initiates switches itself, within the limits of its fluency.
 * **Speech.** A mixed reply is split into language spans (by sentence, and by phrase inside a sentence at higher values) using the language-identification component. Each span is synthesised on its own with its language and the routing rules above, and the audio is concatenated. Spans too short to identify inherit the surrounding language. A span no engine can speak is spoken in the nearest speakable language and logged.
-* Memory, reflection and the stored `language` record the **dominant** language of the turn.
+* Memory, reflection and the stored `language` record the **dominant** language of what was written: a reply is tagged by the language it is written in, and the user's message by the language it is written in when that is clear, else the turn language. A pin sets the turn language, so it does not relabel a message written in another language.
 
 ### 2.7 Memory and retrieval
 
@@ -173,11 +173,11 @@ A scalar `language.code_switching` (0-100, profile field with a global default) 
 
 ### 2.9 Interface
 
-* **Companion tools:** `set_language(code | "auto")`, `get_language()`. Fluency, home language and code-switching are profile and configuration values, not companion tools.
+* **Companion tools:** `set_language(code | "auto")`, `get_language()`, and `auto_language()`, a separate way to say `set_language("auto")` because small models reliably call a tool for "go back to detecting my language" but not an argument value of another tool. Fluency, home language and code-switching are profile and configuration values, not companion tools.
 * **Configuration:** a default language, the detection window and margin, the native-fluency threshold and wording floor, a global code-switching default, the engine capability declarations of 2.5.1, and a language-to-voice map for local fallback engines.
 * **Health:** the health endpoint reports the pinned language (or `auto`) and the list of languages the installed pipeline can actually *speak*, computed from the engine declarations.
 * **Events:** a `language.changed` event when the effective turn language changes, so the timeline shows switches.
-* **Status page:** read-only. A language column on the chat view and a "speakable languages" line on the voice view. The user changes language by asking the companion.
+* **Status page:** a language column on the chat view and a "speakable languages" line on the voice view (read-only), plus the character's language settings on the Companion card. The user changes language by asking the companion, or on the Admin app's **Language** page (section 6).
 
 ### 2.10 Migration
 
@@ -216,3 +216,13 @@ With no configuration change behaviour is English as today, with deliberate exce
 3. **Span-level identification.** Reliability of identifying language inside a single sentence is unmeasured; the sentence-level split is the safe default for code-switching.
 4. **Cross-language voice consistency.** For engines that do not clone, whether a per-language voice choice can be kept recognisably "the same character" is unmeasured.
 5. **Fonts for non-Latin scripts.** Clients need fallback font coverage for each added script; verify per client stack when a script is added.
+
+## 6. Implementation status
+
+Implemented: language tags (`es_MX`, `es-MX` and `es-mx` are one tag; a region tag is served by its primary language, section 2.1), turn-language resolution with the pin, detection window and `language.changed` event (2.2), recognizer language hint and `(text, language, confidence)` (2.3), the reply-language prompt line (2.4), engine capability declarations, native and accented routing, the "cannot speak" notice and the Piper language-to-voice map (2.5.1-2.5.5), per-language vocal cues (2.5.6), language-independent lip-sync (2.5.7), per-script keyword tokenising (2.7), the English and Spanish (`es`, with `es-mx` overrides) message catalogue (2.8), `set_language` / `get_language` and the health fields (2.9), and the nullable `language` chat column (2.10). Spanish for Mexico (`es-mx`) is the second reference language and is exercised end to end in `brain/tests/test_language.py` and `brain/tests/test_main.py`.
+
+Not yet implemented: personality home language, fluency and `voice.languages` (the personality profile format of [ADR_PERSONALITY_PROFILES.md](ADR_PERSONALITY_PROFILES.md) does not exist in code yet; the default fully fluent personality is what runs, and the accented route is used only as the no-native-engine fallback), code-switching (2.6.1), right-to-left rendering (2.8) and the status page columns (2.9).
+
+The built-in language identifier is a small offline script and stop-word detector behind the `identify(text)` contract (`brain/language.py`); it covers English, Spanish, German, French, Italian, Portuguese, Russian, Japanese, Chinese, Korean, Arabic and Hebrew and can be replaced by a better library without touching callers.
+
+**Language settings page (Admin app, Companion group).** Edits the character's language fields (home language, general and per-language fluency, code-switching, voice languages) and the detection levels (default language, languages in use, window, margin, native threshold, wording floor), and pins or releases the turn language. It follows the Model settings page: edit, "unsaved changes", Save or Discard, validation reasons shown from the brain. The status page relays to the brain (`/api/language/*`), which validates, writes one file `language_settings.json` in the deploy directory (atomically) and applies it to the running companion with no restart. `config.toml` is never written ([ADR_PERSONALITY_PROFILES.md](ADR_PERSONALITY_PROFILES.md): "Nothing writes config.toml"); while the file exists it overrides the config values, and "Back to config.toml" deletes it. The file holds the same keys a personality profile will carry under `language`, so a profile loader can replace it. Engine capabilities (`languages`, `selection`, `foreign_text`, `cloning`) are not on the page: they describe installed engines and stay in `config.toml`.

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 
+from brain.language import language_name
 from brain.personality.state import MemoryNote
 
 # (low-end phrase, high-end phrase) for each trait/mood. The band picks how
@@ -84,7 +85,12 @@ _MOOD_PHRASES: dict[str, tuple[str, str]] = {
     "stress": ("relaxed right now", "a little on edge right now"),
 }
 
-_WORD_RE = re.compile(r"[a-z0-9']+")
+# Unicode word characters, so accented Latin and Cyrillic words stay whole.
+_WORD_RE = re.compile(r"[^\W_]+(?:'[^\W_]+)*", re.UNICODE)
+# Scripts written without spaces: tokenised as character bigrams.
+_UNSPACED_RE = re.compile(
+    r"[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af\u0e00-\u0e7f]+"
+)
 
 
 def _band_phrase(value: float, phrases: tuple[str, str]) -> str | None:
@@ -121,7 +127,12 @@ def describe_mood(mood: dict[str, float]) -> list[str]:
 
 
 def _tokenize(text: str) -> set[str]:
-    return set(_WORD_RE.findall(text.lower()))
+    text = text.lower()
+    tokens: set[str] = set()
+    for run in _UNSPACED_RE.findall(text):
+        tokens.update(run[i : i + 2] for i in range(max(1, len(run) - 1)))
+    tokens.update(_WORD_RE.findall(_UNSPACED_RE.sub(" ", text)))
+    return tokens
 
 
 def rank_memory_notes(
@@ -147,6 +158,8 @@ def build_system_prompt(
     memory_notes: list[str],
     look_summary: str | None = None,
     skills_block: str = "",
+    language: str = "en",
+    language_notes: list[str] | None = None,
 ) -> str:
     trait_lines = describe_traits(traits)
     mood_lines = describe_mood(mood)
@@ -155,6 +168,13 @@ def build_system_prompt(
         (
             f"You are {agent_name}, a desktop companion that lives on the user's screen. "
             "Stay in character; keep replies short and conversational unless asked for depth."
+        ),
+        # Written in English whatever the reply language: instructions are
+        # followed most reliably in the language models are tuned on.
+        (
+            f"Reply in {language_name(language)}. If the user writes in another language, follow their "
+            "language unless told otherwise. Keep the same personality, humour and warmth in that "
+            "language; do not translate idioms literally."
         ),
         # Replies are spoken aloud by a text-to-speech voice and shown in a bubble.
         (
@@ -165,6 +185,8 @@ def build_system_prompt(
             "*clears throat*. Never describe actions or scenery in asterisks."
         ),
     ]
+    if language_notes:
+        parts.append(" ".join(language_notes))
     if trait_lines:
         parts.append(
             "Your personality (stable, shapes how you generally act): "

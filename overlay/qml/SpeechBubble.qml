@@ -15,6 +15,7 @@ Window {
     property string text: ""
     property bool enabled: true      // [presence] show_speech_bubble
     property bool avatarHidden: false
+    property bool rtl: false         // the reply's language reads right-to-left
     // Fallbacks only; Main.qml binds these to the configured avatar size.
     property int avatarWidth: 240
     property int avatarHeight: 240
@@ -47,27 +48,32 @@ Window {
     LayerShellQt.Window.margins.left: wantLeft
     LayerShellQt.Window.margins.top: above ? avatarTop - height - gap : avatarTop + avatarHeight + gap
 
-    WindowMaskHelper { id: maskHelper }
-    LayerShellScreenHelper { id: layerShellScreen }
+    WindowMaskHelper {
+        id: maskHelper
+    }
+    LayerShellScreenHelper {
+        id: layerShellScreen
+    }
 
     // Click-through: a 1x1 input region. (An *empty* mask means "no mask" to
     // Qt, i.e. the whole window would swallow clicks.) The mask is dropped
     // whenever the surface is recreated, so re-apply on every show.
-    onVisibleChanged: if (visible) maskHelper.applyMask(bubble, 1, 1)
+    onVisibleChanged: if (visible)
+        maskHelper.applyMask(bubble, 1, 1)
 
     // Re-homing to another output = destroy surface, repoint, recreate. The
     // `suspended` flag (rather than assigning `visible`) keeps the visible
     // binding intact.
     function place(screenName, left, top, outW, outH) {
-        avatarLeft = left
-        avatarTop = top
-        outputWidth = outW
-        outputHeight = outH
+        avatarLeft = left;
+        avatarTop = top;
+        outputWidth = outW;
+        outputHeight = outH;
         if (anchoredScreenName !== screenName) {
-            suspended = true
-            layerShellScreen.moveToScreen(bubble, screenName)
-            anchoredScreenName = screenName
-            suspended = false
+            suspended = true;
+            layerShellScreen.moveToScreen(bubble, screenName);
+            anchoredScreenName = screenName;
+            suspended = false;
         }
     }
 
@@ -79,6 +85,10 @@ Window {
         color: "#f4f4fa"
         border.color: "#9a9ac0"
         border.width: 2
+        // Mirrors alignment and flow for a right-to-left reply; Text's own
+        // bidirectional layout handles embedded left-to-right words.
+        LayoutMirroring.enabled: bubble.rtl
+        LayoutMirroring.childrenInherit: true
 
         Text {
             id: label
@@ -86,6 +96,7 @@ Window {
             y: 10
             width: parent.width - 24
             text: bubble.text
+            horizontalAlignment: bubble.rtl ? Text.AlignRight : Text.AlignLeft
             wrapMode: Text.Wrap
             color: "#1e1e28"
             font.pixelSize: 14

@@ -255,6 +255,7 @@ class Router:
         system_prompt: str,
         history: list[dict[str, str]] | None = None,
         reply_format: ReplyFormat | None = None,
+        user_note: str = "",
     ) -> RouterResult:
         tool_name = self._match_tool_keyword(user_text)
         if tool_name is not None and tool_name in self._tools:
@@ -285,6 +286,10 @@ class Router:
             if reply_format
             else user_text
         )
+        if user_note:
+            # Rides next to the message, where a small model weighs it most
+            # (the system prompt is far away by the time it starts replying).
+            user_content = f"{user_content}\n\n{user_note}"
         messages.append({"role": "user", "content": user_content})
 
         emit(

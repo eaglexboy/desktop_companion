@@ -10,6 +10,7 @@ import * as doc from "./settings-doc.js";
 
 /**
  * @typedef {import("./settings-state.js").Info} Info
+ * @typedef {import("./settings-state.js").Focus} Focus
  * @typedef {import("./settings-doc.js").Settings} Settings
  * @typedef {import("./types.js").Options} Options
  */
@@ -178,7 +179,7 @@ export async function play(clip) {
  * Draws the accessories that are model files, placed as `draft` says: the item whose placement is
  * open, and any other model-file item with a placement. A parametric item exists only in Blender.
  * @param {Settings} draft
- * @param {{ socket: string, item: string } | null} focus
+ * @param {Focus | null} focus
  */
 export async function drawAccessories(draft, focus) {
   const info = shownInfo;

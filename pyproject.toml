@@ -1,6 +1,6 @@
 [project]
 name = "deskmate-brain"
-version = "1.6.0"
+version = "1.7.0"
 description = "Local brain daemon for the deskmate desktop companion agent"
 requires-python = ">=3.11"
 dependencies = [
@@ -15,12 +15,14 @@ dependencies = [
     "soundfile>=0.12",
     "numpy>=1.26",
     "pyyaml>=6.0",
+    "tomlkit>=0.13",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.6", "mypy>=1.11"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.6", "mypy>=1.11", "psutil>=5.9", "types-psutil"]
 voice = ["piper-tts>=1.8"]
 cloud = ["anthropic>=0.40"]
+resources = ["psutil>=5.9"]
 
 [tool.pytest.ini_options]
 testpaths = ["brain/tests"]
